@@ -76,7 +76,8 @@ with no offline catch-up and the first resumed frame excluded.
 Stronghold clearance ends at **“Conquest cleared — prototype ends here; ordinary
 farming remains available”**. Frontier is a disabled no-op at that checkpoint;
 from farming it returns there after settlement without replaying Stronghold.
-There is no Fortified frontier, defense, dynasty, export or playable-release approval.
+There is no Fortified frontier, playable defense, dynasty, export or playable-release approval.
+Defense and gate preparation are model-only APIs, described below; this scene is unchanged.
 
 **Campaign supervised graphical verification PASSED; automatic minimization remains a separate unresolved failure.**
 
@@ -173,6 +174,76 @@ two `Exponent too high` warnings. Isolated persistence earn/reload/parent passed
 out before SUMMARY during existing timing tests; it is failed evidence, not a
 pass. The subsequent direct normal/forced/normal sequence above completed under
 the same bounds without code changes. No graphical or human-persistence claim.
+
+## Model-only Counterattack — verified 8 September 2026
+
+Campaign now exposes `start_defense()` only at `CONQUEST_CLEARED` with Stronghold
+cleared, including checkpoints returned to from ordinary farming. It never starts
+automatically, and generic restart cannot enter or abandon defense. Neither playable
+scene has defense controls; the campaign scene retains its conquest-only wording.
+
+Counterattack is encounter ID **4**, outside conquest stages **0 → 1 → 3** and
+locked in ordinary Economy. Its fresh shield/foot/horse enemies have **180/80/80 HP**
+and **12/10/12 damage**. All living enemies target living player shield infantry
+first, regardless of role; without it they attack only the gate. Damage remains
+simultaneous, with no same-round shield overkill spilling into the gate. Surviving
+archers keep fighting. Gate destruction beats enemy elimination; positive-gate
+victory beats the round-60 timeout. Army elimination alone is not defensive defeat.
+Combat records army, gate and timeout defeat reasons without changing result IDs.
+
+Campaign owns gate levels **1–3**, health **80/140/200**, and upgrades costing
+**20 then 40 gold** via `gate_purchase_cost()` / `purchase_gate()`. Purchases change
+ownership only; each explicit assault takes fresh full-health troop and gate
+snapshots, clean commander input and round zero. No model clock is introduced.
+
+Accepted defense settlement pays zero. Defeat retains gold, purchases and all
+clearances, then farms the latest valid queued ordinary stage or defaults to Archer.
+Frontier must finish that farm before returning to the ready checkpoint; retry then
+requires another explicit start. Victory overrides queued farming, retains the
+terminal battle and enters `CAMPAIGN_SECURED`. Navigation, start and restart are
+inert there; existing purchases remain ownership operations. Stronghold still pays
+30 only once per controller. All outcomes reuse inherited once-only settlement.
+
+**Current verification**, pinned `4.7.2.stable.official.ed1daf0bf`:
+
+| Gate | Checks / failures | Exit |
+|---|---|---|
+| Headless editor import | Complete, no script/parse errors | 0 |
+| Headless normal / forced / normal | 1361/0 · 1362/1 · 1361/0 | 0 / 1 / 0 |
+| Default graphical | 105 / 0 | 0 |
+| Archer progression graphical | 35 / 0 | 0 |
+| Fortified graphical | 37 / 0 | 0 |
+| Supervised campaign `--manual-focus` | 52 / 0 | 0 |
+
+Each headless run retained all **162 balance rows**; the forced run had exactly
+one intentional failure. Full logs contained no script/parse errors. Existing
+excessive-exponent negative save tests still emit their two expected warnings.
+Headless and ordinary graphical commands used 35-second caller bounds; graphical
+runs took approximately **20.0 / 10.3 / 12.3 seconds**, without deadline changes.
+The interactive campaign process completed in about **5.2 minutes including human
+readiness and result viewing**; its unchanged internal battle/watchdog bounds and
+physical minimize/freeze/restore assertions passed. These runs establish unchanged
+playable conquest/farming, not playable defense or independent native focus telemetry.
+
+Two fully purchased passive conquest-plus-defense sequences matched complete
+snapshots: Counterattack won in **11 rounds**, gate **94/200**, surviving player HP
+**0/64/100**, and **zero defense gold**. These are observed outcomes, not a new
+balance target. Coverage adds defensive targeting, outcome precedence, terminal
+inertness, gate purchases, retry snapshots, isolation, settlement guards and security.
+
+Run provenance (local execution IDs): import `23d79178-e180-47ce-9563-4cff93098a8b`;
+headless `cf43b7a7-0320-492a-b198-b6d32b20b6ab`,
+`b91758e8-14e0-4ded-9914-b6f9102013a6`, `ee58de6e-a451-448f-af5e-0cee695ce495`;
+graphical `5b6a415e-f2a1-4e04-bee4-34276ad15bd4`,
+`e0a74a47-b33d-459e-ad5b-cfd089dd9268`, `1e63a333-a7a7-4dc7-82b9-969020b427c1`;
+campaign `f1a2fbfd-bdf2-44e8-9d9d-2b3af5b9d5cb`. Logs and captures remain ignored.
+
+Defense, gate ownership and security are **in-memory only**. No campaign save,
+reload protection, dynasty/reset, doctrine, UI, new dependencies or export was added.
+The separate automatic-minimize issue remains unresolved; human persistence remains
+**DEFERRED**, not passed by these runs. Earlier release-gate history below is retained.
+External guard-first zero-health code informed eligibility only; comparable GDScript
+defense architecture remains unverified, and executable local tests establish behavior.
 
 ## Local progress and recovery
 
@@ -710,8 +781,9 @@ Native node-script wiring follows the inspected official Godot demo pattern;
 its random/physics behavior is not used. The local specification and executable
 tests, not that unrelated demo, establish combat correctness.
 
-No automatic advancement to other encounters, gate upgrades, defense, dynasty,
-final art or Android tooling is implemented. Border Skirmish, Archer Position and
+The default game has no automatic encounter advancement or gate/defense controls.
+Campaign gate upgrades and defense exist only in the in-memory model API above;
+dynasty, final art and Android tooling remain unimplemented. Border Skirmish, Archer Position and
 Fortified Position repeat by manual selection; both older fixtures are unchanged.
 Viewport-injected input is **not physical mouse/touch verification**. Suspension tests exercise lifecycle notifications,
 not a physical Android device or OS sleep. No mobile export, sustained device
