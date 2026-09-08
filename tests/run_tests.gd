@@ -3,11 +3,11 @@ extends SceneTree
 const Combat = preload("res://src/combat.gd")
 const Economy = preload("res://src/economy.gd")
 const Campaign = preload("res://src/campaign.gd")
-const CampaignScene = preload("res://scenes/campaign_prototype.tscn")
-const CampaignPresentation = preload("res://src/campaign_prototype.gd")
 const Data = preload("res://src/encounter_data.gd")
 const BattleScene = preload("res://scenes/opening_battle.tscn")
 const Presentation = preload("res://src/opening_battle.gd")
+const CampaignScene = preload("res://scenes/campaign_prototype.tscn")
+const CampaignPresentation = preload("res://src/campaign_prototype.gd")
 const ProgressSave = preload("res://src/progress_save.gd")
 const ProgressFixture = preload("res://tests/progress_fixture.gd")
 
@@ -129,7 +129,6 @@ func run() -> void:
 	print("SUMMARY: %d checks, %d failures" % [checks, failures])
 	quit(0 if failures == 0 else 1)
 
-# Deliberately scrambled order and misleading titles: roles alone determine targets.
 func campaign_scene_new() -> CampaignPresentation:
 	var scene: CampaignPresentation = CampaignScene.instantiate()
 	root.add_child(scene)
@@ -1191,6 +1190,7 @@ func test_progression_balance() -> void:
 		and Data.enemies(Data.Encounter.ARCHER_POSITION)[0].max_health == 100,
 		"balance: authored fixtures unchanged")
 
+# Deliberately scrambled order and misleading titles: roles alone determine targets.
 func priority_targets(mask: int, omit_dead: bool) -> Array[Data.Squad]:
 	var squads: Array[Data.Squad] = []
 	for role in [Data.Role.FOOT, Data.Role.SHIELD, Data.Role.HORSE]:
