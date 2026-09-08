@@ -1,8 +1,69 @@
-# First playable rules proposal
+# First playable: implemented prototype and future proposal
 
-**Every new rule, name, formula, tuning number, and acceptance threshold below is PROVISIONAL.** Tables and examples inherit this label. These are concrete decisions proposed for approval, not validated balance. Confirmed requirements remain offline single-player play, pre-gunpowder historical armies, attack and defense, level-1 resets retaining selected benefits, and eventual Android support.
+**Only the implemented-scope section below describes approved, delivered work.** The later first-playable rules, tables, formulas, and acceptance thresholds remain proposals unless explicitly identified as already implemented. Their presence does not approve another milestone or validate the complete proposed game loop.
 
-No separate blocking questions remain: reversible defaults are proposed together for approval. No engine, visuals, framework, dependency, or implementation architecture is selected. The slice contains three unit types, gold as its sole spendable battle currency, automatic combat and one commander tap, three conquest encounters, one defensive encounter, and one reset. The successor campaign reuses the same encounters rather than adding content.
+The broader vision includes offline single-player play, pre-gunpowder historical armies, attack and defense, level-1 resets retaining selected benefits, and eventual Android support. Defense, dynasty/reset progression, full campaign saving, and Android delivery are not part of the completed prototype checkpoint.
+
+## Approved implemented scope — 8 September 2026
+
+The project uses **Godot 4.7.2 Standard, GDScript, and native controls**. The current
+[README](../README.md) is authoritative for launch commands, playable contracts,
+verification evidence, and remaining release gates. Two separate playable scenes exist:
+
+- **Default opening-battle game:** Border, Archer, and Fortified selection; ownership-based
+  unlocks; automatic replay; commander input; next-battle purchases; two-enemy presentation
+  and native scrolling. Manual encounter switching abandons an ongoing battle without
+  payment. Save-v1 persists only gold and troop levels; launch starts fresh Border combat.
+- **Separate campaign prototype:** `scenes/campaign_prototype.tscn` and
+  `src/campaign_prototype.gd` connect the in-memory `src/campaign.gd` model to a native UI.
+  Real-time automatic progression, deferred farm/frontier requests, purchases, scrolling,
+  and the conquest checkpoint are implemented. This session-only scene neither loads nor
+  writes the default game's save. Closing it discards campaign progress.
+
+The approved campaign prototype and its scene integration are implemented, not deferred.
+It does not replace the default farming game or constitute acceptance of the broader
+first-playable proposal. No further implementation milestone is approved here.
+
+Campaign alone advances through the explicit order Border (ID 0), Archer (ID 1), then
+Stronghold (ID 3), using clearance-based access. Archer pays **30 gold**, superseding the
+original provisional 15-gold proposal without retuning the approved economy. Fortified
+Position remains ID 2: two enemies, all troops level 2+ to unlock, and 54 gold per victory
+in ordinary Economy. It is neither Stronghold nor a campaign frontier. Stronghold is a
+separate three-enemy fixture and awards 30 gold once per in-memory controller instance.
+
+Campaign navigation retains only the latest valid request and waits for settlement.
+Victory rewards and clearances precede navigation; Stronghold victory overrides queued
+navigation and stops at `CONQUEST_CLEARED`. Otherwise queued navigation beats defeat
+recovery; without a request, any defeat (including while farming) farms the highest
+cleared ordinary stage, or retries Border in advance mode if none is cleared. A farm
+victory repeats its selected stage. The controller's explicit restart abandons the battle
+and clears navigation without paying; it cannot switch destinations or restart a checkpoint.
+Farming after conquest clearance preserves it; retry frontier finishes that farm battle
+and returns to the checkpoint without recreating or repaying Stronghold.
+
+Settlement is synchronous and once-only in memory, not a durable transaction. Campaign
+saving, live battle resume, crash/reload duplicate protection, dynasty, and defense remain
+unimplemented and outside approved scope. Main-game Save-v1 does not save campaign state.
+`CONQUEST_CLEARED` is the prototype's terminal frontier checkpoint, with ordinary farming
+still available; it is not implemented defense or campaign security.
+
+**Recorded verification, not new runs from this documentation edit:** the full supervised
+campaign graphical driver passed **52 checks, zero failures, exit 0**. Opening-battle,
+Archer, and Fortified graphical modes passed **105 / 35 / 37** checks; the integrated
+headless suite passed **1,157**, with exactly one intentional failure in forced mode.
+Headless and graphical isolated persistence each passed **13 + 10 + 4** checks. See README
+and the checkpoint commit evidence for run provenance and historical failures. Physical
+campaign minimize/resume passed, but the separate automatic-minimize failure remains
+unresolved. Scripted viewport input does not establish human gameplay/persistence release
+acceptance; that human persistence gate remains **DEFERRED**.
+
+## Future first-playable proposal — NOT APPROVED
+
+Everything from this heading onward describes the proposed larger loop, not an instruction
+to implement it. Some combat and conquest rules already match the prototype above; defense,
+gate upgrades, dynasty reset, permanent doctrine, and full-state campaign persistence do
+not exist. Proposed save/load and reset guarantees must not be attributed to Save-v1 or
+the session-only campaign. Future work requires separate approval.
 
 ## The player's first run — provisional experience
 
@@ -36,7 +97,7 @@ A purchase deducts its exact price and raises exactly one owned level. Insuffici
 
 ## Targeting, damage, and commander input — provisional
 
-Combat uses one-second logical rounds of active play time. Automatic attacks first occur after one second. Every living squad attacks once each round. Identical starting state and accepted inputs produce identical results, independent of rendering frequency; no timing implementation is selected.
+Combat uses one-second logical rounds of active play time. Automatic attacks first occur after one second. Every living squad attacks once each round. Identical starting state and accepted inputs produce identical results, independent of rendering frequency. The existing prototype implements foreground timing with integer-microsecond accumulation; this proposal does not select a replacement.
 
 In conquest, shield infantry and foot archers target the first living opposing squad in this order: shield infantry, horse archers, foot archers. Horse archers instead prioritize foot archers, horse archers, then shield infantry. Both sides use these rules. There is only one squad per type, so no further tie-break is needed.
 
@@ -54,18 +115,18 @@ Every new encounter, replay, or retry begins at full health, with a fresh stat s
 
 ## Conquest, rewards, and encounter transitions — provisional
 
-Enemies use the same three types with authored stats rather than player upgrade levels. A dash denotes an absent squad. These four definitions are the entire encounter content.
+Enemies use the same three types with authored stats rather than player upgrade levels. A dash denotes an absent squad. These four definitions are the proposed campaign-loop content, not a list of all current fixtures. The separate main-game Fortified encounter is implemented but is not part of this campaign sequence.
 
 | Encounter | Enemy shield health / damage | Enemy foot archers health / damage | Enemy horse archers health / damage | Victory reward |
 | --- | --- | --- | --- | --- |
 | Level 1: Border skirmish | 72 / 3 | — | — | 10 gold |
-| Level 2: Archer position | 100 / 6 | 40 / 8 | — | 15 gold |
+| Level 2: Archer position | 100 / 6 | 40 / 8 | — | 30 gold (approved reconciliation above) |
 | Level 3: Stronghold | 160 / 8 | 60 / 8 | 60 / 6 | 30 gold, once per dynasty |
 | Defense: Counterattack | 180 / 12 | 80 / 10 | 80 / 12 | Campaign secured; no gold |
 
 Start level 1 in advance mode. Each ordinary first victory awards gold, records clearance, and starts the next conquest encounter at full health. Ordinary cleared stages are individually farmable even though the region is only secured after defense. The stronghold cannot be bypassed or repeatedly farmed.
 
-A player can choose either cleared ordinary stage for farming. If requested during combat, this navigation takes effect after the battle result, never cancelling it. Farm mode repeats its selected stage after each result and pays on every victory. Retry frontier, requested while farming, finishes the current farm battle and then approaches the next unresolved frontier. Only the latest navigation request is retained; requests do not create rewards or refunds.
+A player can choose either cleared ordinary stage for farming. If requested during combat, this navigation takes effect after the battle result, never cancelling it. Farm mode repeats its selected stage after each victory and pays on every victory; defeats follow the recovery rule below. Retry frontier, requested while farming, finishes the current farm battle and then approaches the next unresolved frontier. Only the latest navigation request is retained; requests do not create rewards or refunds.
 
 Conquest defeat defaults to farming the highest cleared ordinary stage, not repeatedly attacking the failed frontier. If no stage is cleared, level 1 retries for free. Stronghold victory commits its reward and clearance, then pauses at defense-ready regardless of pending navigation. There the player can start defense or choose ordinary-stage farming. Retry frontier after the stronghold is cleared returns to defense-ready rather than fighting the stronghold again.
 
@@ -100,7 +161,7 @@ All gameplay and saving work without an internet connection. Closed-app earnings
 
 Saving preserves gold, owned levels, doctrine, reset-used state, dynasty, clearances, current phase/mode, selected farm stage, queued navigation, active encounter stat snapshot, current health, completed rounds, progress toward the next round, and any queued strike. Recreating a damaged battle at full health on load is not acceptable. An upgrade purchased after battle start must remain owned without retroactively changing that battle's snapshot.
 
-Purchases, outcomes, and resets must save as complete valid transitions, not half-applied changes. A save acknowledged as successful must restore its full state. If saving fails, report that progress is not saved, retain in-memory progress, and preserve the last valid save. An invalid or unreadable save must not silently be overwritten by a fresh campaign. Storage format, write strategy, platform lifecycle integration, and test tools remain unselected.
+Purchases, outcomes, and resets must save as complete valid transitions, not half-applied changes. A save acknowledged as successful must restore its full state. If saving fails, report that progress is not saved, retain in-memory progress, and preserve the last valid save. An invalid or unreadable save must not silently be overwritten by a fresh campaign. The full-state campaign storage and durability strategy remain unselected. Existing main-game Save-v1 and its tests do not implement this proposed campaign-resume contract.
 
 ## Observable acceptance tests — provisional
 
@@ -124,8 +185,8 @@ These are future checks, not tests claimed to have passed. Unless stated otherwi
 
 ## Development constraints, evidence, and risks
 
-Only documentation publication is proposed now. Later work must use small, single-purpose modules, separate rules/state from UI/rendering, and keep combat, economy/progression, prestige, and persistence independently testable. Implement and behavior-test one focused slice before adding another. No source-module filenames, function signatures, storage schema, dependencies, or tools are chosen before implementation planning.
+Beyond the implemented scope above, the remaining proposal is documentation only and requires separate approval. Later work should retain the existing separation of rules/state from UI/rendering and keep future prestige and campaign persistence independently testable. Implement and behavior-test one approved slice before adding another. Existing modules, Godot tooling, and main-game Save-v1 are already selected; new campaign-storage and future-feature interfaces remain undecided.
 
 The design authority is `docs/game-design.md`, especially its core loop, roles, non-destructive failure, reset payoff, first scope, and offline distinction. A corpus search/read inspected `etlegacy/etlegacy`, `src/game/g_combat.c`, lines 1153–1176, revision `631d0c936ee935e3c2ddb1ffc8278c5cdbe94319`: https://github.com/etlegacy/etlegacy/blob/631d0c936ee935e3c2ddb1ffc8278c5cdbe94319/src/game/g_combat.c#L1153-L1176. Its explicit exclusion of zero-health entities is a narrow real-code reference for dead-target eligibility. Its shooter-specific systems are not suitable architecture or balance references and are not imported.
 
-The idle economy, simultaneous rounds, tuning, and save contract are not verified against a comparable idle-game implementation or executable prototype. Arithmetic examples are expected outcomes, not measured tests. Main risks are uninteresting upgrade allocation, insufficient passive survivability, the defense targeting exception feeling arbitrary, and an overly short campaign failing to establish prestige's emotional payoff. Test those within this scope rather than preemptively adding systems. Direct doctrine granting, no closed-app rewards, and fixed roster access are explicit simplifications relative to the broader brainstorm.
+Combat, economy, main-game saving, and the session-only campaign have executable verification recorded above. The complete proposed defense/reset/full-state-save loop is not implemented or validated against an executable prototype or comparable idle-game implementation. Future acceptance examples remain expected outcomes, not passed tests. Remaining design risks include uninteresting upgrade allocation, insufficient passive survivability, the defense targeting exception feeling arbitrary, and an overly short campaign failing to establish prestige's emotional payoff. Evaluate those only within separately approved work rather than preemptively adding systems. Direct doctrine granting, no closed-app rewards, and fixed roster access are explicit simplifications relative to the broader brainstorm.
