@@ -25,8 +25,8 @@ var last_frame_usec: int = 0
 @onready var gold_label: Label = %Gold
 @onready var save_status: Label = %SaveStatus
 @onready var upgrades: Array[Button] = [%ShieldUpgrade, %FootUpgrade, %HorseUpgrade]
-@onready var health_labels: Array[Label] = [%ShieldHealth, %FootHealth, %HorseHealth, %EnemyHealth]
-@onready var health_bars: Array[ProgressBar] = [%ShieldBar, %FootBar, %HorseBar, %EnemyBar]
+@onready var health_labels: Array[Label] = [%ShieldHealth, %FootHealth, %HorseHealth, %EnemyHealth, %EnemyFootHealth]
+@onready var health_bars: Array[ProgressBar] = [%ShieldBar, %FootBar, %HorseBar, %EnemyBar, %EnemyFootBar]
 
 func _ready() -> void:
 	commander.pressed.connect(_command)
@@ -34,6 +34,9 @@ func _ready() -> void:
 	replay_timer.timeout.connect(restart_battle)
 	for role in range(upgrades.size()):
 		upgrades[role].pressed.connect(_purchase.bind(role))
+	%BorderSelect.pressed.connect(_select_encounter.bind(Data.Encounter.BORDER_SKIRMISH))
+	%ArcherSelect.pressed.connect(_select_encounter.bind(Data.Encounter.ARCHER_POSITION))
+	%FortifiedSelect.pressed.connect(_select_encounter.bind(Data.Encounter.FORTIFIED_POSITION))
 	_load_progress()
 	restart_battle()
 
@@ -69,9 +72,20 @@ func _save_progress() -> void:
 			return
 		save_status.text = "Progress saved · Autosave on" if error == OK else "Progress not saved · Retry on next victory or purchase; unsaved changes lost on close"
 
+func _select_encounter(encounter: int) -> void:
+	if suspended or encounter == economy.current_encounter or not economy.is_encounter_unlocked(encounter):
+		return
+	_start_battle(encounter)
+
 func restart_battle() -> void:
+	_start_battle()
+
+func _start_battle(encounter: int = -1) -> void:
+	var accepted := economy.restart_battle(encounter)
+	if accepted == null:
+		return
 	replay_timer.stop()
-	battle = economy.restart_battle()
+	battle = accepted
 	elapsed_usec = 0
 	last_frame_usec = Time.get_ticks_usec()
 	_refresh()
@@ -138,7 +152,19 @@ func _purchase(role: int) -> void:
 		_refresh()
 
 func _refresh() -> void:
-	gold_label.text = "Gold: %d · Victory +10 · Auto replay" % economy.gold
+	var selected: int = economy.current_encounter
+	var reward: int = economy.encounter_reward(selected)
+	match selected:
+		Data.Encounter.BORDER_SKIRMISH: %Title.text = "BORDER SKIRMISH"
+		Data.Encounter.ARCHER_POSITION: %Title.text = "ARCHER POSITION"
+		Data.Encounter.FORTIFIED_POSITION: %Title.text = "FORTIFIED POSITION"
+	%BorderSelect.disabled = selected == Data.Encounter.BORDER_SKIRMISH
+	%ArcherSelect.disabled = selected == Data.Encounter.ARCHER_POSITION or not economy.is_encounter_unlocked(Data.Encounter.ARCHER_POSITION)
+	%FortifiedSelect.disabled = selected == Data.Encounter.FORTIFIED_POSITION or not economy.is_encounter_unlocked(Data.Encounter.FORTIFIED_POSITION)
+	%UnlockHint.visible = not economy.is_encounter_unlocked(Data.Encounter.ARCHER_POSITION)
+	%FortifiedUnlockHint.visible = not economy.is_encounter_unlocked(Data.Encounter.FORTIFIED_POSITION)
+	%EnemyFootRow.visible = selected in [Data.Encounter.ARCHER_POSITION, Data.Encounter.FORTIFIED_POSITION]
+	gold_label.text = "Gold: %d · Victory +%d · Auto replay" % [economy.gold, reward]
 	var titles: Array[String] = ["Shield infantry", "Foot archers", "Horse archers"]
 	for role in range(upgrades.size()):
 		var cost: int = economy.purchase_cost(role)
@@ -146,9 +172,8 @@ func _refresh() -> void:
 			"MAX" if cost == 0 else "Upgrade %d gold" % cost]
 		upgrades[role].disabled = cost == 0 or economy.gold < cost
 	var squads: Array[Data.Squad] = battle.players.duplicate()
-	# simplification: opening-only UI; add squad rows before presenting later encounters.
-	assert(battle.enemies.size() == 1, "Opening scene supports only Border skirmish")
-	squads.append(battle.enemies[0])
+	# simplification: two authored enemy rows; extend explicitly for another roster.
+	squads.append_array(battle.enemies)
 	for i in range(squads.size()):
 		var squad: Data.Squad = squads[i]
 		health_labels[i].text = "%s  |  HP %d / %d  |  Damage %d" % [
@@ -160,7 +185,7 @@ func _refresh() -> void:
 	commander.text = "Strike queued (+%d)" % battle.commander_damage if battle.commander_queued else "Commander strike (+%d)" % battle.commander_damage
 	match battle.result:
 		Combat.Result.VICTORY:
-			status_label.text = "Victory +10 gold — replay in 1 second"
+			status_label.text = "Victory +%d gold — replay in 1 second" % reward
 		Combat.Result.DEFEAT:
 			status_label.text = "Defeat — no reward; replay in 1 second"
 		_:

@@ -1,8 +1,9 @@
 # Border Skirmish — farming loop
 
-One offline placeholder encounter: three squads, simultaneous one-second rounds,
-one commander strike per interval, 10 gold per victory, automatic replay and
-three troop upgrades. Uses native Godot controls,
+Three offline placeholder encounters: three player squads, simultaneous one-second
+rounds, one commander strike per interval, encounter rewards, automatic replay
+and three troop upgrades. Upgrade any troop to level 2 to unlock Archer Position;
+upgrade every troop to level 2 to unlock Fortified Position. Uses native Godot controls,
 shapes and fonts; no downloaded art, plugins or runtime packages.
 
 ## Run (Windows PowerShell, from this directory)
@@ -20,10 +21,12 @@ The window starts at 720×960 and resizes. Click Commander strike or use Tab
 and Space/Enter on a focused button. Activation happens on press; holding a
 key does not repeat. Restart works during battle and after victory.
 
-The army wins in four passive rounds, or three with one strike each round.
-Losing focus or suspending freezes in-memory combat; the resume-frame gap is
-excluded. Each result stays visible for one second, then Border Skirmish replays
-at full health. Victory pays exactly 10 gold once; defeat pays nothing.
+The starting army wins Border in four passive rounds, or three with one strike
+each round. Losing focus or suspending freezes in-memory combat; the resume-frame
+gap is excluded. Each result stays visible for one second, then the selected
+encounter replays at full health. Border victories pay 10 gold; Archer Position
+victories pay 30 gold; Fortified Position victories pay 54 gold, once per battle
+including replays. Defeat pays nothing.
 Restart abandons the current battle without settlement, clears queued input and
 timing, cancels pending replay, and retains gold and owned levels. Already-earned
 victory gold remains; restarting itself never pays.
@@ -31,9 +34,22 @@ victory gold remains; restarting itself never pays.
 Each troop starts at level 1, costs 20 gold for level 2 and 40 for level 3, and
 caps at level 3. Each level adds health/damage: shield +40/+2, foot +12/+4,
 horse +20/+3. Ownership changes immediately; combat snapshots change only at the
-next replay or restart. Insufficient funds and capped purchases change nothing.
+next replay, restart or encounter switch. Insufficient funds and capped purchases change nothing.
 Gold and owned troop levels save locally after victories and successful purchases.
-Every launch starts fresh full-health combat; there is no absence/offline reward.
+Every launch starts fresh full-health Border combat; there is no absence/offline reward.
+
+Archer Position unlocks immediately after any troop reaches level 2, including
+from an existing version-1 save or recovered backup. Gold alone does not unlock it.
+Selection is manual: no automatic advancement or entry fee. Switching abandons
+an ongoing battle without reward, clears queued strikes/time and cancels replay;
+already-settled gold remains. Manual restart and replay retain the selection.
+Border always remains available. Selection is rejected while suspended.
+Only gold and upgrades persist, not selection or completion. Unsaved upgrades
+retain their unlock in memory only until a successful save retry.
+At the first upgrade, passive Archer takes eight rounds with a shield upgrade,
+or seven with either archer upgrade. Combat stats and costs are unchanged.
+Native scrolling and focus-follow keep controls reachable when content exceeds
+the viewport; the existing canvas scaling remains unchanged.
 
 ## Separate session-only campaign prototype
 
@@ -216,6 +232,10 @@ for persistence rather than rounded.
 & $GODOT --headless --path . --script tests/run_tests.gd
 
 & $GODOT --path . --script tests/scene_smoke.gd
+& $GODOT --path . --script tests/scene_smoke.gd -- --progression
+& $GODOT --path . --script tests/scene_smoke.gd -- --fortified
+# Default: 105 checks. Archer progression: 35 checks. Fortified: 37 checks.
+# Each has a 25s internal deadline and a 35s caller bound.
 # Graphical session required. Do not move focus away during this short run.
 # Expect complete graphical SUMMARY, zero failures, and $LASTEXITCODE = 0.
 
@@ -223,7 +243,7 @@ for persistence rather than rounded.
 & $GODOT --path . --script tests/persistence_smoke.gd
 # Two isolated scene processes: earn/purchase/exit, then reload/new victory.
 # Keep each graphical child foreground and unminimized. Bound each command to 35s.
-# Expect earn (12), reload (9), parent (4) checks, all zero failures, exit 0.
+# Expect earn (13), reload (10), parent (4) checks, all zero failures, exit 0.
 ```
 
 Missing summary, parse errors, timeout or a nonzero normal exit means failure.
@@ -517,22 +537,182 @@ test directory behind; it never authorizes cleanup of real player data.
   before/after values or inspectable repeat save were supplied. Preserve the
   measured attempt above; the evidence-backed release gate remains unverified.
 
+## Archer Position verification — 8 September 2026
+
+- Native Godot 4.7.2 import passed. Headless: **559 checks, zero failures**.
+  Intentional-failure run: **560 checks, exactly one forced failure, exit 1**;
+  normal rerun: **559 checks, zero failures, exit 0**.
+- Real Combat tests confirmed every predicted exact round/HP balance case and
+  all 27 upgrade combinations for both encounters and both input modes.
+  Repeated battles are deterministic and independent; authored fixtures remain unchanged.
+- Headless and native graphical cross-process persistence passed **13 + 10 + 4**
+  checks each. Graphical persistence completed in **15.608 seconds**.
+- Default graphical gate passed **105 checks** in **19.529 seconds**; focused
+  progression passed **35 checks** in **10.312 seconds**, all zero failures.
+  Both retained 25-second internal and 35-second caller bounds.
+- With explicit approval, existing graphical layout assertions now test scrollable
+  containment and full mouse-target visibility instead of all content onscreen.
+  Existing combat/input checks remain. The initial progression run failed one
+  scroll assertion because canvas scaling kept the logical viewport at 720×960.
+  The passing test captures the normal scaled 540×720 window, then additionally
+  constrains logical size to 540×720 to actually exercise native focus scrolling.
+- Inspected 720×960 Archer and 540×720 scrolling/focus/save-warning captures:
+  readable enemy rows, reachable lower controls and wrapped warning text.
+  Captures are ignored under `.gg/screenshots/opening-battle/progression-*.png`.
+  Progression seeds only isolated in-memory gold; persistence uses test-owned storage.
+  No save schema, combat mechanics, dependencies or real player saves changed.
+  These scripted viewport inputs do not replace the separate human release gate.
+
+## Fortified Position — balance and contract, 8 September 2026
+
+Fortified Position appends encounter ID 2, preserving Border/Archer IDs 0/1.
+It has an enemy shield with **160 HP / 12 damage** and foot archers with
+**80 HP / 12 damage**. Victory pays **54 gold**; defeat pays zero. All three
+owned troop levels must be at least 2. A single level-3 troop, gold alone,
+rejected purchases and victories alone do not unlock it. The final required
+purchase unlocks it immediately, even if saving fails; only successfully saved
+ownership survives relaunch. Qualifying version-1 saves and recovered backups
+also unlock it without a startup write.
+
+Selection remains manual, with no entry fee or automatic advance. Both older
+encounters retain their existing rules and fixtures. Locked, invalid and same
+selections leave battle and replay state untouched. Accepted switches abandon
+unfinished combat without payment, clear queued input/time and cancel replay.
+Restart and one-second automatic replay retain selection and create fresh
+squads with current upgrades. Purchases never alter an ongoing battle snapshot.
+Save schema/version, costs, cap, combat and focus handling are unchanged. Only
+gold/levels persist; every launch starts fresh Border combat.
+
+Native candidate verification ran before gameplay edits using actual Combat
+and isolated fresh test enemies: **162 cases (27 ownership combinations ×
+3 encounters × 2 modes), each repeated with complete outcome/round/player HP/
+enemy HP comparison**. Active means one queued strike before every round.
+All eight unlocked ownership combinations win both ways and take longer than
+Archer. No qualifying single upgrade increases Fortified duration.
+
+The original 50-gold proposal matched every predicted outcome, duration and
+terminal HP, but had five combat-only rate disadvantages versus Archer:
+passive [2,2,3], [2,3,2], [3,2,2], and active [2,2,3], [3,2,3]. Full replay-loop
+rates did not regress. The user explicitly approved **54 gold**, the minimum
+whole reward giving combat-rate parity across unlocked combinations. The
+original run reported **795 checks, 5 rate failures, exit 1**; revised native
+verification reported **795 checks, zero failures, exit 0**. Two earlier
+candidate harness attempts stopped inside the matrix on a typed-empty-array
+error despite exit 0; neither counted as a pass. Explicit typed arrays fixed
+the harness without changing combat or weakening assertions.
+
+Each entry below is `outcome / combat seconds / gold per combat second`.
+Locked combinations are counterfactual probes, not selectable encounters.
+
+| Levels | Mode | Border | Archer | Fortified |
+|---|---|---|---|---|
+| [1,1,1] | Passive | W / 4 / 2.50 | W / 8 / 3.75 | L / 10 / 0 |
+| [1,1,1] | Active | W / 3 / 3.33 | W / 7 / 4.29 | L / 10 / 0 |
+| [2,1,1] | Passive | W / 4 / 2.50 | W / 8 / 3.75 | L / 12 / 0 |
+| [2,1,1] | Active | W / 3 / 3.33 | W / 6 / 5.00 | W / 11 / 4.91 |
+| [1,2,1] | Passive | W / 4 / 2.50 | W / 7 / 4.29 | L / 11 / 0 |
+| [1,2,1] | Active | W / 3 / 3.33 | W / 6 / 5.00 | W / 10 / 5.40 |
+| [1,1,2] | Passive | W / 4 / 2.50 | W / 7 / 4.29 | L / 13 / 0 |
+| [1,1,2] | Active | W / 3 / 3.33 | W / 6 / 5.00 | W / 10 / 5.40 |
+| [2,2,2] | Passive | W / 3 / 3.33 | W / 6 / 5.00 | W / 10 / 5.40 |
+| [2,2,2] | Active | W / 2 / 5.00 | W / 5 / 6.00 | W / 7 / 7.71 |
+| [3,3,3] | Passive | W / 2 / 5.00 | W / 5 / 6.00 | W / 7 / 7.71 |
+| [3,3,3] | Active | W / 2 / 5.00 | W / 4 / 7.50 | W / 6 / 9.00 |
+
+Fortified terminal player HP: baseline [0,0,0] both modes; all-level-2
+passive [0,52,20], active [4,52,80]; all-level-3 passive [32,64,100],
+active [68,64,100]. Including the one-second replay delay, Fortified earns
+4.91 passive / 6.75 active gold per second at unlock, and 6.75 / 7.71 at cap.
+These are ideal uninterrupted loop rates, not focus-loss wall-clock promises.
+The headless suite prints all 162 complete snapshots and both rates and checks
+production fixtures against the isolated candidate. Expanded behavior/save
+coverage passed **952 checks, zero failures, exit 0** before graphical work.
+
+Initial final automated gates completed in order on Windows / Godot 4.7.2:
+
+| Gate | Actual result | Engine exit |
+|---|---|---|
+| Native editor import | Complete; no script/parse errors | 0 |
+| Normal headless | 952 checks, 0 failures | 0 |
+| Forced failure | 953 checks, exactly 1 intentional failure | 1 |
+| Normal headless rerun | 952 checks, 0 failures | 0 |
+| Default scripted graphical | 105 checks, 0 failures | 0 |
+| Archer scripted graphical | 35 checks, 0 failures | 0 |
+| Fortified scripted graphical | 37 checks, 0 failures | 0 |
+| Headless cross-process persistence | Earn 13 / reload 10 / coordinator 4; 0 failures | 0 |
+| Graphical cross-process persistence | Earn 13 / reload 10 / coordinator 4; 0 failures | 0 |
+
+All final logs were checked for script/parse errors and missing summaries;
+none occurred. Both normal headless logs contain all 162 balance rows. The
+existing two excessive-exponent parser warnings remain expected negative-test
+output. Graphical runs completed in approximately 21.3 / 10.3 / 12.2 seconds;
+graphical persistence took 15.6 seconds, all within their original bounds.
+The Fortified run also checked foreground focus at start, victory and finish;
+no focus workaround or suspension override was used. Selected and small-window
+bottom screenshots were inspected: enemy HP, +54 reward and reachable focused
+restart matched the authored controls. These are scripted, not human, evidence.
+An erroneous persistence invocation with unsupported `--graphical` was rejected
+with `persistence invalid: 1 checks, 1 failures`, exit 1, before creating a
+fixture. The documented graphical command (no `--headless`, no user arguments)
+then passed as recorded above; the argument guard was not changed.
+
+### Earlier requested verification rerun — 8 September 2026
+
+Headless rerun: **952 checks, zero failures, exit 0**. Default graphical:
+**105 checks, zero failures, exit 0**. Archer graphical: **35 checks, zero
+failures, exit 0**. Fortified graphical: **37 checks, four failures, exit 1**.
+The latest Fortified run passed focused startup, viewport unlock/selection and
+the real ten-second +54 victory, but failed fresh replay, return-to-Border,
+return-to-Archer and foreground-focus completion. An uninterrupted focused
+session was therefore not maintained; the affected Fortified graphical gate is
+**PENDING, not passed by this rerun**. The earlier passing run above remains
+historical evidence only. No focus workaround, deadline increase, assertion
+suppression or suspension change was made. Verification stopped at this failure;
+no manual work was requested. Human graphical release remains deferred.
+
+### Subsequent supervised Fortified pass — 8 September 2026
+
+The documented `--fortified` command was rerun against the remaining working-tree
+UI changes after coordinating focus with the user. It completed **37 graphical
+checks, 0 failures, exit 0**, in **12.940 seconds**. Focus assertions passed at
+startup, the ten-second victory, and completion. The final purchase unlocked
+Fortified; both enemy rows rendered; victory paid 54 gold once; fresh replay,
+return to Border without payment, restored Archer stats, and small-window
+focus-follow scrolling all passed. All six native rendered captures were
+inspected and remain ignored. No code, deadline, focus check, or suspension
+behavior was changed to obtain this pass. Log execution ID:
+`b3b9bfa2-9669-4f2a-9fad-50cfbd46e9f9`.
+
+This later pass clears that scripted Fortified rerun gate; the four-failure run
+above remains historical evidence, not erased or reclassified. Scripted viewport
+input is still not physical gameplay or human persistence release verification.
+The campaign automatic-minimize failure is a separate issue and remains unresolved.
+The checkpoint's complete staged-tree gates must pass independently before commit.
+
+The new `--fortified` branch uses isolated in-memory ownership/funds, viewport final purchase and
+selection, real timed +54 victory/replay, both older selectors and small-window
+focus scrolling. It does not touch real player saves. Scripted graphical
+success is not physical-input evidence. **Human graphical release gate:
+DEFERRED — not passed.** The retained human-attempt evidence above is unchanged.
+Comparable external GDScript combat usage remains unverified; the inspected
+PokéClicker guard-first upgrade sample informs purchase validation only.
+
 ## Boundaries
 
 Combat rules live only in `src/combat.gd`; `src/economy.gd` owns gold, troop
 levels, purchase validation, snapshot creation and once-only outcome settlement.
 `src/progress_save.gd` alone owns persistence I/O. The scene adapter loads before
 combat creation and saves only accepted economy mutations; it also owns timing,
-the one-second result/replay timer and presentation. Fresh encounter data never shares mutable squads. Multi-enemy
-support is model-only: the playable scene still presents and restarts only
-Border skirmish. Its single-enemy presentation is explicit, not a level-2 screen.
+the one-second result/replay timer and presentation. Fresh encounter data never
+shares mutable squads. The playable scene presents all three authored encounters,
+with an explicit second enemy row rather than a generalized roster renderer.
 Native node-script wiring follows the inspected official Godot demo pattern;
 its random/physics behavior is not used. The local specification and executable
 tests, not that unrelated demo, establish combat correctness.
 
 No automatic advancement to other encounters, gate upgrades, defense, dynasty,
-final art or Android tooling is implemented. Border Skirmish alone repeats;
-the existing Archer position model fixture is unchanged and remains model-only.
+final art or Android tooling is implemented. Border Skirmish, Archer Position and
+Fortified Position repeat by manual selection; both older fixtures are unchanged.
 Viewport-injected input is **not physical mouse/touch verification**. Suspension tests exercise lifecycle notifications,
 not a physical Android device or OS sleep. No mobile export, sustained device
 performance or cinematic-art feasibility claim is made. Those gates remain

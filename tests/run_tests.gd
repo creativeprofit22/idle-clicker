@@ -102,7 +102,11 @@ func run() -> void:
 	test_foreground_clock()
 	test_economy()
 	test_encounter_economy()
+	test_encounter_adapter()
+	test_encounter_saves()
 	test_fortified_economy()
+	test_fortified_adapter()
+	test_fortified_saves()
 	test_progress_format()
 	test_progress_failures()
 	test_progress_adapter()
@@ -790,6 +794,249 @@ func test_fortified_economy() -> void:
 		and economy.gold == 108 and not economy.settle(battle), "Fortified: real defeat pays zero once")
 	economy.restart_battle(0)
 	check(economy.gold == 108 and economy.battle.enemies[0].health == 72, "Fortified: return to Border without payment")
+
+func test_fortified_adapter() -> void:
+	var scene := fresh_scene()
+	var original := scene.battle
+	scene._command()
+	scene.advance_usec(250000)
+	for selection in [2, 99, 0]:
+		scene._select_encounter(selection)
+		check(scene.battle == original and original.commander_queued and scene.elapsed_usec == 250000
+			and not scene.economy._settled and scene.replay_timer.is_stopped()
+			and scene.economy.gold == 0 and scene.economy.levels == [1, 1, 1], "Fortified adapter: locked invalid same preserve state %d" % selection)
+	check(scene.get_node("%FortifiedSelect").disabled and scene.get_node("%FortifiedUnlockHint").visible, "Fortified adapter: locked presentation")
+	scene.economy.gold = 100
+	for role in range(3):
+		scene._purchase(role)
+	check(not scene.get_node("%FortifiedSelect").disabled and not scene.get_node("%FortifiedUnlockHint").visible
+		and original.players[0].max_health == 120, "Fortified adapter: immediate unlock leaves snapshot")
+	scene._select_encounter(2)
+	check(scene.battle != original and scene.elapsed_usec == 0 and not scene.battle.commander_queued
+		and scene.economy.gold == 40 and scene.replay_timer.is_stopped(), "Fortified adapter: ongoing switch clears transients without payout")
+	check(scene.get_node("%Title").text == "FORTIFIED POSITION" and scene.get_node("%FortifiedSelect").disabled
+		and not scene.get_node("%BorderSelect").disabled and not scene.get_node("%ArcherSelect").disabled
+		and scene.get_node("%EnemyFootRow").visible and scene.health_bars[3].value == 160
+		and scene.health_bars[4].value == 80 and scene.gold_label.text.contains("+54"), "Fortified adapter: title selectors two rows reward")
+	scene.advance_time(1)
+	check(scene.health_bars[3].value == 142 and scene.health_bars[4].value == 71, "Fortified adapter: both damaged rows render")
+	scene._purchase(1)
+	check(scene.battle.players[1].damage == 12 and scene.economy.levels == [2, 3, 2], "Fortified adapter: purchase waits for next snapshot")
+	original = scene.battle
+	scene.suspended = true
+	scene._select_encounter(0)
+	check(scene.battle == original, "Fortified adapter: suspension rejects selection")
+	scene.suspended = false
+	scene.advance_time(9)
+	check(scene.economy.gold == 54 and scene.status_label.text.contains("+54")
+		and not scene.replay_timer.is_stopped() and scene.health_bars[3].value == 0
+		and scene.health_bars[4].value == 0, "Fortified adapter: timed victory pays and schedules replay")
+	for selection in [2, 99, -1]:
+		scene._select_encounter(selection)
+		check(scene.battle == original and scene.economy._settled and not scene.replay_timer.is_stopped()
+			and scene.economy.battle == original and scene.economy.current_encounter == 2
+			and scene.economy._battle_reward == 54 and scene.economy.levels == [2, 3, 2]
+			and scene.economy.gold == 54, "Fortified adapter: pending replay preserved on rejection %d" % selection)
+	scene.replay_timer.timeout.emit()
+	check(scene.economy.current_encounter == 2 and scene.battle.rounds == 0
+		and scene.battle.players[1].damage == 16 and scene.battle.players[1].health == 64
+		and scene.replay_timer.is_stopped(), "Fortified adapter: replay fresh upgraded selection")
+	scene._command()
+	scene.advance_usec(250000)
+	scene.restart_battle()
+	check(scene.economy.current_encounter == 2 and scene.elapsed_usec == 0 and not scene.battle.commander_queued
+		and scene.battle.enemies[1].health == 80 and scene.economy.gold == 54, "Fortified adapter: restart retains selection without payment")
+	scene.advance_time(9)
+	scene._select_encounter(0)
+	check(scene.economy.gold == 108 and scene.replay_timer.is_stopped()
+		and not scene.get_node("%EnemyFootRow").visible and scene.health_bars[3].value == 72,
+		"Fortified adapter: settled switch cancels replay retains gold hides second row")
+	scene._select_encounter(1)
+	check(scene.get_node("%Title").text == "ARCHER POSITION" and scene.get_node("%EnemyFootRow").visible
+		and scene.health_bars[3].value == 100 and scene.health_bars[4].value == 40
+		and scene.gold_label.text.contains("+30"), "Fortified adapter: Archer fixture restored")
+	scene._select_encounter(2)
+	scene.battle.players = Combat.new().players
+	scene.advance_time(60)
+	check(scene.battle.result == Combat.Result.DEFEAT and scene.economy.gold == 108
+		and not scene.replay_timer.is_stopped() and scene.replay_timer.wait_time == 1.0, "Fortified adapter: defeat schedules same one-second replay")
+	scene.replay_timer.timeout.emit()
+	check(scene.battle.players[0].health == 160 and scene.battle.rounds == 0
+		and scene.economy.current_encounter == 2, "Fortified adapter: defeat replay restores owned army")
+	scene.free()
+
+	scene = fresh_scene()
+	scene.economy.levels.assign([2, 2, 2])
+	scene.economy.gold = 40
+	scene._select_encounter(2)
+	original = scene.battle
+	scene._command()
+	scene.advance_usec(250000)
+	var last_frame := scene.last_frame_usec
+	scene._select_encounter(-1)
+	check(scene.battle == original and scene.economy.battle == original
+		and scene.economy.current_encounter == 2 and scene.elapsed_usec == 250000
+		and scene.last_frame_usec == last_frame and scene.battle.commander_queued
+		and scene.economy.levels == [2, 2, 2] and scene.economy.gold == 40
+		and not scene.economy._settled and scene.economy._battle_reward == 54
+		and scene.replay_timer.is_stopped(), "Fortified adapter: invalid sentinel preserves ongoing state")
+	scene.free()
+
+func test_fortified_saves() -> void:
+	var fixture := ProgressFixture.new()
+	check(fixture.owned, "Fortified save: isolated ownership")
+	if not fixture.owned:
+		return
+	for owned in [[1, 1, 1], [3, 1, 1], [2, 2, 1], [2, 2, 2], [3, 3, 3]]:
+		var text := JSON.stringify({"version": 1, "gold": 20, "levels": owned})
+		check(fixture.put(text) == OK, "Fortified save: old version-1 fixture")
+		var scene: Presentation = BattleScene.instantiate()
+		scene.progress_save = ProgressSave.new(fixture.path)
+		root.add_child(scene)
+		check(scene.economy.is_encounter_unlocked(2) == (owned.min() >= 2)
+			and scene.economy.current_encounter == 0 and scene.battle.rounds == 0
+			and FileAccess.get_file_as_string(fixture.path) == text, "Fortified save: loaded ownership derives unlock without write %s" % [owned])
+		scene.free()
+	check(DirAccess.remove_absolute(fixture.path) == OK
+		and fixture.put('{"version":1,"gold":20,"levels":[2,2,2]}', ".bak") == OK, "Fortified save: qualifying backup fixture")
+	var recovered: Presentation = BattleScene.instantiate()
+	recovered.progress_save = ProgressSave.new(fixture.path)
+	root.add_child(recovered)
+	check(recovered.economy.is_encounter_unlocked(2) and recovered.economy.current_encounter == 0
+		and not FileAccess.file_exists(fixture.path), "Fortified save: backup unlock without startup rewrite")
+	recovered.free()
+	check(fixture.put('{"version":1,"gold":20,"levels":[2,2,1]}') == OK, "Fortified save: last purchase fixture")
+	var store := FailingSave.new(fixture.path)
+	var scene: Presentation = BattleScene.instantiate()
+	scene.progress_save = store
+	root.add_child(scene)
+	scene.set_process(false)
+	scene.suspended = false
+	scene.skip_resume_frame = false
+	store.fail_write = true
+	scene._purchase(2)
+	check(scene.economy.is_encounter_unlocked(2) and not scene.get_node("%FortifiedSelect").disabled
+		and scene.economy.gold == 0 and scene.save_status.text.contains("not saved"), "Fortified save: failed last purchase retains in-memory unlock")
+	var unsaved: Presentation = BattleScene.instantiate()
+	unsaved.progress_save = ProgressSave.new(fixture.path)
+	root.add_child(unsaved)
+	check(not unsaved.economy.is_encounter_unlocked(2) and unsaved.economy.levels == [2, 2, 1]
+		and unsaved.economy.gold == 20, "Fortified save: relaunch sees only successful ownership")
+	unsaved.free()
+	store.fail_write = false
+	scene._select_encounter(2)
+	scene.advance_time(10)
+	var saved := ProgressSave.new(fixture.path).load_progress()
+	check(saved.gold == 54 and saved.levels == [2, 2, 2] and not scene.economy.settle(scene.battle)
+		and scene.save_status.text.contains("Progress saved"), "Fortified save: real victory retries full ownership and 54 once")
+	var payload: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
+	check(payload.size() == 3 and payload.version == 1 and payload.has("gold") and payload.has("levels"), "Fortified save: unchanged version and keys")
+	scene.free()
+	var reloaded: Presentation = BattleScene.instantiate()
+	reloaded.progress_save = ProgressSave.new(fixture.path)
+	root.add_child(reloaded)
+	check(reloaded.economy.gold == 54 and reloaded.economy.levels == [2, 2, 2]
+		and reloaded.economy.is_encounter_unlocked(2) and reloaded.economy.current_encounter == 0
+		and reloaded.battle.rounds == 0 and reloaded.battle.players[0].health == 160
+		and not reloaded.battle.commander_queued and reloaded.elapsed_usec == 0
+		and reloaded.replay_timer.is_stopped(), "Fortified save: reward reload starts clean Border")
+	reloaded.free()
+	check(fixture.cleanup() == OK, "Fortified save: isolated cleanup")
+
+func test_encounter_adapter() -> void:
+	var scene := fresh_scene()
+	var original := scene.battle
+	scene._select_encounter(Data.Encounter.ARCHER_POSITION)
+	check(scene.battle == original and scene.get_node("%ArcherSelect").disabled, "selection: locked UI and boundary")
+	scene.economy.gold = 60
+	scene._purchase(0)
+	check(not scene.get_node("%ArcherSelect").disabled and scene.battle == original
+		and original.players[0].max_health == 120, "selection: purchase unlocks without changing snapshot")
+	scene._command()
+	scene.advance_usec(350000)
+	scene._select_encounter(99)
+	check(scene.battle == original and scene.elapsed_usec == 350000 and original.commander_queued, "selection: rejected start retains transients")
+	scene._select_encounter(Data.Encounter.ARCHER_POSITION)
+	check(scene.battle != original and scene.elapsed_usec == 0 and not scene.battle.commander_queued
+		and scene.replay_timer.is_stopped() and scene.economy.gold == 40, "selection: abandons queue and partial round without payout")
+	check(scene.health_bars[3].value == 100 and scene.health_bars[4].value == 40
+		and scene.get_node("%EnemyFootRow").visible and scene.gold_label.text.contains("+30"), "selection: two initial enemy rows and reward")
+	scene.advance_time(1)
+	check(scene.health_bars[3].value == 86 and scene.health_bars[4].value == 34, "selection: both damaged enemies render")
+	scene._purchase(1)
+	check(scene.battle.players[1].damage == 8 and scene.economy.levels == [2, 2, 1], "selection: mid-Archer purchase leaves snapshot")
+	scene.advance_time(7)
+	check(scene.health_bars[3].value == 0 and scene.health_bars[4].value == 0
+		and scene.economy.gold == 50 and scene.status_label.text.contains("+30"), "selection: dead rows and correct settled reward")
+	scene.replay_timer.timeout.emit()
+	check(scene.economy.current_encounter == Data.Encounter.ARCHER_POSITION and scene.battle.rounds == 0
+		and scene.battle.players[1].damage == 12 and scene.replay_timer.is_stopped(), "selection: replay retains encounter and applies purchase")
+	original = scene.battle
+	scene.suspended = true
+	scene._select_encounter(Data.Encounter.BORDER_SKIRMISH)
+	check(scene.battle == original, "selection: suspension rejects selection")
+	scene.suspended = false
+	scene.advance_time(8)
+	var paid: int = scene.economy.gold
+	scene._select_encounter(Data.Encounter.BORDER_SKIRMISH)
+	check(scene.replay_timer.is_stopped() and scene.economy.gold == paid
+		and scene.battle.enemies.size() == 1 and not scene.get_node("%EnemyFootRow").visible,
+		"selection: pending replay cancelled and settled reward retained returning Border")
+	scene.free()
+
+func test_encounter_saves() -> void:
+	var fixture := ProgressFixture.new()
+	check(fixture.owned, "encounter save: isolated ownership")
+	if not fixture.owned:
+		return
+	for owned in [[1, 1, 1], [2, 1, 1]]:
+		var text := JSON.stringify({"version": 1, "gold": 0, "levels": owned})
+		check(fixture.put(text) == OK, "encounter save: version-1 fixture")
+		var scene: Presentation = BattleScene.instantiate()
+		scene.progress_save = ProgressSave.new(fixture.path)
+		root.add_child(scene)
+		check(scene.economy.is_encounter_unlocked(Data.Encounter.ARCHER_POSITION) == (owned[0] == 2)
+			and scene.economy.current_encounter == Data.Encounter.BORDER_SKIRMISH
+			and FileAccess.get_file_as_string(fixture.path) == text, "encounter save: unlock derived without startup rewrite")
+		scene.free()
+	check(DirAccess.remove_absolute(fixture.path) == OK
+		and fixture.put('{"version":1,"gold":0,"levels":[2,1,1]}', ".bak") == OK, "encounter save: recovery fixture")
+	var store := FailingSave.new(fixture.path)
+	var scene: Presentation = BattleScene.instantiate()
+	scene.progress_save = store
+	root.add_child(scene)
+	scene.set_process(false)
+	scene.suspended = false
+	scene.skip_resume_frame = false
+	check(scene.economy.is_encounter_unlocked(Data.Encounter.ARCHER_POSITION), "encounter save: recovered backup unlocks")
+	scene._select_encounter(Data.Encounter.ARCHER_POSITION)
+	store.fail_write = true
+	scene.advance_time(8)
+	check(scene.economy.gold == 30 and scene.save_status.text.contains("not saved"), "encounter save: failed Archer save retains reward and unlock")
+	store.fail_write = false
+	scene._purchase(1)
+	var saved := ProgressSave.new(fixture.path).load_progress()
+	check(saved.gold == 10 and saved.levels == [2, 2, 1] and not scene.economy.settle(scene.battle), "encounter save: retry full state without duplicate payout")
+	var payload: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
+	check(payload.size() == 3 and payload.has("version") and payload.has("gold") and payload.has("levels"), "encounter save: no new schema keys")
+	scene._select_encounter(Data.Encounter.BORDER_SKIRMISH)
+	scene.advance_time(4)
+	check(ProgressSave.new(fixture.path).load_progress().gold == 20, "encounter save: returning Border saves only 10")
+	scene._select_encounter(Data.Encounter.ARCHER_POSITION)
+	scene._command()
+	scene.advance_usec(250000)
+	scene.free()
+	var reloaded: Presentation = BattleScene.instantiate()
+	reloaded.progress_save = ProgressSave.new(fixture.path)
+	root.add_child(reloaded)
+	check(reloaded.economy.current_encounter == Data.Encounter.BORDER_SKIRMISH
+		and reloaded.economy.is_encounter_unlocked(Data.Encounter.ARCHER_POSITION)
+		and reloaded.economy.gold == 20 and reloaded.battle.rounds == 0
+		and not reloaded.battle.commander_queued and reloaded.elapsed_usec == 0
+		and reloaded.replay_timer.is_stopped() and reloaded.battle.players[0].health == 160,
+		"encounter save: reload resets selection and transients, preserves ownership")
+	reloaded.free()
+	check(fixture.cleanup() == OK, "encounter save: isolated cleanup")
 
 func test_encounter_economy() -> void:
 	var economy := Economy.new()

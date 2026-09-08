@@ -35,6 +35,16 @@ func run() -> void:
 	current_scene = scene
 	await process_frame
 	await process_frame
+	if "--fortified" in OS.get_cmdline_user_args():
+		await test_fortified_progression()
+		print("SUMMARY: fortified: %d graphical checks, %d failures" % [checks, failures])
+		quit(0 if failures == 0 else 1)
+		return
+	if "--progression" in OS.get_cmdline_user_args():
+		await test_progression()
+		print("SUMMARY: progression: %d graphical checks, %d failures" % [checks, failures])
+		quit(0 if failures == 0 else 1)
+		return
 	await capture("initial")
 	check(scene.battle.rounds == 0 and scene.battle.enemies[0].health == 72,
 		"initial: no damage and round zero")
@@ -98,6 +108,135 @@ func run() -> void:
 	print("SUMMARY: %d graphical checks, %d failures" % [checks, failures])
 	quit(0 if failures == 0 else 1)
 
+func test_fortified_progression() -> void:
+	var fortified: Button = scene.get_node("%FortifiedSelect")
+	var border: Button = scene.get_node("%BorderSelect")
+	var archer: Button = scene.get_node("%ArcherSelect")
+	check(root.has_focus() and not scene.suspended, "Fortified graphical: focused foreground start")
+	check(fortified.disabled and scene.get_node("%FortifiedUnlockHint").visible, "Fortified graphical: starts locked")
+	# Isolated in-memory ownership only; the final required purchase uses viewport input.
+	scene.economy.levels.assign([2, 2, 1])
+	scene.economy.gold = 20
+	scene._refresh()
+	await capture("fortified-locked")
+	press_mouse(scene.upgrades[2], true)
+	press_mouse(scene.upgrades[2], false)
+	check(not fortified.disabled and scene.economy.gold == 0 and scene.economy.levels == [2, 2, 2]
+		and not scene.get_node("%FortifiedUnlockHint").visible, "Fortified graphical: viewport last purchase unlocks")
+	press_mouse(fortified, true)
+	press_mouse(fortified, false)
+	check(scene.economy.current_encounter == 2 and fortified.disabled
+		and scene.get_node("%Title").text == "FORTIFIED POSITION"
+		and scene.health_bars[3].value == 160 and scene.health_bars[4].value == 80, "Fortified graphical: viewport selection full enemy rows")
+	await capture("fortified-selected")
+	var deadline: int = Time.get_ticks_msec() + 11500
+	while scene.battle.result == Combat.Result.ONGOING and Time.get_ticks_msec() < deadline:
+		await process_frame
+	check(root.has_focus() and not scene.suspended and scene.battle.rounds == 10
+		and scene.battle.result == Combat.Result.VICTORY and scene.economy.gold == 54
+		and scene.status_label.text.contains("+54") and scene.health_bars[3].value == 0
+		and scene.health_bars[4].value == 0, "Fortified graphical: real ten-second victory pays 54")
+	check(not scene.replay_timer.is_stopped() and scene.replay_timer.wait_time == 1.0,
+		"Fortified graphical: one-second replay pending")
+	await capture("fortified-victory")
+	var completed := scene.battle
+	deadline = Time.get_ticks_msec() + 1500
+	while scene.battle == completed and Time.get_ticks_msec() < deadline:
+		await process_frame
+	check(scene.battle != completed and scene.economy.current_encounter == 2 and scene.battle.rounds == 0
+		and scene.battle.players[0].health == 160 and scene.battle.enemies[0].health == 160
+		and scene.battle.enemies[1].health == 80 and scene.economy.gold == 54
+		and not scene.battle.commander_queued, "Fortified graphical: real automatic fresh replay")
+	root.size = Vector2i(540, 720)
+	await process_frame
+	await process_frame
+	await capture("fortified-small-scaled")
+	root.content_scale_size = Vector2i(540, 720)
+	await process_frame
+	await process_frame
+	scene.restart.grab_focus()
+	await process_frame
+	await process_frame
+	check(root.get_visible_rect().encloses(scene.restart.get_global_rect())
+		and scene.get_node("%Scroll").scroll_vertical > 0, "Fortified graphical: small-window lower focus scrolling")
+	await capture("fortified-small-bottom")
+	border.grab_focus()
+	await process_frame
+	await process_frame
+	check(root.get_visible_rect().encloses(border.get_global_rect()), "Fortified graphical: selector focus scrolls back")
+	press_key(true, false)
+	press_key(false, false)
+	check(scene.economy.current_encounter == 0 and scene.battle.enemies.size() == 1
+		and not scene.get_node("%EnemyFootRow").visible and scene.economy.gold == 54,
+		"Fortified graphical: keyboard returns to Border without payment")
+	press_mouse(archer, true)
+	press_mouse(archer, false)
+	check(scene.economy.current_encounter == 1 and scene.health_bars[3].value == 100
+		and scene.health_bars[4].value == 40 and scene.gold_label.text.contains("+30"),
+		"Fortified graphical: old Archer selector restores fixture")
+	await capture("fortified-small-archer")
+	check(root.has_focus() and not scene.suspended, "Fortified graphical: focused foreground completion")
+
+func test_progression() -> void:
+	var archer: Button = scene.get_node("%ArcherSelect")
+	var border: Button = scene.get_node("%BorderSelect")
+	check(archer.disabled and scene.get_node("%UnlockHint").visible, "progression: fresh locked hint")
+	scene.economy.gold = 20
+	scene._refresh()
+	await capture("progression-locked")
+	press_mouse(scene.upgrades[0], true)
+	press_mouse(scene.upgrades[0], false)
+	check(not archer.disabled and scene.economy.gold == 0, "progression: real mouse purchase unlocks")
+	press_mouse(archer, true)
+	press_mouse(archer, false)
+	check(scene.battle.enemies.size() == 2 and scene.health_bars[3].value == 100
+		and scene.health_bars[4].value == 40 and archer.disabled, "progression: mouse selection renders two full enemies")
+	await capture("progression-archer")
+	var deadline: int = Time.get_ticks_msec() + 9500
+	while scene.battle.result == Combat.Result.ONGOING and Time.get_ticks_msec() < deadline:
+		await process_frame
+	check(scene.battle.result == Combat.Result.VICTORY and scene.economy.gold == 30
+		and scene.health_bars[3].value == 0 and scene.health_bars[4].value == 0
+		and scene.status_label.text.contains("+30"), "progression: timed Archer victory pays 30")
+	await capture("progression-victory")
+	var completed := scene.battle
+	deadline = Time.get_ticks_msec() + 1500
+	while scene.battle == completed and Time.get_ticks_msec() < deadline:
+		await process_frame
+	check(scene.battle != completed and scene.battle.enemies.size() == 2
+		and scene.battle.rounds == 0 and scene.battle.players[0].health == 160,
+		"progression: automatic same-encounter replay")
+	root.size = Vector2i(540, 720)
+	await process_frame
+	await process_frame
+	await capture("progression-small-scaled")
+	# Also constrain logical size: normal canvas scaling alone does not exercise scrolling.
+	root.content_scale_size = Vector2i(540, 720)
+	await process_frame
+	await process_frame
+	scene.restart.grab_focus()
+	await process_frame
+	await process_frame
+	check(root.get_visible_rect().encloses(scene.restart.get_global_rect())
+		and scene.get_node("%Scroll").scroll_vertical > 0, "progression: focus scrolls lower controls into view")
+	await capture("progression-small-bottom")
+	border.grab_focus()
+	await process_frame
+	await process_frame
+	check(root.get_visible_rect().encloses(border.get_global_rect()), "progression: focus scrolls back to selector")
+	press_key(true, false)
+	press_key(false, false)
+	check(scene.battle.enemies.size() == 1 and not scene.get_node("%EnemyFootRow").visible
+		and scene.economy.gold == 30, "progression: keyboard returns Border without extra payout")
+	await capture("progression-small-border")
+	scene.save_status.text = "Progress not saved · Retry on next victory or purchase; unsaved changes lost on close"
+	await process_frame
+	await process_frame
+	scene.get_node("%Scroll").ensure_control_visible(scene.save_status)
+	await process_frame
+	check(root.get_visible_rect().encloses(scene.save_status.get_global_rect()), "progression: small-window save warning reachable")
+	await capture("progression-small-warning")
+
 func test_saved_reload() -> void:
 	var fixture := ProgressFixture.new()
 	check(fixture.owned, "graphical save: isolated directory owned")
@@ -133,6 +272,9 @@ func test_saved_reload() -> void:
 	await process_frame
 	await capture("small-save-warning")
 	check(scene.save_status.is_visible_in_tree() and scene.save_status.text.contains("preserved") and not scene.saving_enabled, "graphical save: persistent recovery explanation visible")
+	scene.restart.grab_focus()
+	await process_frame
+	await process_frame
 	check(root.get_visible_rect().encloses(scene.restart.get_global_rect()), "graphical save: recovery text leaves restart reachable")
 	scene.free()
 	check(fixture.cleanup() == OK, "graphical save: owned directory cleaned")
@@ -223,6 +365,9 @@ func commander_click(keyboard: bool) -> void:
 		press_mouse(scene.commander, false, false)
 
 func press_mouse(button: Button, down: bool, move_pointer: bool = true) -> void:
+	if move_pointer:
+		scene.get_node("%Scroll").ensure_control_visible(button)
+	check(root.get_visible_rect().encloses(button.get_global_rect()), "mouse target fully visible")
 	var point: Vector2 = button.get_global_rect().get_center()
 	var motion := InputEventMouseMotion.new()
 	motion.position = point
@@ -252,7 +397,13 @@ func capture(title: String) -> void:
 		check(image.save_png(OUTPUT + title + ".png") == OK, "%s: PNG saved" % title)
 	var bounds := Rect2(Vector2.ZERO, root.get_visible_rect().size)
 	var contained: bool = true
-	for child in scene.get_node("Margin/Column").get_children():
+	var scroll: ScrollContainer = scene.get_node("%Scroll")
+	var column: Control = scene.get_node("Margin/Scroll/Column")
+	for child in column.get_children():
 		var control: Control = child as Control
-		contained = bounds.encloses(control.get_global_rect()) and contained
-	check(contained, "%s: controls inside viewport" % title)
+		if not control.visible:
+			continue
+		var rect := control.get_global_rect()
+		contained = rect.position.x >= bounds.position.x and rect.end.x <= bounds.end.x and contained
+		contained = column.get_global_rect().encloses(rect) and rect.size.y <= scroll.size.y and contained
+	check(contained and bounds.encloses(scroll.get_global_rect()), "%s: controls fit scrollable viewport" % title)

@@ -28,151 +28,206 @@ theme_override_constants/margin_top = 16
 theme_override_constants/margin_right = 16
 theme_override_constants/margin_bottom = 16
 
-[node name="Column" type="VBoxContainer" parent="Margin"]
+[node name="Scroll" type="ScrollContainer" parent="Margin"]
+unique_name_in_owner = true
 layout_mode = 2
+horizontal_scroll_mode = 0
+follow_focus = true
+
+[node name="Column" type="VBoxContainer" parent="Margin/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
-[node name="Title" type="Label" parent="Margin/Column"]
+[node name="Title" type="Label" parent="Margin/Scroll/Column"]
+unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 32
 text = "BORDER SKIRMISH"
 
-[node name="Subtitle" type="Label" parent="Margin/Column"]
+[node name="Subtitle" type="Label" parent="Margin/Scroll/Column"]
 layout_mode = 2
 text = "Farm gold · Purchases apply next battle"
 
-[node name="Round" type="Label" parent="Margin/Column"]
+[node name="BorderSelect" type="Button" parent="Margin/Scroll/Column"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
+layout_mode = 2
+action_mode = 0
+text = "Border Skirmish · +10 gold"
+
+[node name="ArcherSelect" type="Button" parent="Margin/Scroll/Column"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
+layout_mode = 2
+action_mode = 0
+text = "Archer Position · +30 gold"
+
+[node name="UnlockHint" type="Label" parent="Margin/Scroll/Column"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Upgrade any troop to Lv.2 to unlock"
+autowrap_mode = 2
+
+[node name="FortifiedSelect" type="Button" parent="Margin/Scroll/Column"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
+layout_mode = 2
+action_mode = 0
+text = "Fortified Position · +54 gold"
+
+[node name="FortifiedUnlockHint" type="Label" parent="Margin/Scroll/Column"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Upgrade every troop to Lv.2 to unlock Fortified Position"
+autowrap_mode = 2
+
+[node name="Round" type="Label" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Round 0"
 
-[node name="EnemyMarker" type="ColorRect" parent="Margin/Column"]
+[node name="EnemyMarker" type="ColorRect" parent="Margin/Scroll/Column"]
 custom_minimum_size = Vector2(0, 8)
 layout_mode = 2
 mouse_filter = 2
 color = Color(0.53, 0.25, 0.21, 1)
 
-[node name="EnemyHealth" type="Label" parent="Margin/Column"]
+[node name="EnemyHealth" type="Label" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Enemy shield"
 
-[node name="EnemyBar" type="ProgressBar" parent="Margin/Column"]
+[node name="EnemyBar" type="ProgressBar" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 18)
 layout_mode = 2
 show_percentage = false
 
-[node name="Divider" type="HSeparator" parent="Margin/Column"]
+[node name="EnemyFootRow" type="VBoxContainer" parent="Margin/Scroll/Column"]
+unique_name_in_owner = true
 layout_mode = 2
 
-[node name="ArmyTitle" type="Label" parent="Margin/Column"]
+[node name="EnemyFootHealth" type="Label" parent="Margin/Scroll/Column/EnemyFootRow"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="EnemyFootBar" type="ProgressBar" parent="Margin/Scroll/Column/EnemyFootRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 18)
+layout_mode = 2
+show_percentage = false
+
+[node name="Divider" type="HSeparator" parent="Margin/Scroll/Column"]
+layout_mode = 2
+
+[node name="ArmyTitle" type="Label" parent="Margin/Scroll/Column"]
 layout_mode = 2
 text = "YOUR ARMY"
 
-[node name="ShieldMarker" type="ColorRect" parent="Margin/Column"]
+[node name="ShieldMarker" type="ColorRect" parent="Margin/Scroll/Column"]
 custom_minimum_size = Vector2(0, 8)
 layout_mode = 2
 mouse_filter = 2
 color = Color(0.24, 0.39, 0.56, 1)
 
-[node name="ShieldHealth" type="Label" parent="Margin/Column"]
+[node name="ShieldHealth" type="Label" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Shield infantry"
 
-[node name="ShieldBar" type="ProgressBar" parent="Margin/Column"]
+[node name="ShieldBar" type="ProgressBar" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 18)
 layout_mode = 2
 show_percentage = false
 
-[node name="FootMarker" type="ColorRect" parent="Margin/Column"]
+[node name="FootMarker" type="ColorRect" parent="Margin/Scroll/Column"]
 custom_minimum_size = Vector2(0, 8)
 layout_mode = 2
 mouse_filter = 2
 color = Color(0.24, 0.46, 0.37, 1)
 
-[node name="FootHealth" type="Label" parent="Margin/Column"]
+[node name="FootHealth" type="Label" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Foot archers"
 
-[node name="FootBar" type="ProgressBar" parent="Margin/Column"]
+[node name="FootBar" type="ProgressBar" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 18)
 layout_mode = 2
 show_percentage = false
 
-[node name="HorseMarker" type="ColorRect" parent="Margin/Column"]
+[node name="HorseMarker" type="ColorRect" parent="Margin/Scroll/Column"]
 custom_minimum_size = Vector2(0, 8)
 layout_mode = 2
 mouse_filter = 2
 color = Color(0.5, 0.4, 0.24, 1)
 
-[node name="HorseHealth" type="Label" parent="Margin/Column"]
+[node name="HorseHealth" type="Label" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Horse archers"
 
-[node name="HorseBar" type="ProgressBar" parent="Margin/Column"]
+[node name="HorseBar" type="ProgressBar" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 18)
 layout_mode = 2
 show_percentage = false
 
-[node name="Gold" type="Label" parent="Margin/Column"]
+[node name="Gold" type="Label" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Gold: 0"
 
-[node name="SaveStatus" type="Label" parent="Margin/Column"]
+[node name="SaveStatus" type="Label" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 14
 autowrap_mode = 2
 
-[node name="ShieldUpgrade" type="Button" parent="Margin/Column"]
+[node name="ShieldUpgrade" type="Button" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 action_mode = 0
 
-[node name="FootUpgrade" type="Button" parent="Margin/Column"]
+[node name="FootUpgrade" type="Button" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 action_mode = 0
 
-[node name="HorseUpgrade" type="Button" parent="Margin/Column"]
+[node name="HorseUpgrade" type="Button" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 action_mode = 0
 
-[node name="Status" type="Label" parent="Margin/Column"]
+[node name="Status" type="Label" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 6
 text = "Battle underway"
 autowrap_mode = 2
 
-[node name="Commander" type="Button" parent="Margin/Column"]
+[node name="Commander" type="Button" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 40)
 layout_mode = 2
 action_mode = 0
 text = "Commander strike (+6)"
 
-[node name="Restart" type="Button" parent="Margin/Column"]
+[node name="Restart" type="Button" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 40)
 layout_mode = 2
 action_mode = 0
 text = "Restart battle · No reward"
 
-[node name="Note" type="Label" parent="Margin/Column"]
+[node name="Note" type="Label" parent="Margin/Scroll/Column"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 16
-text = "Gold and levels saved locally. No offline income.\nUpgrades change next battle's health and damage only."
+text = "Only gold and upgrades persist. Reload starts Border.\nNo offline income. Purchases apply next battle."
 autowrap_mode = 2

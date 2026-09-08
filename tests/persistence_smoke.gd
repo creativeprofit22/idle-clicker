@@ -57,8 +57,12 @@ func run() -> void:
 		check(scene.economy.gold == 20, "earn: second victory +10")
 		scene.upgrades[0].pressed.emit()
 		check(scene.economy.gold == 0 and scene.economy.levels == [2, 1, 1] and not scene.replay_timer.is_stopped(), "earn: purchase while replay pending, close before replay")
+		check(scene.economy.is_encounter_unlocked(Presentation.Data.Encounter.ARCHER_POSITION), "earn: purchase unlocks Archer")
 	else:
 		check(scene.economy.gold == 0 and scene.economy.levels == [2, 1, 1] and scene.battle.players[0].health == 160, "reload: identical ownership, upgraded first battle, no launch income")
+		check(scene.economy.is_encounter_unlocked(Presentation.Data.Encounter.ARCHER_POSITION)
+			and scene.economy.current_encounter == Presentation.Data.Encounter.BORDER_SKIRMISH,
+			"reload: derived unlock and fresh Border selection")
 		await victory(scene)
 		check(scene.economy.gold == 10, "reload: one new victory adds exactly 10")
 	var saved := ProgressSave.new(args[1]).load_progress()
