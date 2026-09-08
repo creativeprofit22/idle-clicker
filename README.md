@@ -35,6 +35,129 @@ next replay or restart. Insufficient funds and capped purchases change nothing.
 Gold and owned troop levels save locally after victories and successful purchases.
 Every launch starts fresh full-health combat; there is no absence/offline reward.
 
+## Separate session-only campaign prototype
+
+For a future separate launch using the pinned Standard executable above:
+
+```powershell
+& $GODOT --path . --scene res://scenes/campaign_prototype.tscn
+```
+
+With `godot` on PATH, the equivalent is
+`godot --path . --scene res://scenes/campaign_prototype.tscn`.
+The normal main scene and its launch instructions are unchanged.
+
+This isolated native-control prototype owns one in-memory Campaign. Closing or
+recreating it resets gold, upgrades and clearances; main-game saves are never
+loaded or changed. No main-menu link, commander or restart control is included.
+Border → Archer → Stronghold transitions settle immediately, with the last
+result retained onscreen rather than a replay delay. Farm requests require that
+encounter's clearance; the latest valid farm/frontier request applies after the
+current battle settles, never abandoning its reward. Purchases apply next battle.
+A long frame stops at the first battle boundary; focus loss/pause freezes combat,
+with no offline catch-up and the first resumed frame excluded.
+
+Stronghold clearance ends at **“Conquest cleared — prototype ends here; ordinary
+farming remains available”**. Frontier is a disabled no-op at that checkpoint;
+from farming it returns there after settlement without replaying Stronghold.
+There is no Fortified frontier, defense, dynasty, export or playable-release approval.
+
+**Campaign supervised graphical verification PASSED; automatic minimization remains a separate unresolved failure.**
+
+Latest complete run (2026-09-08, `--manual-focus`): **52 graphical checks,
+0 failures, exit 0**, about 51 seconds including user interaction. The user
+started the test, minimized when prompted, and closed the window after results.
+The same run covered campaign progression through conquest, deferred navigation,
+purchases, scrolling, and physical minimize/freeze/restore without catch-up.
+Godot's foreground checks remained satisfied outside the explicit suspension test.
+This is a supervised native run, not independent continuous Win32 focus telemetry
+or a headless substitute. No milestone beyond campaign verification is started.
+
+```powershell
+& $GODOT --path . --script tests/campaign_scene_smoke.gd
+# Short suspension reproduction only, not campaign integration coverage:
+& $GODOT --path . --script tests/campaign_scene_smoke.gd -- --focus-only
+# Same assertions, with a physical title-bar minimize click instead of automatic minimization:
+& $GODOT --path . --script tests/campaign_scene_smoke.gd -- --manual-focus
+```
+
+Keep the window focused and unminimized except during the explicit suspension test.
+Manual mode first displays **START WHEN READY**, without a countdown. After
+starting, minimize only when its title says **MINIMIZE**; the driver waits for
+that click without a countdown, then restores automatically. The window stays
+open after success or failure until you close it; the title displays the result.
+Closing before completion exits with failure. `--focus-only` can be combined
+with `--manual-focus` for the short physical check. The 60-second watchdog
+excludes human readiness and result viewing; actual battle and suspension checks
+retain their deadlines. Use a 70-second external bound for unattended automatic
+runs, not interactive manual runs. Foreground interruptions outside the explicit
+suspension test still record failure, but do not close an interactive window.
+No focus/suspension assertions are bypassed.
+
+The driver exercises real elapsed-time progression, viewport mouse/keyboard
+activation, deferred farm/frontier navigation, six purchases, next-battle stats,
+conquest settlement, checkpoint farming, and narrow-window focus-follow scrolling.
+Its only campaign fixture adds 180 session gold for purchases; battle timing,
+outcomes and clearances are not changed. Captures use the native renderer and
+are written to ignored `.gg/screenshots/campaign/`; they are not desktop captures
+or evidence of physical input.
+
+**Earlier attempts during this verification run (2026-09-08):** one complete interaction
+portion passed **44 checks**, and all seven rendered captures were inspected.
+The full run still failed the following native suspension gate. Automatic
+minimization leaves Godot reporting focus while combat continues; an external
+Win32 probe confirmed the native window was minimized and not foreground.
+Godot's focus flag therefore does not independently prove continuous native
+focus on this host. A physical-click attempt observed no minimize transition
+within 15 seconds; a subsequent full run timed out during Stronghold and is
+failed evidence, not a replacement pass. An earlier full manual-mode attempt
+failed after about 15 seconds at **25 checks, 1 failure**, with the observed
+state `mode=0 focus=false suspended=true`: real focus was lost before the
+minimize prompt, and the campaign correctly entered suspension. The new
+fail-fast monitor preserved that exact blocker instead of waiting for a timeout.
+**Subsequent physical check passed:** after replacing the click countdown with
+an explicit human-readiness wait, `--focus-only --manual-focus` completed
+**9 graphical checks, 0 failures, exit 0**. The user minimized the window; Godot
+reported `mode=1 focus=false suspended=true`. Rounds and partial elapsed time
+remained frozen, automatic restore regained focus, and no catch-up round occurred.
+That short check alone did not establish a complete campaign pass. Its 9 checks
+and the earlier 44-check interaction portion remain separate historical results;
+the later 52-check full supervised pass is recorded above. One intervening full
+run exposed an offscreen test target; the keyboard helper now explicitly scrolls
+an already-focused button back into view before input, retaining its visibility
+assertion. The successful full run exercised this correction.
+Automatic-minimize failures remain unresolved, not proof of an engine root cause.
+Native suspension assertions retain the active-combat precondition.
+
+Earlier checks on the wider working tree: editor import passed; headless normal / forced / normal
+completed **1157/0, 1158/1, 1157/0** checks/failures, exits **0/1/0**, with exactly
+one intentional forced failure. The separate opening-battle graphical smoke
+passed **105 checks**, exit 0; it does not establish campaign graphical success.
+The separately recorded Fortified graphical failure remains unresolved. Human
+persistence remains **DEFERRED — not passed**. Comparable external GDScript
+integration usage remains unverified; the driver follows local test patterns.
+No new implementation milestone or campaign-saving scope is approved.
+
+**Scoped checkpoint verification:** the separately staged prerequisite snapshot
+passed editor import and normal / forced / normal with **591/0, 592/1, 591/0**
+checks/failures, exits **0/1/0**, exactly one intentional failure. These counts
+exclude unrelated, still-uncommitted main-game test additions; no tests were
+removed from the working tree. The campaign runtime files match the successful
+52-check supervised graphical run. Captures, logs, staging snapshots and `.godot`
+data remain ignored and outside both commits. Normal Git hooks are not bypassed;
+this checkout has only sample hooks and no configured active hook.
+
+Previously recorded prototype headless verification (2026-09-08, native Godot 4.7.2 Standard,
+35-second caller bounds): editor import exit 0 with no script/parse errors;
+normal / forced / normal completed **1157/0, 1158/1, 1157/0** checks/failures
+with exits **0/1/0**, exactly one intentional forced failure, and all **162**
+existing balance rows retained. The existing malformed-number save tests emit
+two `Exponent too high` warnings. Isolated persistence earn/reload/parent passed
+**13/10/4** checks, zero failures, exit 0. An initial redirected normal run timed
+out before SUMMARY during existing timing tests; it is failed evidence, not a
+pass. The subsequent direct normal/forced/normal sequence above completed under
+the same bounds without code changes. No graphical or human-persistence claim.
+
 ## Local progress and recovery
 
 `user://progress.json` stores only version 1, gold and three owned troop levels.
