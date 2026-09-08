@@ -10,8 +10,10 @@ var result: Result = Result.ONGOING
 var commander_queued: bool = false
 var commander_damage: int = 0
 
-func _init(encounter: Data.Encounter = Data.Encounter.BORDER_SKIRMISH) -> void:
-	players = Data.players()
+func _init(encounter: Data.Encounter = Data.Encounter.BORDER_SKIRMISH,
+		army: Array[Data.Squad] = Data.players()) -> void:
+	for squad in army:
+		players.append(Data.Squad.new(squad.role, squad.title, squad.max_health, squad.damage))
 	enemies = Data.enemies(encounter)
 	var starting_damage: int = 0
 	for squad in players:

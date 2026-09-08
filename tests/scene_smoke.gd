@@ -3,6 +3,8 @@ extends SceneTree
 const BattleScene = preload("res://scenes/opening_battle.tscn")
 const Presentation = preload("res://src/opening_battle.gd")
 const Combat = preload("res://src/combat.gd")
+const ProgressSave = preload("res://src/progress_save.gd")
+const ProgressFixture = preload("res://tests/progress_fixture.gd")
 const OUTPUT: String = "res://.gg/screenshots/opening-battle/"
 var scene: Presentation
 var checks: int = 0
@@ -28,6 +30,7 @@ func run() -> void:
 	var directory_error: Error = DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUTPUT))
 	check(directory_error == OK, "capture directory available")
 	scene = BattleScene.instantiate()
+	scene.progress_save = null
 	root.add_child(scene)
 	current_scene = scene
 	await process_frame
@@ -90,8 +93,49 @@ func run() -> void:
 	check(scene.battle.commander_queued, "smaller window: viewport button remains clickable")
 	await capture("small-queued")
 	await test_delayed_input()
+	await test_farming()
+	await test_saved_reload()
 	print("SUMMARY: %d graphical checks, %d failures" % [checks, failures])
 	quit(0 if failures == 0 else 1)
+
+func test_saved_reload() -> void:
+	var fixture := ProgressFixture.new()
+	check(fixture.owned, "graphical save: isolated directory owned")
+	if not fixture.owned:
+		return
+	var store := ProgressSave.new(fixture.path)
+	check(store.save_progress(10, [2, 1, 1]) == OK, "graphical save: isolated progress seeded")
+	scene.free()
+	scene = BattleScene.instantiate()
+	scene.progress_save = ProgressSave.new(fixture.path)
+	root.add_child(scene)
+	current_scene = scene
+	check(scene.economy.gold == 10 and scene.economy.levels == [2, 1, 1]
+		and scene.battle.players[0].health == 160 and scene.battle.rounds == 0
+		and not scene.battle.commander_queued and scene.replay_timer.is_stopped(), "graphical save: first battle restored ownership, fresh combat")
+	check(scene.save_status.is_visible_in_tree() and scene.save_status.text.contains("Autosave"), "graphical save: visible autosave status")
+	root.size = Vector2i(720, 960)
+	await process_frame
+	await process_frame
+	await capture("saved-reload")
+	root.size = Vector2i(540, 720)
+	await process_frame
+	await process_frame
+	await capture("small-saved-reload")
+	check(root.get_visible_rect().encloses(scene.save_status.get_global_rect()), "graphical save: narrow status contained")
+	scene.free()
+	check(fixture.put("{") == OK, "graphical save: preserved error fixture")
+	scene = BattleScene.instantiate()
+	scene.progress_save = ProgressSave.new(fixture.path)
+	root.add_child(scene)
+	current_scene = scene
+	await process_frame
+	await process_frame
+	await capture("small-save-warning")
+	check(scene.save_status.is_visible_in_tree() and scene.save_status.text.contains("preserved") and not scene.saving_enabled, "graphical save: persistent recovery explanation visible")
+	check(root.get_visible_rect().encloses(scene.restart.get_global_rect()), "graphical save: recovery text leaves restart reachable")
+	scene.free()
+	check(fixture.cleanup() == OK, "graphical save: owned directory cleaned")
 
 func test_delayed_input() -> void:
 	for keyboard in [false, true]:
@@ -128,6 +172,47 @@ func test_delayed_input() -> void:
 			and scene.battle.players[0].health == 108 and not scene.battle.commander_queued
 			and scene.commander.disabled and not scene.is_processing(),
 			"terminal catch-up: late input rejected; keyboard=%s" % keyboard)
+
+func test_farming() -> void:
+	scene.economy = scene.Economy.new()
+	scene.restart_battle()
+	var first: Combat = scene.battle
+	var deadline: int = Time.get_ticks_msec() + 11000
+	while scene.economy.gold < 20 and Time.get_ticks_msec() < deadline:
+		await process_frame
+	check(scene.economy.gold == 20 and scene.battle != first
+		and scene.battle.result == Combat.Result.VICTORY,
+		"passive farming: two real timed victories pay 20 without restart or taps")
+	var completed: Combat = scene.battle
+	deadline = Time.get_ticks_msec() + 1500
+	while scene.battle == completed and Time.get_ticks_msec() < deadline:
+		await process_frame
+	check(scene.battle != completed and scene.battle.rounds == 0
+		and scene.battle.players[0].health == 120 and scene.battle.players[1].health == 40
+		and scene.battle.players[2].health == 60 and not scene.battle.commander_queued,
+		"automatic replay starts with full health and clean input")
+	press_mouse(scene.upgrades[1], true)
+	press_mouse(scene.upgrades[1], false)
+	check(scene.economy.gold == 0 and scene.economy.levels == [1, 2, 1]
+		and scene.battle.players[1].damage == 8 and scene.battle.players[1].max_health == 40
+		and scene.upgrades[1].disabled and scene.upgrades[1].text.contains("40 gold"),
+		"narrow viewport purchase: exact cost, next price, current stats unchanged")
+	await capture("small-purchased")
+	completed = scene.battle
+	scene.last_frame_usec = Time.get_ticks_usec() - 4250000
+	scene.advance_foreground(Time.get_ticks_usec())
+	deadline = Time.get_ticks_msec() + 1500
+	while scene.battle == completed and Time.get_ticks_msec() < deadline:
+		await process_frame
+	check(scene.battle != completed and scene.battle.rounds == 0
+		and scene.battle.players[1].health == 52 and scene.battle.players[1].damage == 12
+		and scene.economy.gold == 10,
+		"automatic replay applies purchased stats and pays completed battle once")
+	await capture("small-upgraded-replay")
+	root.size = Vector2i(720, 960)
+	await process_frame
+	await process_frame
+	await capture("upgraded-replay")
 
 func commander_click(keyboard: bool) -> void:
 	if keyboard:

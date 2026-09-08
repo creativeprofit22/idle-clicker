@@ -1,9 +1,34 @@
 extends SceneTree
 
 const Combat = preload("res://src/combat.gd")
+const Economy = preload("res://src/economy.gd")
 const Data = preload("res://src/encounter_data.gd")
 const BattleScene = preload("res://scenes/opening_battle.tscn")
 const Presentation = preload("res://src/opening_battle.gd")
+const ProgressSave = preload("res://src/progress_save.gd")
+const ProgressFixture = preload("res://tests/progress_fixture.gd")
+
+class FailingSave extends ProgressSave:
+	var fail_write: bool = false
+	var fail_move_to: String = ""
+	var writes: int = 0
+	func _write_stage(destination: String, text: String) -> Error:
+		writes += 1
+		var error := super._write_stage(destination, text)
+		return ERR_FILE_CANT_WRITE if fail_write else error
+	func _move(source: String, destination: String) -> Error:
+		return ERR_FILE_CANT_WRITE if destination == fail_move_to else super._move(source, destination)
+
+class PreflightFailingSave extends ProgressSave:
+	var fail_primary_read: bool = false
+	var primary_reads: int = 0
+	func _read(source: String) -> Dictionary:
+		if source == path:
+			primary_reads += 1
+			if fail_primary_read:
+				return {"outcome": Outcome.IO_FAILURE}
+		return super._read(source)
+
 var checks: int = 0
 var failures: int = 0
 
@@ -70,6 +95,10 @@ func run() -> void:
 	test_adapter()
 	test_timing_partitions()
 	test_foreground_clock()
+	test_economy()
+	test_progress_format()
+	test_progress_failures()
+	test_progress_adapter()
 	if "--force-failure" in OS.get_cmdline_user_args():
 		check(false, "forced runner failure")
 	print("SUMMARY: %d checks, %d failures" % [checks, failures])
@@ -232,6 +261,7 @@ func test_archer_position() -> void:
 
 func fresh_scene() -> Presentation:
 	var scene: Presentation = BattleScene.instantiate()
+	scene.progress_save = null
 	root.add_child(scene)
 	scene.set_process(false)
 	scene.suspended = false
@@ -326,6 +356,112 @@ func test_foreground_clock() -> void:
 	check_fresh(scene, "shared clock: restart clears consumed time and battle")
 	scene.free()
 
+func win(economy: Economy) -> Combat:
+	var battle: Combat = economy.restart_battle()
+	for i in range(60):
+		battle.step_round()
+	return battle
+
+func test_economy() -> void:
+	var economy := Economy.new()
+	check(economy.gold == 0 and economy.levels == [1, 1, 1], "economy: fresh ownership")
+	var unfinished := economy.restart_battle()
+	check(not economy.settle(unfinished) and economy.gold == 0, "ongoing battle cannot pay")
+	for i in range(18):
+		var completed := win(economy)
+		check(economy.settle(completed) and economy.gold == (i + 1) * 10,
+			"farming victory %d: exactly 10 gold" % i)
+		check(not economy.settle(completed) and economy.gold == (i + 1) * 10,
+			"duplicate outcome %d: no second reward" % i)
+	var old: Combat = economy.battle
+	economy.restart_battle()
+	check(not economy.settle(old) and economy.gold == 180, "stale victory cannot pay after restart")
+	for role in range(3):
+		for level in [1, 2]:
+			var before: int = economy.gold
+			var prior: Array[int] = economy.levels.duplicate()
+			check(economy.purchase_cost(role) == 20 * level and economy.purchase(role)
+				and economy.gold == before - 20 * level, "role %d level %d: exact price" % [role, level + 1])
+			prior[role] += 1
+			check(economy.levels == prior, "purchase changes exactly one level")
+			if level == 1:
+				var upgraded := economy.restart_battle()
+				check(upgraded.players[role].health == [160, 52, 80][role]
+					and upgraded.players[role].max_health == [160, 52, 80][role]
+					and upgraded.players[role].damage == [6, 12, 9][role],
+					"level 2 exact stats: role %d" % role)
+	var full := economy.restart_battle()
+	for role in range(3):
+		check(full.players[role].health == [200, 64, 100][role]
+			and full.players[role].max_health == [200, 64, 100][role]
+			and full.players[role].damage == [8, 16, 12][role], "level 3 exact stats: role %d" % role)
+	check(full.commander_damage == 12 and economy.gold == 0, "all upgrades cost 180; snapshot commander 12")
+	economy.gold = 100
+	for role in [-1, 0, 1, 2, 3]:
+		check(not economy.purchase(role) and economy.gold == 100 and economy.levels == [3, 3, 3],
+			"capped or invalid purchase leaves all state unchanged: %d" % role)
+	var poor := Economy.new()
+	poor.gold = 19
+	for role in range(3):
+		check(not poor.purchase(role) and poor.gold == 19 and poor.levels == [1, 1, 1],
+			"unaffordable purchase unchanged: %d" % role)
+	for role in range(3):
+		var short_on_gold := Economy.new()
+		short_on_gold.gold = 59
+		short_on_gold.purchase(role)
+		var before: Array[int] = short_on_gold.levels.duplicate()
+		check(not short_on_gold.purchase(role) and short_on_gold.gold == 39
+			and short_on_gold.levels == before, "level 3 rejects one gold short: role %d" % role)
+	var source: Array[Data.Squad] = Data.players()
+	var isolated := Combat.new(Data.Encounter.BORDER_SKIRMISH, source)
+	source[1].damage = 999
+	source[1].health = 0
+	check(isolated.players[1].damage == 8 and isolated.players[1].health == 40,
+		"combat owns independent squad snapshot")
+	var abandoned := poor.restart_battle()
+	for i in range(5):
+		poor.restart_battle()
+	check(poor.gold == 19 and poor.levels == [1, 1, 1], "repeated restart cannot mint rewards")
+	for i in range(4):
+		abandoned.step_round()
+	check(not poor.settle(abandoned) and poor.gold == 19, "abandoned battle later winning cannot pay")
+	for squad in poor.battle.players:
+		squad.health = 0
+	poor.battle.step_round()
+	check(poor.settle(poor.battle) and poor.gold == 19 and poor.levels == [1, 1, 1],
+		"defeat pays nothing and retains ownership")
+	var scene := fresh_scene()
+	scene.economy.gold = 60
+	scene.advance_time(1.0)
+	var snapshot: Combat = scene.battle
+	scene.upgrades[1].pressed.emit()
+	check(scene.economy.gold == 40 and scene.economy.levels == [1, 2, 1]
+		and snapshot.players[1].max_health == 40 and snapshot.players[1].damage == 8
+		and snapshot.enemies[0].health == 54 and snapshot.commander_damage == 6,
+		"mid-battle purchase changes ownership, not snapshot")
+	scene.upgrades[1].pressed.emit()
+	scene.advance_time(3.0)
+	check(scene.economy.gold == 10 and snapshot.rounds == 4 and not scene.replay_timer.is_stopped(),
+		"original snapshot wins in four rounds; reward and replay scheduled")
+	scene.notification(Node.NOTIFICATION_APPLICATION_PAUSED)
+	check(scene.replay_timer.paused, "result replay pauses with application")
+	scene.notification(Node.NOTIFICATION_APPLICATION_RESUMED)
+	check(not scene.replay_timer.paused, "result replay resumes with application")
+	scene.replay_timer.timeout.emit()
+	check(scene.battle != snapshot and scene.battle.rounds == 0 and scene.elapsed_usec == 0
+		and not scene.battle.commander_queued and scene.battle.players[0].health == 120
+		and scene.battle.players[1].health == 64 and scene.battle.players[1].damage == 16
+		and scene.battle.players[2].health == 60 and scene.battle.commander_damage == 8,
+		"next replay: both purchases, full health, fresh timer and commander snapshot")
+	check(not scene.economy.settle(snapshot) and scene.economy.gold == 10, "replay cannot repay old outcome")
+	scene.advance_time(0.0) # Exclude the resume frame as in production.
+	scene.advance_time(1.0)
+	check(scene.battle.enemies[0].health == 46, "next battle uses upgraded 26 damage")
+	scene.restart_battle()
+	check(scene.economy.gold == 10 and scene.economy.levels == [1, 3, 1]
+		and scene.replay_timer.is_stopped(), "manual restart retains purchases, cancels pending replay, pays nothing")
+	scene.free()
+
 func test_adapter() -> void:
 	var scene := fresh_scene()
 	check_fresh(scene, "scene: fresh state and labels")
@@ -388,3 +524,192 @@ func test_adapter() -> void:
 	check(scene.battle.rounds == 3, "desktop focus: no absence catch-up")
 	scene.free()
 	other.free()
+
+func test_progress_format() -> void:
+	var fixture := ProgressFixture.new()
+	check(fixture.owned, "save: isolated directory owned")
+	if not fixture.owned:
+		return
+	var store := ProgressSave.new(fixture.path)
+	check(store.load_progress().outcome == ProgressSave.Outcome.MISSING and not FileAccess.file_exists(fixture.path), "save: missing does not write")
+	check(fixture.put("abandoned", ".tmp") == OK and store.load_progress().outcome == ProgressSave.Outcome.MISSING, "save: abandoned stage ignored")
+	for gold in [0, 10, ProgressSave.MAX_GOLD]:
+		for level in [1, 2, 3]:
+			var levels: Array[int] = [level, level, level]
+			check(store.save_progress(gold, levels) == OK, "save: write gold %d level %d" % [gold, level])
+			var loaded := ProgressSave.new(fixture.path).load_progress()
+			check(loaded.outcome == ProgressSave.Outcome.LOADED and loaded.gold == gold and loaded.levels == levels, "save: exact round trip")
+	var isolated := store.load_progress()
+	isolated.levels[0] = 1
+	check(store.load_progress().levels == [3, 3, 3], "save: returned snapshot isolated")
+	var before := FileAccess.get_file_as_bytes(fixture.path)
+	check(store.save_progress(-1, [1, 1, 1]) != OK and store.save_progress(ProgressSave.MAX_GOLD + 1, [1, 1, 1]) != OK and store.save_progress(0, [1, 4, 1]) != OK and FileAccess.get_file_as_bytes(fixture.path) == before, "save: invalid writes preserve primary")
+	var invalid: Array[String] = ["", "{", "[]", "null", "true", "{}",
+		'{"version":1}', '{"version":true,"gold":0,"levels":[1,1,1]}',
+		'{"version":1,"gold":0,"levels":[1,1,1],"extra":0}',
+		'{"version":1,"gold":"0","levels":[1,1,1]}',
+		'{"version":1,"gold":true,"levels":[1,1,1]}',
+		'{"version":1,"gold":-1,"levels":[1,1,1]}',
+		'{"version":1,"gold":0.5,"levels":[1,1,1]}',
+		'{"version":1,"gold":9007199254740991.1,"levels":[1,1,1]}',
+		'{"version":1,"gold":1.00000000000000001,"levels":[1,1,1]}',
+		'{"version":1,"gold":1e999,"levels":[1,1,1]}',
+		'{"version":1,"gold":9007199254740992,"levels":[1,1,1]}',
+		'{"version":1,"gold":0,"levels":{}}',
+		'{"version":1,"gold":0,"levels":[1,1]}',
+		'{"version":1,"gold":0,"levels":[1,1,1,1]}',
+		'{"version":1,"gold":0,"levels":[0,1,1]}',
+		'{"version":1,"gold":0,"levels":[1,4,1]}',
+		'{"version":1,"gold":0,"levels":[1,1.5,1]}',
+		'{"version":1,"gold":0,"levels":[1,true,1]}',
+		'{"version":1,"gold":0,"levels":[1,"1",1]}', " ".repeat(4097)]
+	for text in invalid:
+		check(fixture.put(text) == OK, "save: invalid fixture written")
+		var rejected := ProgressSave.new(fixture.path)
+		check(rejected.load_progress().outcome == ProgressSave.Outcome.CORRUPT and rejected.save_progress(10, [1, 1, 1]) != OK and FileAccess.get_file_as_bytes(fixture.path) == text.to_utf8_buffer(), "save: corrupt preserved without backup bypass")
+	for text in ['{"version":1.0,"gold":15e1,"levels":[1.0,2e0,30e-1]}', '{"version":1,"gold":0e-999,"levels":[1,2,3]}']:
+		check(fixture.put(text) == OK and ProgressSave.new(fixture.path).load_progress().outcome == ProgressSave.Outcome.LOADED, "save: exact whole decimal and exponent forms accepted")
+	for text in ['{"version":2}', '{"version":99,"gold":"future payload"}']:
+		check(fixture.put(text) == OK, "save: future fixture written")
+		var future := ProgressSave.new(fixture.path)
+		check(future.load_progress().outcome == ProgressSave.Outcome.UNSUPPORTED and future.save_progress(10, [1, 1, 1]) != OK and FileAccess.get_file_as_bytes(fixture.path) == text.to_utf8_buffer(), "save: unsupported classified first and preserved")
+	check(ProgressSave._validate({"version": 1, "gold": NAN, "levels": [1, 1, 1]}).outcome == ProgressSave.Outcome.CORRUPT and ProgressSave._validate({"version": 1, "gold": INF, "levels": [1, 1, 1]}).outcome == ProgressSave.Outcome.CORRUPT, "save: nonfinite rejected")
+	check(fixture.cleanup() == OK, "save: owned format directory cleaned")
+
+func test_progress_failures() -> void:
+	var fixture := ProgressFixture.new()
+	check(fixture.owned, "save failures: directory owned")
+	if not fixture.owned:
+		return
+	var store := FailingSave.new(fixture.path)
+	check(store.save_progress(20, [1, 1, 1]) == OK, "save failures: baseline")
+	var before := FileAccess.get_file_as_bytes(fixture.path)
+	store.fail_write = true
+	check(store.save_progress(30, [1, 1, 1]) != OK and FileAccess.get_file_as_bytes(fixture.path) == before, "save failures: reported flush/write failure preserves primary")
+	store.fail_write = false
+	check(DirAccess.remove_absolute(fixture.path + ".tmp") == OK and DirAccess.make_dir_absolute(fixture.path + ".tmp") == OK, "save failures: real blocked staging path")
+	check(store.save_progress(30, [1, 1, 1]) != OK and FileAccess.get_file_as_bytes(fixture.path) == before, "save failures: staging open failure preserves primary")
+	check(DirAccess.remove_absolute(fixture.path + ".tmp") == OK and DirAccess.make_dir_absolute(fixture.path + ".bak") == OK, "save failures: real backup obstruction")
+	check(store.save_progress(30, [1, 1, 1]) != OK and FileAccess.get_file_as_bytes(fixture.path) == before, "save failures: native backup rename failure preserves primary")
+	check(DirAccess.remove_absolute(fixture.path + ".bak") == OK, "save failures: backup obstruction removed")
+	store.fail_move_to = fixture.path
+	check(store.save_progress(30, [1, 1, 1]) != OK and not FileAccess.file_exists(fixture.path) and FileAccess.get_file_as_bytes(fixture.path + ".bak") == before, "save failures: failed commit and restore retain last-good backup")
+	var recovery_started := Time.get_ticks_usec()
+	var recovered := ProgressSave.new(fixture.path).load_progress()
+	print("RECOVERY: validated backup loaded in %d usec" % (Time.get_ticks_usec() - recovery_started))
+	check(recovered.outcome == ProgressSave.Outcome.LOADED and recovered.gold == 20 and recovered.get("recovered", false), "save failures: missing-primary crash window recovered")
+	store.fail_move_to = ""
+	check(store.save_progress(40, [2, 1, 1]) == OK and store.load_progress().gold == 40 and FileAccess.get_file_as_bytes(fixture.path + ".bak") == before, "save failures: retry full state with backup retained")
+	check(DirAccess.remove_absolute(fixture.path) == OK and DirAccess.make_dir_absolute(fixture.path) == OK, "save failures: unreadable primary directory")
+	var unreadable := ProgressSave.new(fixture.path)
+	check(unreadable.load_progress().outcome == ProgressSave.Outcome.IO_FAILURE and unreadable.save_progress(50, [2, 1, 1]) != OK and DirAccess.dir_exists_absolute(fixture.path), "save failures: unreadable primary preserved, backup not bypassed")
+	check(fixture.cleanup() == OK, "save failures: owned directory cleaned")
+
+func test_runtime_preflight() -> void:
+	var fixture := ProgressFixture.new()
+	check(fixture.owned, "runtime preflight: isolated directory owned")
+	if not fixture.owned:
+		return
+	var store := PreflightFailingSave.new(fixture.path)
+	var scene := saved_scene(store)
+	scene.advance_time(4.0)
+	var before := FileAccess.get_file_as_bytes(fixture.path)
+	check(ProgressSave.new(fixture.path).load_progress().gold == 10, "runtime preflight: first victory saved")
+	scene.restart_battle()
+	store.fail_primary_read = true
+	scene.advance_time(4.0)
+	check(scene.economy.gold == 20 and FileAccess.get_file_as_bytes(fixture.path) == before
+		and scene.saving_enabled and scene.save_status.text.contains("Retry"), "runtime preflight: transient failure preserves disk and earned reward")
+	scene._refresh()
+	check(scene.save_status.text.contains("Retry"), "runtime preflight: retry warning survives refresh")
+	store.fail_primary_read = false
+	var reads := store.primary_reads
+	scene.upgrades[0].pressed.emit()
+	var loaded := ProgressSave.new(fixture.path).load_progress()
+	check(store.primary_reads > reads and loaded.gold == 0 and loaded.levels == [2, 1, 1]
+		and scene.economy.gold == 0 and scene.economy.levels == [2, 1, 1]
+		and scene.save_status.text.begins_with("Progress saved"), "runtime preflight: purchase rereads and retries full snapshot, clears warning")
+	scene.advance_time(100.0)
+	check(not scene.economy.settle(scene.battle) and scene.economy.gold == 0, "runtime preflight: no duplicate reward on retry")
+	scene.free()
+	for payload in ["{", '{"version":99,"gold":"future payload"}']:
+		check(fixture.put('{"version":1,"gold":10,"levels":[1,1,1]}') == OK
+			and fixture.put('{"version":1,"gold":0,"levels":[1,1,1]}', ".bak") == OK, "runtime preservation: valid startup and older backup")
+		store = PreflightFailingSave.new(fixture.path)
+		scene = saved_scene(store)
+		check(fixture.put(payload) == OK, "runtime preservation: replace primary after accepted load")
+		scene.advance_time(4.0)
+		var warning := scene.save_status.text
+		check(not scene.saving_enabled and warning.begins_with("Saving disabled")
+			and warning.contains("preserved") and warning.contains("Close")
+			and warning.contains("compatible") and not warning.contains("Retry")
+			and scene.economy.gold == 20, "runtime preservation: terminal recovery UI without reloading earned state")
+		reads = store.primary_reads
+		scene._refresh()
+		scene.restart.pressed.emit()
+		scene.upgrades[0].pressed.emit()
+		scene.advance_time(4.0)
+		check(not scene.saving_enabled and scene.save_status.text == warning and store.primary_reads == reads
+			and scene.economy.gold == 10 and scene.economy.levels == [2, 1, 1]
+			and FileAccess.get_file_as_bytes(fixture.path) == payload.to_utf8_buffer(), "runtime preservation: refresh restart purchase victory retain disabled UI and exact bytes")
+		check(store.save_progress(10, [2, 1, 1]) == ERR_UNAUTHORIZED
+			and FileAccess.get_file_as_bytes(fixture.path) == payload.to_utf8_buffer(), "runtime preservation: store itself remains blocked")
+		scene.free()
+		scene = saved_scene(ProgressSave.new(fixture.path))
+		check(not scene.saving_enabled and scene.economy.gold == 0 and scene.economy.levels == [1, 1, 1]
+			and scene.save_status.text == warning, "runtime preservation: relaunch defaults without backup bypass")
+		scene.free()
+	check(fixture.cleanup() == OK, "runtime preflight: isolated directory cleaned")
+
+func saved_scene(store: ProgressSave) -> Presentation:
+	var scene: Presentation = BattleScene.instantiate()
+	scene.progress_save = store
+	root.add_child(scene)
+	scene.set_process(false)
+	scene.suspended = false
+	scene.skip_resume_frame = false
+	return scene
+
+func test_progress_adapter() -> void:
+	test_runtime_preflight()
+	var fixture := ProgressFixture.new()
+	check(fixture.owned, "saved adapter: directory owned")
+	if not fixture.owned:
+		return
+	var store := FailingSave.new(fixture.path)
+	var scene := saved_scene(store)
+	check(store.writes == 0 and scene.economy.gold == 0, "saved adapter: no startup write")
+	scene._purchase(0)
+	scene.restart_battle()
+	check(store.writes == 0, "saved adapter: rejected purchase and restart do not save")
+	scene.advance_time(4.0)
+	check(store.writes == 1 and store.load_progress().gold == 10, "saved adapter: victory reaches disk once")
+	scene.advance_time(100.0)
+	check(not scene.economy.settle(scene.battle) and store.writes == 1, "saved adapter: duplicate and terminal time do not save")
+	scene.restart_battle()
+	store.fail_write = true
+	scene.advance_time(4.0)
+	check(scene.economy.gold == 20 and store.load_progress().gold == 10 and scene.save_status.text.begins_with("Progress not saved"), "saved adapter: failed reward save keeps earned gold")
+	scene._refresh()
+	check(scene.save_status.text.begins_with("Progress not saved"), "saved adapter: refresh retains warning")
+	store.fail_write = false
+	scene._purchase(0)
+	check(scene.economy.gold == 0 and store.load_progress().gold == 0 and store.load_progress().levels == [2, 1, 1] and scene.save_status.text.begins_with("Progress saved") and store.writes == 3, "saved adapter: purchase retries full snapshot, clears warning without reward")
+	scene.free()
+	check(store.writes == 3, "saved adapter: shutdown does not save")
+	scene = saved_scene(ProgressSave.new(fixture.path))
+	check(scene.economy.gold == 0 and scene.economy.levels == [2, 1, 1] and scene.battle.players[0].health == 160 and scene.battle.players[0].damage == Data.players()[0].damage + Economy.DAMAGE_GAIN[0] and scene.battle.rounds == 0 and not scene.battle.commander_queued and scene.replay_timer.is_stopped() and scene.elapsed_usec == 0, "saved adapter: load precedes first fresh full-health battle, no pending replay")
+	scene.free()
+	scene = saved_scene(store)
+	for squad in scene.battle.players:
+		squad.health = 0
+	scene.advance_time(1.0)
+	check(scene.battle.result == Combat.Result.DEFEAT and store.writes == 3, "saved adapter: defeat never saves")
+	scene.free()
+	check(fixture.put("{") == OK, "saved adapter: corrupt fixture")
+	scene = saved_scene(ProgressSave.new(fixture.path))
+	scene.advance_time(4.0)
+	scene._refresh()
+	check(scene.economy.gold == 10 and not scene.saving_enabled and scene.save_status.text.contains("preserved") and FileAccess.get_file_as_string(fixture.path) == "{", "saved adapter: corrupt defaults playable, visible durable warning, no overwrite")
+	scene.free()
+	check(fixture.cleanup() == OK, "saved adapter: owned directory cleaned")

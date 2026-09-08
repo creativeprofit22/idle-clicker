@@ -1,7 +1,8 @@
-# Border Skirmish — opening battle
+# Border Skirmish — farming loop
 
 One offline placeholder encounter: three squads, simultaneous one-second rounds,
-one commander strike per interval, and restart. Uses native Godot controls,
+one commander strike per interval, 10 gold per victory, automatic replay and
+three troop upgrades. Uses native Godot controls,
 shapes and fonts; no downloaded art, plugins or runtime packages.
 
 ## Run (Windows PowerShell, from this directory)
@@ -21,8 +22,64 @@ key does not repeat. Restart works during battle and after victory.
 
 The army wins in four passive rounds, or three with one strike each round.
 Losing focus or suspending freezes in-memory combat; the resume-frame gap is
-excluded. Restart replaces battle state. **Closing the app loses the battle**:
-there is deliberately no saving or absence reward yet.
+excluded. Each result stays visible for one second, then Border Skirmish replays
+at full health. Victory pays exactly 10 gold once; defeat pays nothing.
+Restart abandons the current battle without settlement, clears queued input and
+timing, cancels pending replay, and retains gold and owned levels. Already-earned
+victory gold remains; restarting itself never pays.
+
+Each troop starts at level 1, costs 20 gold for level 2 and 40 for level 3, and
+caps at level 3. Each level adds health/damage: shield +40/+2, foot +12/+4,
+horse +20/+3. Ownership changes immediately; combat snapshots change only at the
+next replay or restart. Insufficient funds and capped purchases change nothing.
+Gold and owned troop levels save locally after victories and successful purchases.
+Every launch starts fresh full-health combat; there is no absence/offline reward.
+
+## Local progress and recovery
+
+`user://progress.json` stores only version 1, gold and three owned troop levels.
+Use the Godot editor's **Project → Open User Data Folder** to locate it. Reads
+are bounded to 4 KiB; gold must be a whole number from 0–9007199254740991 and
+levels exactly three whole numbers from 1–3. Numeric strings, booleans, nonfinite
+values, and fractions (including fractions rounded away by JSON doubles) are
+rejected. No resources, objects, scripts, paths, battle health, strikes, replay
+state, timestamps or offline income are loaded from this file.
+
+- Missing progress starts defaults without writing on launch. Valid progress
+  loads before the first combat snapshot; no startup or shutdown save occurs.
+- At startup, damaged, unsupported or unreadable progress remains untouched. That session
+  plays defaults with saving disabled and a persistent explanation. Close the
+  app and move `progress.json` and any `progress.json.bak` aside together to
+  explicitly start over, or reopen with a compatible version. Keep the moved
+  files if progress matters; there is no reset button or automatic migration.
+- Writes stage to `progress.json.tmp`, check write/flush errors, close, reread
+  and validate the entire snapshot. The validated primary is moved to `.bak`,
+  checked there, then the staged file moves into the now-empty primary path.
+  A failed commit attempts restoration, retaining the backup if restoration
+  also fails. Abandoned `.tmp` files are uncommitted and ignored on load.
+- A missing primary can recover a validated `.bak`; a present damaged or
+  unsupported primary never silently falls back to an older backup. Recovery
+  does not rewrite on launch; the next successful economy mutation saves.
+- Write failure or a transient primary-read failure after an accepted startup
+  preserves in-memory rewards/purchases and shows **Progress not saved**.
+  A failed preflight read writes nothing; the next save rereads and validates
+  the primary. The next successful victory or purchase retries the full current
+  snapshot, clearing the warning on success. No double reward, refund or rebuy.
+  **Unsaved changes can be lost when closing.** Restart, defeat, rejected
+  purchases, duplicate settlement and replay alone never save or award gold.
+- If the primary becomes damaged or unsupported during play, saving is disabled
+  for the rest of that session, with the same persistent preservation/recovery
+  instructions as startup. Earned gold and purchases stay in memory, not replaced
+  by disk state. Restarting combat does not clear this protection or warning.
+
+**One running instance only.** There is no writer lock or cloud sync; add writer
+locking before supporting concurrent instances. The last-good backup covers
+replacement recovery, not device loss. Recovery can lose mutations since the
+last successful save (or the attempted mutation during interrupted rotation).
+There is a missing-primary window between moves: this is **not crash-atomic**
+and does not claim power-loss durability. Keep an external backup for device
+loss; no automatic off-device backup is configured. Excessive gold is rejected
+for persistence rather than rounded.
 
 ## Verify
 
@@ -38,6 +95,12 @@ there is deliberately no saving or absence reward yet.
 & $GODOT --path . --script tests/scene_smoke.gd
 # Graphical session required. Do not move focus away during this short run.
 # Expect complete graphical SUMMARY, zero failures, and $LASTEXITCODE = 0.
+
+& $GODOT --headless --path . --script tests/persistence_smoke.gd
+& $GODOT --path . --script tests/persistence_smoke.gd
+# Two isolated scene processes: earn/purchase/exit, then reload/new victory.
+# Keep each graphical child foreground and unminimized. Bound each command to 35s.
+# Expect earn (12), reload (9), parent (4) checks, all zero failures, exit 0.
 ```
 
 Missing summary, parse errors, timeout or a nonzero normal exit means failure.
@@ -189,20 +252,165 @@ focus handling and deadlines remain unchanged. Failed invocation logs remain
 outside the repository in the local command history; a later pass does not
 reclassify those failures as proven focus interruptions.
 
+## Border Skirmish economy — verified 8 September 2026
+
+- Native headless import: exit 0, no parse errors. Expanded suite: **258 checks,
+  zero failures, exit 0**, including all 177 pre-existing checks unchanged.
+- Forced failure: **259 checks, exactly one intentional failure, exit 1**;
+  subsequent normal run: **258 checks, zero failures, exit 0**.
+- Graphical suite: **63 checks, zero failures, exit 0**, 19.330 seconds.
+  All 50 previous assertions remain. Two passive, real-timed victories earned
+  20 gold without restart or input, then viewport purchase and automatic replay
+  verified the upgraded snapshot. No unexpected failures occurred in this work.
+- Every command had a 35-second external bound; graphical internal timeout
+  remains 25 seconds. Focus/suspension behavior and existing checks were not weakened.
+- Nine captures refreshed under ignored `.gg/screenshots/opening-battle/`.
+  Visually inspected `upgraded-replay.png` (720×960) and
+  `small-upgraded-replay.png` (540×720): health, gold, purchases and controls
+  contained and readable. `small-purchased.png` captures ownership changing
+  while current battle stats remain unchanged.
+
+Purchase guards follow the inspected public
+[PokéClicker Upgrade implementation](https://github.com/pokeclicker/pokeclicker/blob/a3062f11fdcf4c22e6a9a7d4747e5bb6614f44ab/src/modules/upgrades/Upgrade.ts#L53-L78):
+check the cap and funds before debit and level change. Its globals, observables,
+saving and generic upgrade hierarchy are unnecessary here and were not imported.
+An active-battle identity and consumed flag prevent duplicate/stale payment without
+an ever-growing reward ledger. Native behavior tests establish the local contract;
+the external sample does not verify our rewards or Godot lifecycle handling.
+The replay timer uses the official [Timer API](https://docs.godotengine.org/en/stable/classes/class_timer.html).
+
+## Local persistence verification — 8 September 2026
+
+- **CODE:** Inspected the pinned engine's complete
+  [`DirAccessWindows::rename` implementation](https://github.com/godotengine/godot/blob/4.7.2-stable/drivers/windows/dir_access_windows.cpp).
+  It removes an existing destination before `_wrename`. The approved adjustment
+  rotates the primary into backup first, rather than overwriting the primary.
+  Official FileAccess, DirAccess and JSON documentation informed error handling;
+  comparable GDScript corpus usage remains **unverified** (indexer gap).
+- **RUNTIME:** Native `4.7.2.stable.official.ed1daf0bf` import passed. Headless:
+  **369 checks, zero failures, exit 0**, preserving the 258 prior checks.
+  Forced run: **370 checks, exactly one intentional failure, exit 1**;
+  subsequent normal run: **369 checks, zero failures, exit 0**.
+- **RUNTIME:** Tests cover bounded schema reads, exact numeric limits, unsupported
+  and corrupt byte preservation, isolated snapshots, replacement and recovery,
+  real staging-open and backup-rename obstructions, unreadable-primary directory,
+  simulated reported flush failure and failed final move/restoration. Last-good
+  backup recovery loaded into memory in **1,181 microseconds** on the final run;
+  the subsequent successful mutation repopulated the primary. This is a local
+  drill timing, not a recovery-time guarantee. Real full disk, ACL-denied reads
+  and power interruption were not reproduced; their error branches are covered
+  by deterministic I/O failures/seams, not claimed as native fault injection.
+- **RUNTIME:** Graphical regression: **81 checks, zero failures, exit 0** in
+  **20.125 seconds**, including all 63 prior checks; unchanged 25-second internal
+  deadline and 35-second caller bound. Save status, fresh restored scene and
+  recovery text remain visible. Inspected `saved-reload.png` (720×960),
+  `small-saved-reload.png` and `small-save-warning.png` (540×720), under ignored
+  `.gg/screenshots/opening-battle/`.
+- **RUNTIME:** Isolated two-process probe passed both headless and native Windows
+  OpenGL runs (12 earn + 9 reload + 4 parent checks, no failures). Native run:
+  **15.605 seconds**. Two real-timed victories, purchase, process exit while
+  replay pending, new graphical process with matching gold/levels and fresh
+  full-health combat, then exactly +10 from one new victory. This native run
+  is distinct from the headless probe. Neither uses real player saves.
+- Initial implementation checks exposed one incorrect expected damage value,
+  two new graphical assertions mixing physical-window and logical-viewport
+  coordinates, an invalid attempt to hide Godot's main window, and two JSON
+  rounding acceptance cases. Corrected the test expectations/coordinate space,
+  removed the unsupported hide call, and rejected non-whole lexical numbers;
+  final runs above passed without weakening old assertions. Extreme exponent
+  fixtures intentionally produce Godot's `Exponent too high` warning.
+- **Unverified manual gate:** The native probe performs scripted exit/relaunch
+  and signal-driven purchase, not a human-operated close button and physical
+  purchase. Before release, repeat earn → purchase → close → relaunch using
+  a disposable copy of the project with a distinct application name/user-data
+  directory, never an existing player's save. Confirm matching ownership,
+  fresh combat and exactly one new +10 reward. No power-loss or mobile claim.
+
+All unrelated scene fixtures inject disabled persistence before entering the
+scene tree. Persistence fixtures exclusively create uniquely named test-owned
+`user://progress-test-<pid>-<ticks>/` directories. The two-process coordinator
+retains ownership until children exit and removes only known test entries.
+Children have 15-second internal deadlines; the caller's 35-second bound also
+catches parse/startup hangs. Force-killing the coordinator can leave its isolated
+test directory behind; it never authorizes cleanup of real player data.
+
+## Runtime save-preflight regression — 8 September 2026
+
+- **RUNTIME:** Isolated regression reproduced **388 checks, 7 failures, exit 1**
+  before the fix: a transient primary read latched saving off, while runtime
+  damaged/unsupported files received impossible retry promises.
+- **CODE:** The store now distinguishes transient preflight I/O errors from
+  terminal preservation outcomes. The adapter queries that status without
+  reloading progress and reuses startup recovery instructions for terminal states.
+- **RUNTIME:** Native import passed; headless **388 checks, zero failures, exit 0**.
+  Forced run: **389 checks, exactly one intentional failure, exit 1**, followed
+  by **388 checks, zero failures, exit 0**. Existing startup-unreadable checks
+  remain unchanged. New assertions inspect disk through separate stores, never
+  resetting the active store's preservation state.
+- **RUNTIME:** Tests verify full-snapshot purchase retry after one injected
+  primary-read failure, no duplicate reward, and corrupt/unsupported byte
+  preservation plus disabled UI through refresh, combat restart, later mutations
+  and relaunch, with no older-backup bypass. Real player saves were not used.
+- **RUNTIME:** Native graphical scene smoke passed **81 checks**, exit 0 in
+  **19.477 seconds**; graphical two-process persistence passed **12 + 9 + 4 checks**,
+  exit 0 in **17.097 seconds**. Both used 35-second caller bounds; focus behavior
+  and internal deadlines were unchanged. The separate human-operated release
+  gate documented above remains unverified.
+
+## Human-operated release attempt — 8 September 2026
+
+- **UNVERIFIED / VERIFY-BEFORE-SHIP:** Windows native
+  `4.7.2.stable.official.ed1daf0bf`, OpenGL compatibility on NVIDIA GTX 1080.
+  Disposable import passed; launched the normal main scene, without test scripts.
+- Owned disposable copy: `E:\Projects\idle-clicker-release-d1176c46-BGKUMFYI`.
+  Copied only project configuration, scenes and scripts, without `.godot` data;
+  changed only the copy's application name to
+  `Border Skirmish Release d1176c46 BGKUMFYI` before import/launch. Verified its
+  user-data directory did not exist before import and primary save did not exist
+  before play. Source application identity and real player saves were untouched.
+- Evidence is retained in that copy and exclusively its disposable user-data
+  directory: `%APPDATA%\Godot\app_userdata\Border Skirmish Release d1176c46 BGKUMFYI`.
+  Operator screenshot `.gg/uploads/mtsr6dse-image.png` (ignored local evidence)
+  showed **90 gold, levels [1,1,1]**, visible **Progress saved · Autosave on**,
+  and the victory/pending-replay message. A live read of this disposable primary
+  subsequently showed **100 gold, levels [1,1,1]**. Initial zero-gold UI was not
+  observed; missing initial disk state is not a substitute for that observation.
+- Operator reported the sequence was too fast to confirm, then confirmed physically
+  closing the OS window with **X**. Process exited **0**; the post-close disposable
+  primary contained **120 gold, levels [1,1,1]**. Engine output contained startup
+  information only, not physical-input or close-timing evidence.
+- The exactly-two-victory **20 → 0 gold / [2,1,1]** purchase sequence was not
+  achieved; pending-replay close timing was not established. No relaunch was
+  performed: restored ownership, shield health **160**, clean combat/commander,
+  no launch/offline income and exactly one new **+10** remain unverified.
+  No runtime defect is established by this missed procedure. Operator requested
+  pausing verification; no cleanup was performed. Repeat the prescribed sequence
+  from a fresh uniquely named disposable copy before release, preserving this
+  attempt rather than resetting its save. Focus/suspension behavior was unchanged;
+  emitted signals and scripted quit were not used as physical-gate substitutes.
+- **Operator follow-up:** Reported “verified” and, when asked for the repeat's
+  observations, “all checks out, mate, move on.” This is an operator-reported
+  success, not an independently observed repeat. No repeat project identity,
+  before/after values or inspectable repeat save were supplied. Preserve the
+  measured attempt above; the evidence-backed release gate remains unverified.
+
 ## Boundaries
 
-Combat rules live only in `src/combat.gd`; the scene adapter owns timing and
-presentation. Fresh encounter data never shares mutable squads. Multi-enemy
+Combat rules live only in `src/combat.gd`; `src/economy.gd` owns gold, troop
+levels, purchase validation, snapshot creation and once-only outcome settlement.
+`src/progress_save.gd` alone owns persistence I/O. The scene adapter loads before
+combat creation and saves only accepted economy mutations; it also owns timing,
+the one-second result/replay timer and presentation. Fresh encounter data never shares mutable squads. Multi-enemy
 support is model-only: the playable scene still presents and restarts only
 Border skirmish. Its single-enemy presentation is explicit, not a level-2 screen.
 Native node-script wiring follows the inspected official Godot demo pattern;
 its random/physics behavior is not used. The local specification and executable
 tests, not that unrelated demo, establish combat correctness.
 
-No gold, automatic advancement, upgrades, further playable encounters, defense,
-dynasty, saves, final art or Android tooling is implemented. Opening victory
-paying 10 gold and starting level 2 remains unfinished. Viewport-injected input is **not physical
-mouse/touch verification**. Suspension tests exercise lifecycle notifications,
+No automatic advancement to other encounters, gate upgrades, defense, dynasty,
+final art or Android tooling is implemented. Border Skirmish alone repeats;
+the existing Archer position model fixture is unchanged and remains model-only.
+Viewport-injected input is **not physical mouse/touch verification**. Suspension tests exercise lifecycle notifications,
 not a physical Android device or OS sleep. No mobile export, sustained device
 performance or cinematic-art feasibility claim is made. Those gates remain
 separate, later milestones under the approved plan.
