@@ -1,0 +1,7 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+# Godot/GDScript has no supported Dependabot package ecosystem or dependency lockfile.

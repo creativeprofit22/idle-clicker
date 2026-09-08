@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: '4.7.2'
+          use-dotnet: false
+          include-templates: false
+          cache: true
+      - name: Import and check scripts
+        run: |
+          godot --headless --path . --editor --quit 2>&1 | tee "$RUNNER_TEMP/godot-import.log"
+          ! grep -E 'SCRIPT ERROR:|ERROR:' "$RUNNER_TEMP/godot-import.log"
+      - name: Run headless tests
+        run: |
+          godot --headless --path . --script tests/run_tests.gd 2>&1 | tee "$RUNNER_TEMP/godot-tests.log"
+          ! grep -E 'SCRIPT ERROR:|ERROR:' "$RUNNER_TEMP/godot-tests.log"
+          grep -Eq '^SUMMARY: [1-9][0-9]* checks, 0 failures$' "$RUNNER_TEMP/godot-tests.log"
