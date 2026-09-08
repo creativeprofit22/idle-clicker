@@ -1,0 +1,16 @@
+.godot/
+.gg/
+build/
+builds/
+dist/
+*.log
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+export_credentials.cfg
+*.translation
