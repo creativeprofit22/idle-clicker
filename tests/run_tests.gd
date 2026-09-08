@@ -95,10 +95,14 @@ func run() -> void:
 	check(Combat.new().players[0].health == 120, "fixtures: independent health")
 	test_conquest_targeting()
 	test_archer_position()
+	test_progression_balance()
+	test_fortified_balance()
 	test_adapter()
 	test_timing_partitions()
 	test_foreground_clock()
 	test_economy()
+	test_encounter_economy()
+	test_fortified_economy()
 	test_progress_format()
 	test_progress_failures()
 	test_progress_adapter()
@@ -734,10 +738,211 @@ func test_campaign_determinism() -> void:
 		runs.append(snapshots)
 	check(runs[0] == runs[1], "Campaign: repeated advance navigation loss checkpoint sequences exactly deterministic")
 
+func test_fortified_economy() -> void:
+	check(Data.Encounter.BORDER_SKIRMISH == 0 and Data.Encounter.ARCHER_POSITION == 1
+		and Data.Encounter.FORTIFIED_POSITION == 2, "Fortified: stable encounter IDs")
+	var economy := Economy.new()
+	var original := economy.restart_battle()
+	original.queue_commander()
+	economy.gold = 1000
+	for shield in range(1, 4):
+		for foot in range(1, 4):
+			for horse in range(1, 4):
+				economy.levels.assign([shield, foot, horse])
+				var unlocked: bool = shield >= 2 and foot >= 2 and horse >= 2
+				check(economy.is_encounter_unlocked(2) == unlocked, "Fortified unlock: all ownership combinations %s" % [economy.levels])
+				if not unlocked:
+					check(economy.restart_battle(2) == null and economy.battle == original
+						and original.commander_queued and not economy._settled and economy.gold == 1000,
+						"Fortified unlock: rejected selection preserves model %s" % [economy.levels])
+	for role in range(3):
+		economy.levels.assign([2, 2, 2])
+		economy.levels[role] = 1
+		economy.gold = 19
+		check(not economy.purchase(role) and not economy.is_encounter_unlocked(2), "Fortified unlock: insufficient last purchase %d" % role)
+		economy.gold = 20
+		check(economy.purchase(role) and economy.gold == 0 and economy.is_encounter_unlocked(2), "Fortified unlock: last role purchase %d" % role)
+		economy.levels.assign([1, 1, 1])
+		economy.levels[role] = 3
+		check(not economy.purchase(role) and not economy.is_encounter_unlocked(2), "Fortified unlock: single cap stays locked %d" % role)
+	economy.levels.assign([2, 2, 2])
+	var battle := economy.restart_battle(2)
+	check(battle.enemies[0].health == 160 and battle.enemies[0].damage == 12
+		and battle.enemies[1].health == 80 and battle.enemies[1].damage == 12
+		and economy.encounter_reward(2) == 54 and economy.gold == 0, "Fortified: authored fixture and revised reward")
+	check(not economy.settle(original) and not economy.settle(null) and not economy.settle(battle), "Fortified: stale null ongoing settlements rejected")
+	for victory in range(2):
+		while battle.result == Combat.Result.ONGOING:
+			battle.step_round()
+		check(battle.result == Combat.Result.VICTORY and economy.settle(battle)
+			and economy.gold == 54 * (victory + 1) and not economy.settle(battle), "Fortified: real victory pays 54 exactly once %d" % victory)
+		var previous := battle
+		battle = economy.restart_battle()
+		check(battle != previous and battle.players[0] != previous.players[0]
+			and battle.enemies[0] != previous.enemies[0] and battle.enemies[0].health == 160
+			and battle.players[0].health == 160 and economy.current_encounter == 2
+			and not economy.settle(previous), "Fortified: fresh independent replay retains selection %d" % victory)
+	# Counterfactual baseline ownership produces a real defeat without changing combat rules.
+	battle.players = Combat.new().players
+	while battle.result == Combat.Result.ONGOING:
+		battle.step_round()
+	check(battle.result == Combat.Result.DEFEAT and economy.settle(battle)
+		and economy.gold == 108 and not economy.settle(battle), "Fortified: real defeat pays zero once")
+	economy.restart_battle(0)
+	check(economy.gold == 108 and economy.battle.enemies[0].health == 72, "Fortified: return to Border without payment")
+
+func test_encounter_economy() -> void:
+	var economy := Economy.new()
+	var original := economy.restart_battle()
+	check(not economy.is_encounter_unlocked(Data.Encounter.ARCHER_POSITION), "encounter: fresh locked")
+	check(not economy.purchase(0) and not economy.is_encounter_unlocked(1), "encounter: rejected purchase stays locked")
+	economy.gold = 100
+	for invalid in [Data.Encounter.ARCHER_POSITION, 99, -2]:
+		check(economy.restart_battle(invalid) == null and economy.battle == original
+			and economy.current_encounter == Data.Encounter.BORDER_SKIRMISH and economy.gold == 100
+			and economy.levels == [1, 1, 1] and not economy._settled, "encounter: gold-only invalid start preserves state %d" % invalid)
+	for role in range(3):
+		economy.levels.assign([1, 1, 1])
+		economy.levels[role] = 2
+		check(economy.is_encounter_unlocked(Data.Encounter.ARCHER_POSITION), "encounter: each role unlocks %d" % role)
+	var archer := economy.restart_battle(Data.Encounter.ARCHER_POSITION)
+	check(archer != null and not economy.settle(original) and not economy.settle(null)
+		and not economy.settle(archer) and economy.gold == 100, "encounter: stale null ongoing do not pay")
+	while archer.result == Combat.Result.ONGOING:
+		archer.step_round()
+	check(economy.settle(archer) and economy.gold == 130 and not economy.settle(archer), "encounter: Archer pays 30 once")
+	check(economy.restart_battle(99) == null and economy.battle == archer and economy._settled, "encounter: invalid start preserves settled state")
+	var replay := economy.restart_battle()
+	check(replay.enemies.size() == 2 and replay != archer, "encounter: restart retains selection")
+	for squad in replay.players:
+		squad.health = 0
+	replay.step_round()
+	check(economy.settle(replay) and economy.gold == 130, "encounter: defeat pays nothing")
+	var border := economy.restart_battle(Data.Encounter.BORDER_SKIRMISH)
+	while border.result == Combat.Result.ONGOING:
+		border.step_round()
+	check(economy.settle(border) and economy.gold == 140, "encounter: return to Border pays 10")
+
+func balance_battle(owned: Array, encounter: int, active: bool, enemy_override: Array[Data.Squad] = []) -> Combat:
+	var army := Data.players()
+	for squad in army:
+		squad.max_health += Economy.HEALTH_GAIN[squad.role] * (owned[squad.role] - 1)
+		squad.damage += Economy.DAMAGE_GAIN[squad.role] * (owned[squad.role] - 1)
+	var combat := Combat.new(encounter, army)
+	if not enemy_override.is_empty():
+		combat.enemies = enemy_override
+	for round_index in range(60):
+		if combat.result != Combat.Result.ONGOING:
+			break
+		if active:
+			combat.queue_commander()
+		combat.step_round()
+	return combat
+
+func fortified_candidate() -> Array[Data.Squad]:
+	return [Data.Squad.new(Data.Role.SHIELD, "Enemy shield", 160, 12),
+		Data.Squad.new(Data.Role.FOOT, "Enemy foot archers", 80, 12)]
+
 func balance_snapshot(combat: Combat) -> Array:
 	return [combat.result, combat.rounds,
 		combat.players.map(func(squad: Data.Squad) -> int: return squad.health),
 		combat.enemies.map(func(squad: Data.Squad) -> int: return squad.health)]
+
+func test_fortified_balance() -> void:
+	var cases := [
+		[[1, 1, 1], 10, 10, false, false],
+		[[2, 1, 1], 12, 11, false, true],
+		[[1, 2, 1], 11, 10, false, true],
+		[[1, 1, 2], 13, 10, false, true],
+		[[2, 2, 2], 10, 7, true, true],
+		[[3, 3, 3], 7, 6, true, true],
+	]
+	for row in cases:
+		for active in [false, true]:
+			var battle := balance_battle(row[0], 0, active, fortified_candidate())
+			check(battle.rounds == row[2 if active else 1]
+				and (battle.result == Combat.Result.VICTORY) == row[4 if active else 3],
+				"Fortified proposal: exact outcome/duration %s active=%s" % [row[0], active])
+	for row in [
+		[[1, 1, 1], [0, 0, 0], [0, 0, 0]],
+		[[2, 2, 2], [0, 52, 20], [4, 52, 80]],
+		[[3, 3, 3], [32, 64, 100], [68, 64, 100]],
+	]:
+		for active in [false, true]:
+			check(balance_snapshot(balance_battle(row[0], 0, active, fortified_candidate()))[2] == row[2 if active else 1],
+				"Fortified proposal: exact terminal HP %s active=%s" % [row[0], active])
+	for shield in range(1, 4):
+		for foot in range(1, 4):
+			for horse in range(1, 4):
+				var owned := [shield, foot, horse]
+				for encounter in range(3):
+					for active in [false, true]:
+						var enemies: Array[Data.Squad] = []
+						var repeat_enemies: Array[Data.Squad] = []
+						if encounter == 2:
+							enemies = fortified_candidate()
+							repeat_enemies = fortified_candidate()
+						var battle := balance_battle(owned, mini(encounter, 1), active, enemies)
+						var repeat := balance_battle(owned, mini(encounter, 1), active, repeat_enemies)
+						var snapshot := balance_snapshot(battle)
+						if encounter == 2:
+							check(snapshot == balance_snapshot(balance_battle(owned, Data.Encounter.FORTIFIED_POSITION, active)),
+								"Fortified matrix: production fixture matches verified candidate %s active=%s" % [owned, active])
+						check(snapshot == balance_snapshot(repeat) and battle.players[0] != repeat.players[0]
+							and battle.enemies[0] != repeat.enemies[0],
+							"Fortified matrix: complete deterministic independent snapshot %s encounter=%d active=%s" % [owned, encounter, active])
+						var reward: int = [10, 30, 54][encounter] if battle.result == Combat.Result.VICTORY else 0
+						print("BALANCE levels=%s encounter=%d active=%s snapshot=%s combat_rate=%.6f loop_rate=%.6f" % [owned, encounter, active, snapshot, float(reward) / battle.rounds, float(reward) / (battle.rounds + 1)])
+						if encounter == 2 and shield >= 2 and foot >= 2 and horse >= 2:
+							var archer := balance_battle(owned, 1, active)
+							check(battle.result == Combat.Result.VICTORY and battle.rounds > archer.rounds,
+								"Fortified matrix: unlocked victory longer than Archer %s active=%s" % [owned, active])
+							check(54.0 / battle.rounds >= 30.0 / archer.rounds
+								and 54.0 / (battle.rounds + 1) >= 30.0 / (archer.rounds + 1),
+								"Fortified matrix: unlocked rates do not regress against Archer %s active=%s" % [owned, active])
+							for role in range(3):
+								if owned[role] == 3:
+									continue
+								var upgraded := owned.duplicate()
+								upgraded[role] += 1
+								var next := balance_battle(upgraded, 0, active, fortified_candidate())
+								check(next.result == Combat.Result.VICTORY and next.rounds <= battle.rounds,
+									"Fortified matrix: upgrade rate does not regress %s role=%d active=%s" % [owned, role, active])
+
+func test_progression_balance() -> void:
+	var cases := [
+		[[1, 1, 1], 4, 3, 8, 16, 7, 28],
+		[[2, 1, 1], 4, 3, 8, 56, 6, 82],
+		[[1, 2, 1], 4, 3, 7, 22, 6, 42],
+		[[1, 1, 2], 4, 3, 7, 38, 6, 44],
+		[[2, 2, 2], 3, 2, 6, 84, 5, 96],
+		[[3, 3, 3], 2, 2, 5, 138, 4, 150],
+	]
+	for row in cases:
+		for active in [false, true]:
+			var border := balance_battle(row[0], Data.Encounter.BORDER_SKIRMISH, active)
+			var archer := balance_battle(row[0], Data.Encounter.ARCHER_POSITION, active)
+			check(border.result == Combat.Result.VICTORY and border.rounds == row[2 if active else 1], "balance: exact Border rounds %s active=%s" % [row[0], active])
+			check(archer.result == Combat.Result.VICTORY and archer.rounds == row[5 if active else 3]
+				and archer.players[0].health == row[6 if active else 4]
+				and archer.players[1].health == archer.players[1].max_health
+				and archer.players[2].health == archer.players[2].max_health, "balance: exact Archer rounds and health %s active=%s" % [row[0], active])
+	for shield in range(1, 4):
+		for foot in range(1, 4):
+			for horse in range(1, 4):
+				for encounter in [Data.Encounter.BORDER_SKIRMISH, Data.Encounter.ARCHER_POSITION]:
+					for active in [false, true]:
+						var owned := [shield, foot, horse]
+						var combat := balance_battle(owned, encounter, active)
+						var repeat := balance_battle(owned, encounter, active)
+						check(combat.result == Combat.Result.VICTORY and combat.rounds <= 60
+							and combat != repeat and combat.players[0] != repeat.players[0]
+							and combat.enemies[0] != repeat.enemies[0]
+							and combat.rounds == repeat.rounds and combat.players[0].health == repeat.players[0].health,
+							"balance: deterministic independent victory %s encounter=%d active=%s" % [owned, encounter, active])
+	check(Data.players()[0].max_health == 120 and Data.players()[1].damage == 8
+		and Data.enemies(Data.Encounter.ARCHER_POSITION)[0].max_health == 100,
+		"balance: authored fixtures unchanged")
 
 func priority_targets(mask: int, omit_dead: bool) -> Array[Data.Squad]:
 	var squads: Array[Data.Squad] = []
