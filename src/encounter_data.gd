@@ -2,7 +2,7 @@ extends RefCounted
 
 const ROUND_SECONDS: float = 1.0
 enum Role { SHIELD, FOOT, HORSE }
-enum Encounter { BORDER_SKIRMISH, ARCHER_POSITION }
+enum Encounter { BORDER_SKIRMISH, ARCHER_POSITION, FORTIFIED_POSITION, STRONGHOLD }
 
 class Squad extends RefCounted:
 	var role: Role
@@ -24,6 +24,13 @@ static func players() -> Array[Squad]:
 		Squad.new(Role.HORSE, "Horse archers", 60, 6)]
 
 static func enemies(encounter: Encounter = Encounter.BORDER_SKIRMISH) -> Array[Squad]:
+	if encounter == Encounter.STRONGHOLD:
+		return [Squad.new(Role.SHIELD, "Enemy shield", 160, 8),
+			Squad.new(Role.FOOT, "Enemy foot archers", 60, 8),
+			Squad.new(Role.HORSE, "Enemy horse archers", 60, 6)]
+	if encounter == Encounter.FORTIFIED_POSITION:
+		return [Squad.new(Role.SHIELD, "Enemy shield", 160, 12),
+			Squad.new(Role.FOOT, "Enemy foot archers", 80, 12)]
 	if encounter == Encounter.ARCHER_POSITION:
 		return [Squad.new(Role.SHIELD, "Enemy shield", 100, 6),
 			Squad.new(Role.FOOT, "Enemy foot archers", 40, 8)]

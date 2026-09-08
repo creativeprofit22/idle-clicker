@@ -2,6 +2,9 @@ extends SceneTree
 
 const Combat = preload("res://src/combat.gd")
 const Economy = preload("res://src/economy.gd")
+const Campaign = preload("res://src/campaign.gd")
+const CampaignScene = preload("res://scenes/campaign_prototype.tscn")
+const CampaignPresentation = preload("res://src/campaign_prototype.gd")
 const Data = preload("res://src/encounter_data.gd")
 const BattleScene = preload("res://scenes/opening_battle.tscn")
 const Presentation = preload("res://src/opening_battle.gd")
@@ -99,12 +102,643 @@ func run() -> void:
 	test_progress_format()
 	test_progress_failures()
 	test_progress_adapter()
+	test_campaign_progression()
+	test_campaign_navigation()
+	test_campaign_losses()
+	test_campaign_boundaries()
+	test_campaign_settlement_guards()
+	test_campaign_checkpoint()
+	test_campaign_purchases()
+	test_campaign_determinism()
+	test_campaign_scene_fresh()
+	test_campaign_scene_progression()
+	test_campaign_scene_navigation()
+	test_campaign_scene_purchases()
+	test_campaign_scene_checkpoint()
+	test_campaign_scene_lifecycle()
 	if "--force-failure" in OS.get_cmdline_user_args():
 		check(false, "forced runner failure")
 	print("SUMMARY: %d checks, %d failures" % [checks, failures])
 	quit(0 if failures == 0 else 1)
 
 # Deliberately scrambled order and misleading titles: roles alone determine targets.
+func campaign_scene_new() -> CampaignPresentation:
+	var scene: CampaignPresentation = CampaignScene.instantiate()
+	root.add_child(scene)
+	scene.set_process(false)
+	return scene
+
+func campaign_scene_finish(scene: CampaignPresentation) -> Combat:
+	var completed := scene.campaign.battle
+	for i in range(60):
+		if scene.campaign.battle != completed or scene.campaign.phase == Campaign.Phase.CONQUEST_CLEARED:
+			break
+		scene.advance_time(1.0)
+	check(completed.result != Combat.Result.ONGOING,
+		"Campaign scene: production timing completes real battle within sixty rounds")
+	# Successor routing enables processing; keep logical-time fixtures deterministic.
+	scene.set_process(false)
+	return completed
+
+func test_campaign_scene_fresh() -> void:
+	var scene := campaign_scene_new()
+	check(scene.get_node("%Title").text == "Campaign prototype"
+		and scene.get_node("%SessionNotice").visible
+		and scene.get_node("%SessionNotice").text == "Session-only progress. Closing resets this campaign. Main-game saves are not loaded or changed.",
+		"Campaign scene: permanent session-only notice and title")
+	check(scene.campaign.gold == 0 and scene.campaign.levels == [1, 1, 1]
+		and scene.campaign.current_encounter == 0 and scene.campaign.battle.rounds == 0
+		and scene.get_node("%CampaignStatus").text == "Border Skirmish · Advance · Running"
+		and scene.get_node("%Gold").text == "Gold: 0"
+		and scene.get_node("%PendingNavigation").text == "No queued navigation",
+		"Campaign scene: fresh Border ownership and labels")
+	for name in ["FarmBorder", "FarmArcher", "Frontier", "ShieldUpgrade", "FootUpgrade", "HorseUpgrade"]:
+		var button: Button = scene.get_node("%" + name)
+		check(button.disabled and button.action_mode == BaseButton.ACTION_MODE_BUTTON_PRESS,
+			"Campaign scene: initially disabled on-press control " + name)
+		var before := campaign_snapshot(scene.campaign)
+		button.pressed.emit()
+		check(campaign_snapshot(scene.campaign) == before,
+			"Campaign scene: controller rejects emitted locked control " + name)
+	for button in scene.upgrades:
+		check(button.text.contains("Lv.1") and button.text.contains("20 gold"),
+			"Campaign scene: starting owned level and cost")
+	campaign_scene_finish(scene)
+	var other := campaign_scene_new()
+	check(other.campaign != scene.campaign and other.campaign.gold == 0
+		and other.campaign.levels == [1, 1, 1] and not other.campaign.border_cleared
+		and other.campaign.battle.players[0] != scene.campaign.battle.players[0],
+		"Campaign scene: concurrent instance starts independent session")
+	scene.free()
+	other.free()
+
+func test_campaign_scene_progression() -> void:
+	var scene := campaign_scene_new()
+	var border := scene.campaign.battle
+	scene.advance_time(120.0)
+	campaign_fresh(scene.campaign, border, Data.Encounter.ARCHER_POSITION)
+	check(border.rounds == 4 and scene.campaign.gold == 10 and scene.elapsed_usec == 0
+		and scene.get_node("%LastResult").text == "Border Skirmish: Victory · +10 gold"
+		and scene.get_node("%CampaignStatus").text == "Archer Position · Advance · Running"
+		and scene.get_node("%Round").text == "Round: 0"
+		and not scene.get_node("%FarmBorder").disabled and scene.get_node("%FarmArcher").disabled,
+		"Campaign scene: large delta pays Border once without consuming successor")
+	scene.advance_time(1.0)
+	check(scene.get_node("%LastResult").text == "Border Skirmish: Victory · +10 gold"
+		and scene.get_node("%Round").text == "Round: 1",
+		"Campaign scene: previous result retained during next battle")
+	var archer := campaign_scene_finish(scene)
+	campaign_fresh(scene.campaign, archer, Data.Encounter.STRONGHOLD)
+	check(scene.campaign.gold == 40 and scene.get_node("%Gold").text == "Gold: 40"
+		and scene.get_node("%LastResult").text == "Archer Position: Victory · +30 gold"
+		and scene.get_node("%CampaignStatus").text == "Stronghold · Advance · Running",
+		"Campaign scene: Archer pays thirty and advances directly to Stronghold, not Fortified")
+	var enemy_text: String = scene.get_node("%Enemies").text
+	check(scene.campaign.battle.enemies.size() == 3 and enemy_text.split("\n").size() == 4,
+		"Campaign scene: all three Stronghold enemy rows rendered")
+	for squad in scene.campaign.battle.enemies:
+		check(enemy_text.contains("%s | HP %d / %d | Damage %d" % [
+			squad.title, squad.health, squad.max_health, squad.damage]),
+			"Campaign scene: actual Stronghold squad stats " + squad.title)
+	var stronghold := campaign_scene_finish(scene)
+	campaign_fresh(scene.campaign, stronghold, Data.Encounter.ARCHER_POSITION)
+	check(stronghold.result == Combat.Result.DEFEAT and scene.campaign.gold == 40
+		and scene.campaign.mode == Campaign.Mode.FARM
+		and scene.get_node("%LastResult").text == "Stronghold: Defeat · +0 gold"
+		and scene.get_node("%CampaignStatus").text == "Archer Position · Farm · Running"
+		and not scene.get_node("%Frontier").disabled,
+		"Campaign scene: real Stronghold defeat pays zero and renders highest-cleared farm")
+	scene.free()
+
+func test_campaign_scene_navigation() -> void:
+	var scene := campaign_scene_new()
+	campaign_scene_finish(scene)
+	scene.advance_time(0.25)
+	var combat := scene.campaign.battle
+	var stats: Array = campaign_snapshot(scene.campaign)[17]
+	var clock: int = scene.last_frame_usec
+	scene.get_node("%FarmBorder").pressed.emit()
+	check(scene.campaign.battle == combat and campaign_snapshot(scene.campaign)[17] == stats
+		and combat.rounds == 0 and scene.campaign.gold == 10 and scene.elapsed_usec == 250000
+		and scene.last_frame_usec == clock
+		and scene.get_node("%PendingNavigation").text == "Farm Border Skirmish after this battle",
+		"Campaign scene: farm request updates pending label without battle, funds or timing mutation")
+	var before := campaign_snapshot(scene.campaign)
+	scene.get_node("%FarmArcher").pressed.emit()
+	scene.get_node("%Frontier").pressed.emit()
+	scene._request_farm(Data.Encounter.FORTIFIED_POSITION)
+	scene._request_farm(Data.Encounter.STRONGHOLD)
+	scene._request_farm(-1)
+	check(campaign_snapshot(scene.campaign) == before
+		and scene.get_node("%PendingNavigation").text == "Farm Border Skirmish after this battle",
+		"Campaign scene: rejected locked/invalid navigation preserves valid intent")
+	campaign_scene_finish(scene)
+	campaign_fresh(scene.campaign, combat, Data.Encounter.BORDER_SKIRMISH)
+	check(scene.campaign.gold == 40 and scene.campaign.mode == Campaign.Mode.FARM
+		and scene.get_node("%PendingNavigation").text == "No queued navigation",
+		"Campaign scene: requested farm begins only after Archer reward")
+	campaign_scene_finish(scene)
+	check(scene.campaign.gold == 50 and scene.campaign.current_encounter == 0,
+		"Campaign scene: ordinary farming repeats and pays again")
+	scene.get_node("%FarmArcher").pressed.emit()
+	scene.get_node("%Frontier").pressed.emit()
+	check(scene.campaign.pending_navigation == Campaign.Navigation.FRONTIER
+		and scene.get_node("%PendingNavigation").text == "Retry frontier after this battle",
+		"Campaign scene: frontier replaces valid farm intent")
+	scene.get_node("%FarmArcher").pressed.emit()
+	check(scene.campaign.pending_navigation == Campaign.Navigation.FARM and scene.campaign.pending_farm == 1,
+		"Campaign scene: latest farm replaces frontier intent")
+	campaign_scene_finish(scene)
+	check(scene.campaign.current_encounter == 1 and scene.campaign.gold == 60,
+		"Campaign scene: latest valid farm target wins at settlement")
+	scene.get_node("%Frontier").pressed.emit()
+	combat = campaign_scene_finish(scene)
+	campaign_fresh(scene.campaign, combat, Data.Encounter.STRONGHOLD)
+	check(scene.campaign.gold == 90 and scene.campaign.mode == Campaign.Mode.ADVANCE
+		and scene.get_node("%PendingNavigation").text == "No queued navigation",
+		"Campaign scene: frontier waits for legitimate farm reward then retries unresolved Stronghold")
+	scene.free()
+
+func test_campaign_scene_purchases() -> void:
+	var scene := campaign_scene_new()
+	scene.campaign.gold = 60 # Isolated fixture funds, never production defaults.
+	scene._refresh()
+	var combat := scene.campaign.battle
+	var stats: Array = campaign_snapshot(scene.campaign)[17]
+	check(not scene.get_node("%FootUpgrade").disabled, "Campaign scene: affordable purchase enabled")
+	scene.get_node("%FootUpgrade").pressed.emit()
+	check(scene.campaign.gold == 40 and scene.campaign.levels == [1, 2, 1]
+		and scene.get_node("%Gold").text == "Gold: 40"
+		and scene.get_node("%FootUpgrade").text == "Foot archers Lv.2 · Upgrade 40 gold"
+		and not scene.get_node("%FootUpgrade").disabled
+		and scene.campaign.battle == combat and campaign_snapshot(scene.campaign)[17] == stats,
+		"Campaign scene: purchase updates ownership/wallet/cost, not active stats")
+	scene.get_node("%FootUpgrade").pressed.emit()
+	check(scene.campaign.gold == 0 and scene.campaign.levels == [1, 3, 1]
+		and scene.get_node("%FootUpgrade").text == "Foot archers Lv.3 · MAX"
+		and scene.get_node("%FootUpgrade").disabled and scene.get_node("%ShieldUpgrade").disabled
+		and campaign_snapshot(scene.campaign)[17] == stats,
+		"Campaign scene: cap and empty wallet disable controls without changing active snapshot")
+	var before := campaign_snapshot(scene.campaign)
+	scene.get_node("%FootUpgrade").pressed.emit()
+	scene.get_node("%ShieldUpgrade").pressed.emit()
+	scene._purchase(-1)
+	scene._purchase(3)
+	check(campaign_snapshot(scene.campaign) == before,
+		"Campaign scene: capped, insufficient and invalid purchases inert even without physical gating")
+	campaign_scene_finish(scene)
+	check(scene.campaign.battle.players[1].health == 64 and scene.campaign.battle.players[1].damage == 16
+		and scene.campaign.gold == 10 and scene.get_node("%Army").text.contains("HP 64 / 64 | Damage 16"),
+		"Campaign scene: next battle renders purchased full-health snapshot")
+	scene.free()
+
+func test_campaign_scene_checkpoint() -> void:
+	var scene := campaign_scene_new()
+	scene.campaign.gold = 180 # Only this instance is funded for a real upgraded conquest.
+	for button in scene.upgrades:
+		button.pressed.emit()
+		button.pressed.emit()
+	check(scene.campaign.levels == [3, 3, 3] and scene.campaign.gold == 0,
+		"Campaign scene: all upgrade buttons purchase through production connections")
+	campaign_scene_finish(scene)
+	campaign_scene_finish(scene)
+	scene.get_node("%FarmBorder").pressed.emit()
+	var stronghold := scene.campaign.battle
+	for i in range(60):
+		if scene.campaign.phase == Campaign.Phase.CONQUEST_CLEARED:
+			break
+		scene.advance_time(1.0)
+	check(stronghold.result == Combat.Result.VICTORY and scene.campaign.gold == 70
+		and scene.campaign.phase == Campaign.Phase.CONQUEST_CLEARED
+		and scene.campaign.battle == stronghold and not scene.is_processing()
+		and scene.campaign.pending_navigation == Campaign.Navigation.NONE
+		and scene.campaign.pending_farm == -1 and scene.elapsed_usec == 0
+		and scene.get_node("%LastResult").text == "Stronghold: Victory · +30 gold"
+		and scene.get_node("%CampaignStatus").text.contains("Conquest cleared — prototype ends here; ordinary farming remains available")
+		and scene.get_node("%PendingNavigation").text == "No queued navigation",
+		"Campaign scene: real conquest pays thirty once, clears intent, retains terminal display and stops processing")
+	check(scene.get_node("%Frontier").disabled and not scene.get_node("%FarmBorder").disabled
+		and not scene.get_node("%FarmArcher").disabled
+		and scene.get_node("%Frontier").text == "Return to cleared checkpoint after battle",
+		"Campaign scene: checkpoint frontier is disabled no-op, ordinary farms remain available")
+	var before := campaign_snapshot(scene.campaign)
+	for i in range(3):
+		scene.advance_time(120.0)
+		scene.get_node("%Frontier").pressed.emit()
+	check(campaign_snapshot(scene.campaign) == before and scene.elapsed_usec == 0,
+		"Campaign scene: repeated checkpoint time and frontier emission cannot repay or tick")
+	scene.last_frame_usec = 1
+	var clock_before: int = Time.get_ticks_usec()
+	scene.get_node("%FarmArcher").pressed.emit()
+	campaign_fresh(scene.campaign, stronghold, Data.Encounter.ARCHER_POSITION)
+	check(scene.is_processing() and scene.last_frame_usec >= clock_before and scene.elapsed_usec == 0
+		and scene.campaign.gold == 70 and scene.campaign.stronghold_cleared,
+		"Campaign scene: leaving checkpoint resumes with clean clock and no reward")
+	scene.set_process(false)
+	scene.advance_foreground(scene.last_frame_usec + 250000)
+	check(scene.campaign.battle.rounds == 0 and scene.elapsed_usec == 250000,
+		"Campaign scene: no stale checkpoint gap consumed after farming starts")
+	scene.get_node("%Frontier").pressed.emit()
+	var farm := scene.campaign.battle
+	for i in range(60):
+		if scene.campaign.phase == Campaign.Phase.CONQUEST_CLEARED:
+			break
+		scene.advance_time(1.0)
+	check(scene.campaign.phase == Campaign.Phase.CONQUEST_CLEARED and scene.campaign.battle == farm
+		and farm != stronghold and scene.campaign.current_encounter == 1 and scene.campaign.gold == 100
+		and not scene.is_processing() and scene.get_node("%LastResult").text == "Archer Position: Victory · +30 gold",
+		"Campaign scene: farm reward returns to checkpoint without Stronghold recreation or repayment")
+	before = campaign_snapshot(scene.campaign)
+	scene.advance_time(120.0)
+	check(campaign_snapshot(scene.campaign) == before, "Campaign scene: returned checkpoint remains frozen")
+	var old_squad := scene.campaign.battle.players[0]
+	scene.free()
+	var recreated := campaign_scene_new()
+	check(recreated.campaign.gold == 0 and recreated.campaign.levels == [1, 1, 1]
+		and not recreated.campaign.border_cleared and not recreated.campaign.archer_cleared
+		and not recreated.campaign.stronghold_cleared and recreated.campaign.battle.players[0] != old_squad,
+		"Campaign scene: removal and recreation discard wallet, clearances and squad instances")
+	recreated.free()
+
+func test_campaign_scene_lifecycle() -> void:
+	for pair in [[MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT, MainLoop.NOTIFICATION_APPLICATION_FOCUS_IN],
+		[MainLoop.NOTIFICATION_APPLICATION_PAUSED, MainLoop.NOTIFICATION_APPLICATION_RESUMED]]:
+		var scene := campaign_scene_new()
+		campaign_scene_finish(scene)
+		campaign_scene_finish(scene)
+		campaign_scene_finish(scene) # Real defeat enables farm and frontier controls.
+		scene.advance_foreground(scene.last_frame_usec + 250000)
+		var before := campaign_snapshot(scene.campaign)
+		scene.notification(pair[0])
+		check(scene.suspended and scene.get_node("%CampaignStatus").text.contains("Paused"),
+			"Campaign scene: lifecycle suspension displayed")
+		for name in ["FarmBorder", "FarmArcher", "Frontier", "ShieldUpgrade", "FootUpgrade", "HorseUpgrade"]:
+			var button: Button = scene.get_node("%" + name)
+			check(button.disabled, "Campaign scene: suspended control disabled " + name)
+			button.pressed.emit()
+		scene.advance_foreground(scene.last_frame_usec + 9000000)
+		scene.advance_time(120.0)
+		check(campaign_snapshot(scene.campaign) == before and scene.elapsed_usec == 250000,
+			"Campaign scene: suspension freezes rounds, funds, ownership, navigation and partial time")
+		scene.notification(pair[1])
+		check(not scene.suspended and scene.skip_resume_frame
+			and not scene.get_node("%FarmBorder").disabled and not scene.get_node("%Frontier").disabled
+			and not scene.get_node("%ShieldUpgrade").disabled,
+			"Campaign scene: resume restores eligible controls without bypass")
+		scene.advance_foreground(scene.last_frame_usec + 9000000)
+		check(not scene.skip_resume_frame and campaign_snapshot(scene.campaign) == before
+			and scene.elapsed_usec == 250000, "Campaign scene: stale resume frame excluded")
+		scene.advance_foreground(scene.last_frame_usec + 749999)
+		check(scene.campaign.battle.rounds == 0 and scene.elapsed_usec == 999999,
+			"Campaign scene: preserved fraction does not round early")
+		scene.advance_foreground(scene.last_frame_usec + 1)
+		check(scene.campaign.battle.rounds == 1 and scene.elapsed_usec == 0,
+			"Campaign scene: exact remaining foreground microsecond progresses normally")
+		scene.advance_foreground(scene.last_frame_usec)
+		check(scene.campaign.battle.rounds == 1 and scene.elapsed_usec == 0,
+			"Campaign scene: same timestamp cannot consume elapsed span twice")
+		scene.free()
+
+func campaign_finish(campaign: Campaign) -> Combat:
+	var completed := campaign.battle
+	for i in range(60):
+		if completed.result != Combat.Result.ONGOING:
+			break
+		completed.step_round()
+	check(completed.result != Combat.Result.ONGOING and campaign.settle(completed),
+		"Campaign: bounded real battle settles")
+	return completed
+
+func campaign_snapshot(campaign: Campaign, identity: bool = true) -> Array:
+	var combat := campaign.battle
+	var squads: Array = []
+	for army in [combat.players, combat.enemies]:
+		var rows: Array = []
+		for squad in army:
+			rows.append([squad.role, squad.title, squad.health, squad.max_health, squad.damage])
+		squads.append(rows)
+	return [campaign.gold, campaign.levels.duplicate(), campaign.border_cleared,
+		campaign.archer_cleared, campaign.stronghold_cleared, campaign.mode, campaign.phase,
+		campaign.farm_encounter, campaign.pending_navigation, campaign.pending_farm,
+		campaign.current_encounter, campaign._battle_reward, campaign._settled,
+		combat if identity else null, balance_snapshot(combat), combat.commander_queued,
+		combat.commander_damage, squads]
+
+func campaign_fresh(campaign: Campaign, previous: Combat, encounter: int) -> void:
+	var combat := campaign.battle
+	var full: bool = true
+	for army in [combat.players, combat.enemies]:
+		for squad in army:
+			full = full and squad.health == squad.max_health
+	check(combat != previous and not is_same(combat.players, previous.players)
+		and not is_same(combat.enemies, previous.enemies)
+		and combat.players[0] != previous.players[0] and combat.enemies[0] != previous.enemies[0]
+		and combat.rounds == 0 and combat.result == Combat.Result.ONGOING
+		and not combat.commander_queued and full and campaign.current_encounter == encounter,
+		"Campaign: independent full-health successor %d" % encounter)
+
+func test_campaign_progression() -> void:
+	var campaign := Campaign.new()
+	campaign.restart_battle()
+	check(campaign.gold == 0 and campaign.levels == [1, 1, 1]
+		and campaign.mode == Campaign.Mode.ADVANCE and campaign.farm_encounter == -1,
+		"Campaign: fresh ownership and advance mode")
+	var before := campaign_snapshot(campaign)
+	check(not campaign.is_encounter_unlocked(1) and not campaign.is_encounter_unlocked(3)
+		and campaign.restart_battle(1) == null and not campaign.request_farm(0)
+		and not campaign.request_frontier() and campaign_snapshot(campaign) == before,
+		"Campaign: initial destinations require clearance, rejection is inert")
+	var border := campaign_finish(campaign)
+	check(border.rounds == 4 and border.result == Combat.Result.VICTORY and campaign.gold == 10
+		and campaign.border_cleared and not campaign.archer_cleared,
+		"Campaign: passive Border round four pays ten and clears")
+	campaign_fresh(campaign, border, 1)
+	check(campaign.is_encounter_unlocked(1) and not campaign.is_encounter_unlocked(3),
+		"Campaign: Border clearance unlocks Archer without ownership upgrade")
+	var archer := campaign_finish(campaign)
+	check(archer.rounds == 8 and archer.result == Combat.Result.VICTORY and campaign.gold == 40
+		and campaign.archer_cleared and campaign.is_encounter_unlocked(3),
+		"Campaign: passive Archer round eight pays thirty and clears")
+	campaign_fresh(campaign, archer, 3)
+	check(Data.Encounter.STRONGHOLD == 3 and campaign.encounter_reward(3) == 30
+		and campaign.battle.enemies.size() == 3
+		and campaign.battle.enemies.map(func(s: Data.Squad) -> Array: return [s.role, s.health, s.damage])
+		== [[0, 160, 8], [1, 60, 8], [2, 60, 6]], "Campaign: distinct authored Stronghold")
+	var economy := Economy.new()
+	check(not economy.is_encounter_unlocked(1) and economy.restart_battle(3) == null
+		and economy.encounter_reward(3) == 0, "Campaign isolation: ordinary locks and no Stronghold payout")
+	economy.levels.assign([2, 2, 2])
+	check(economy.is_encounter_unlocked(2) and economy.encounter_reward(2) == 54
+		and not campaign.is_encounter_unlocked(2) and campaign.encounter_reward(2) == 0,
+		"Campaign isolation: Fortified remains manual, repeatable and distinct")
+	before = campaign_snapshot(campaign)
+	check(not campaign.request_farm(2) and campaign.restart_battle(2) == null
+		and campaign_snapshot(campaign) == before, "Campaign: Fortified rejected without mutation")
+	var stronghold := campaign_finish(campaign)
+	print("CAMPAIGN Stronghold baseline snapshot=%s" % [balance_snapshot(stronghold)])
+	check(stronghold.result == Combat.Result.DEFEAT and campaign.gold == 40
+		and campaign.current_encounter == 1 and campaign.mode == Campaign.Mode.FARM,
+		"Campaign: real baseline Stronghold loss farms highest clearance")
+
+func test_campaign_navigation() -> void:
+	var campaign := Campaign.new()
+	campaign.restart_battle()
+	campaign_finish(campaign)
+	campaign.battle.step_round()
+	campaign.battle.queue_commander()
+	var original := campaign.battle
+	var combat_before := balance_snapshot(original)
+	check(campaign.request_farm(0) and campaign.battle == original
+		and balance_snapshot(original) == combat_before and original.commander_queued
+		and campaign.gold == 10, "Campaign: queued farm preserves battle HP rounds strike and wallet")
+	var before := campaign_snapshot(campaign)
+	check(not campaign.request_farm(1) and not campaign.request_farm(2)
+		and not campaign.request_farm(3) and not campaign.request_farm(99)
+		and not campaign.request_farm(-1) and not campaign.request_frontier()
+		and campaign.restart_battle(0) == null and campaign_snapshot(campaign) == before,
+		"Campaign: invalid navigation preserves latest valid request")
+	campaign_finish(campaign)
+	check(campaign.gold == 40 and campaign.archer_cleared and campaign.current_encounter == 0
+		and campaign.mode == Campaign.Mode.FARM and campaign.farm_encounter == 0,
+		"Campaign: queued farm beats advance after finishing reward and clearance")
+	campaign_fresh(campaign, original, 0)
+	check(campaign.request_farm(1) and campaign.request_farm(0), "Campaign: two valid farms queue")
+	campaign_finish(campaign)
+	check(campaign.gold == 50 and campaign.current_encounter == 0
+		and campaign.pending_navigation == Campaign.Navigation.NONE and campaign.pending_farm == -1,
+		"Campaign: latest farm wins and request consumed once")
+	campaign_finish(campaign)
+	check(campaign.gold == 60 and campaign.current_encounter == 0,
+		"Campaign: farm victory repeats selected ordinary stage with income")
+	check(campaign.request_frontier() and campaign.request_farm(1), "Campaign: farm replaces frontier intent")
+	campaign_finish(campaign)
+	check(campaign.current_encounter == 1 and campaign.gold == 70, "Campaign: latest farm beats frontier")
+	check(campaign.request_farm(0) and campaign.request_frontier(), "Campaign: frontier replaces farm intent")
+	campaign_finish(campaign)
+	check(campaign.current_encounter == 3 and campaign.gold == 100
+		and campaign.mode == Campaign.Mode.ADVANCE and campaign.farm_encounter == -1,
+		"Campaign: frontier resolved after farm settlement skips Fortified")
+
+func test_campaign_losses() -> void:
+	var campaign := Campaign.new()
+	campaign.restart_battle()
+	for squad in campaign.battle.players:
+		squad.health = 0
+	var lost := campaign_finish(campaign)
+	check(lost.result == Combat.Result.DEFEAT and campaign.gold == 0 and not campaign.border_cleared
+		and campaign.mode == Campaign.Mode.ADVANCE, "Campaign: no-clear loss retries Border without payment")
+	campaign_fresh(campaign, lost, 0)
+	campaign_finish(campaign)
+	for squad in campaign.battle.players:
+		squad.health = 0
+	campaign_finish(campaign)
+	check(campaign.current_encounter == 0 and campaign.mode == Campaign.Mode.FARM
+		and campaign.gold == 10 and not campaign.archer_cleared, "Campaign: Archer loss farms Border")
+	campaign.request_frontier()
+	campaign_finish(campaign)
+	campaign_finish(campaign)
+	campaign.request_farm(0)
+	for squad in campaign.battle.players:
+		squad.health = 0
+	campaign_finish(campaign)
+	check(campaign.current_encounter == 0 and campaign.farm_encounter == 0 and campaign.gold == 50,
+		"Campaign: explicit queued farm beats highest-clear loss fallback")
+	for squad in campaign.battle.players:
+		squad.health = 0
+	campaign_finish(campaign)
+	check(campaign.current_encounter == 1 and campaign.farm_encounter == 1 and campaign.gold == 50,
+		"Campaign: farm loss without navigation uses highest clearance")
+	campaign.request_frontier()
+	for squad in campaign.battle.players:
+		squad.health = 0
+	campaign_finish(campaign)
+	check(campaign.current_encounter == 3 and campaign.mode == Campaign.Mode.ADVANCE
+		and campaign.gold == 50 and campaign.border_cleared and campaign.archer_cleared,
+		"Campaign: queued frontier beats defeat fallback without payment")
+
+func test_campaign_boundaries() -> void:
+	for outcome in ["victory", "mutual", "timeout"]:
+		var campaign := Campaign.new()
+		campaign.restart_battle()
+		var combat := campaign.battle
+		# Controlled stats, real 60 logical rounds; never assign a terminal result.
+		for squad in combat.players:
+			squad.damage = 0
+		combat.enemies[0].damage = 0
+		for i in range(59):
+			combat.step_round()
+		if outcome != "timeout":
+			combat.enemies[0].health = 4
+			combat.players[0].damage = 4
+		if outcome == "mutual":
+			combat.players[0].health = 3
+			combat.players[1].health = 0
+			combat.players[2].health = 0
+			combat.enemies[0].damage = 3
+		campaign_finish(campaign)
+		var won: bool = outcome == "victory"
+		check(combat.rounds == 60 and combat.result == (Combat.Result.VICTORY if won else Combat.Result.DEFEAT)
+			and campaign.gold == (10 if won else 0) and campaign.border_cleared == won
+			and campaign.current_encounter == (1 if won else 0),
+			"Campaign: round sixty production priority %s" % outcome)
+
+func test_campaign_settlement_guards() -> void:
+	var campaign := Campaign.new()
+	campaign.restart_battle()
+	var abandoned := campaign.battle
+	abandoned.queue_commander()
+	var fresh := campaign.restart_battle()
+	campaign_fresh(campaign, abandoned, 0)
+	var foreign := Campaign.new()
+	foreign.restart_battle()
+	var foreign_terminal := campaign_finish(foreign)
+	for i in range(60):
+		if abandoned.result != Combat.Result.ONGOING:
+			break
+		abandoned.step_round()
+	for invalid in [null, fresh, foreign.battle, foreign_terminal, abandoned]:
+		var before := campaign_snapshot(campaign)
+		check(not campaign.settle(invalid) and campaign_snapshot(campaign) == before,
+			"Campaign: null ongoing foreign abandoned settlement preserves full state")
+	var terminal := campaign_finish(campaign)
+	campaign.request_farm(0)
+	var before := campaign_snapshot(campaign)
+	check(not campaign.settle(terminal) and not campaign.settle(terminal)
+		and campaign_snapshot(campaign) == before, "Campaign: stale duplicate cannot consume successor request")
+	var old := campaign.battle
+	var gold_before: int = campaign.gold
+	campaign.restart_battle()
+	check(campaign.pending_navigation == Campaign.Navigation.NONE and campaign.pending_farm == -1
+		and campaign.gold == gold_before and campaign.border_cleared and not campaign.archer_cleared,
+		"Campaign: explicit restart abandons pending navigation but retains progress")
+	campaign_fresh(campaign, old, 1)
+
+func test_campaign_checkpoint() -> void:
+	var campaign := Campaign.new()
+	campaign.gold = 180 # Isolated test funds; upgrades still use production purchases.
+	for role in range(3):
+		check(campaign.purchase(role) and campaign.purchase(role), "Campaign: inherited max-level purchases")
+	campaign.restart_battle()
+	campaign_finish(campaign)
+	campaign_finish(campaign)
+	check(campaign.request_farm(0), "Campaign: farm queued before terminal objective")
+	var stronghold := campaign_finish(campaign)
+	print("CAMPAIGN Stronghold upgraded snapshot=%s" % [balance_snapshot(stronghold)])
+	check(stronghold.result == Combat.Result.VICTORY and campaign.gold == 70
+		and campaign.stronghold_cleared and campaign.phase == Campaign.Phase.CONQUEST_CLEARED
+		and campaign.battle == stronghold and campaign.pending_navigation == Campaign.Navigation.NONE
+		and campaign.pending_farm == -1 and campaign.farm_encounter == -1,
+		"Campaign: Stronghold thirty-gold clearance overrides queued farm and retains terminal object")
+	var before := campaign_snapshot(campaign)
+	check(not campaign.settle(stronghold) and campaign.restart_battle() == null
+		and campaign.restart_battle(3) == null and not campaign.request_farm(3)
+		and not campaign.is_encounter_unlocked(3) and campaign.request_frontier()
+		and campaign_snapshot(campaign) == before, "Campaign: checkpoint no-op and duplicate/restart cannot repay")
+	check(campaign.request_farm(1) and campaign.phase == Campaign.Phase.RUNNING
+		and campaign.mode == Campaign.Mode.FARM and campaign.gold == 70 and campaign.stronghold_cleared,
+		"Campaign: checkpoint farm starts immediately without payment or lost clearance")
+	campaign_fresh(campaign, stronghold, 1)
+	var farm := campaign.battle
+	check(campaign.request_frontier() and campaign.battle == farm and campaign.gold == 70,
+		"Campaign: post-clear frontier waits for farm completion")
+	campaign_finish(campaign)
+	check(campaign.phase == Campaign.Phase.CONQUEST_CLEARED and campaign.battle == farm
+		and campaign.current_encounter == 1 and campaign.gold == 100 and campaign.stronghold_cleared,
+		"Campaign: farm pays before returning to checkpoint without Stronghold recreation")
+	before = campaign_snapshot(campaign)
+	check(not campaign.settle(farm) and not campaign.settle(stronghold)
+		and campaign.restart_battle() == null and campaign_snapshot(campaign) == before,
+		"Campaign: neither checkpoint terminal object can repay")
+	var independent := Campaign.new()
+	independent.restart_battle()
+	check(not independent.border_cleared and not independent.archer_cleared
+		and not independent.stronghold_cleared and independent.gold == 0
+		and independent.levels == [1, 1, 1] and independent.battle != campaign.battle,
+		"Campaign: objective and ownership are independent per in-memory instance")
+
+func test_campaign_purchases() -> void:
+	var campaign := Campaign.new()
+	campaign.restart_battle()
+	campaign_finish(campaign)
+	campaign.request_farm(0)
+	campaign.gold = 60
+	var combat := campaign.battle
+	var stats_before: Array = campaign_snapshot(campaign)[17]
+	check(campaign.purchase(1) and campaign.gold == 40 and campaign.levels == [1, 2, 1]
+		and campaign_snapshot(campaign)[17] == stats_before and campaign.battle == combat,
+		"Campaign: mid-battle purchase leaves complete active squad stats unchanged")
+	var before := campaign_snapshot(campaign)
+	check(not campaign.purchase(-1) and not campaign.purchase(3) and campaign_snapshot(campaign) == before,
+		"Campaign: invalid purchases preserve navigation and battle")
+	campaign_finish(campaign)
+	check(campaign.gold == 70 and campaign.battle.players[1].health == 52
+		and campaign.battle.players[1].damage == 12 and campaign.current_encounter == 0,
+		"Campaign: transition applies purchased full-health snapshot after reward")
+	campaign.request_frontier()
+	check(campaign.purchase(1), "Campaign: next purchased level through inherited API")
+	before = campaign_snapshot(campaign)
+	check(not campaign.purchase(1) and campaign_snapshot(campaign) == before,
+		"Campaign: capped purchase preserves queued frontier")
+	var old := campaign.battle
+	campaign.restart_battle()
+	check(campaign.battle.players[1].health == 64 and campaign.battle.players[1].damage == 16
+		and campaign.mode == Campaign.Mode.FARM and campaign.farm_encounter == 0
+		and campaign.pending_navigation == Campaign.Navigation.NONE and campaign.gold == 30,
+		"Campaign: explicit farm restart refreshes purchases and retains farm selection")
+	campaign_fresh(campaign, old, 0)
+	campaign_finish(campaign)
+	check(campaign.battle.players[1].health == 64, "Campaign: farm replay retains purchased full health")
+	campaign.gold = 0
+	before = campaign_snapshot(campaign)
+	check(not campaign.purchase(0) and campaign_snapshot(campaign) == before,
+		"Campaign: unaffordable purchase is inert")
+	campaign.request_frontier()
+	for squad in campaign.battle.players:
+		squad.health = 0
+	campaign_finish(campaign)
+	check(campaign.current_encounter == 3 and campaign.gold == 0 and campaign.levels == [1, 3, 1]
+		and campaign.battle.players[1].health == 64 and campaign.battle.players[1].damage == 16,
+		"Campaign: defeat frontier retry preserves purchases and refreshes stats")
+
+func test_campaign_determinism() -> void:
+	var runs: Array = []
+	for repeat in range(2):
+		var campaign := Campaign.new()
+		campaign.restart_battle()
+		var snapshots: Array = [campaign_snapshot(campaign, false)]
+		campaign_finish(campaign)
+		snapshots.append(campaign_snapshot(campaign, false))
+		campaign.request_farm(0)
+		campaign.battle.queue_commander()
+		snapshots.append(campaign_snapshot(campaign, false))
+		campaign_finish(campaign)
+		snapshots.append(campaign_snapshot(campaign, false))
+		for squad in campaign.battle.players:
+			squad.health = 0
+		campaign_finish(campaign)
+		snapshots.append(campaign_snapshot(campaign, false))
+		campaign.gold = 180
+		for role in range(3):
+			campaign.purchase(role)
+			campaign.purchase(role)
+		campaign.request_frontier()
+		campaign_finish(campaign)
+		snapshots.append(campaign_snapshot(campaign, false))
+		campaign.request_farm(0)
+		campaign_finish(campaign)
+		snapshots.append(campaign_snapshot(campaign, false))
+		campaign.request_farm(1)
+		campaign.request_frontier()
+		campaign_finish(campaign)
+		snapshots.append(campaign_snapshot(campaign, false))
+		runs.append(snapshots)
+	check(runs[0] == runs[1], "Campaign: repeated advance navigation loss checkpoint sequences exactly deterministic")
+
+func balance_snapshot(combat: Combat) -> Array:
+	return [combat.result, combat.rounds,
+		combat.players.map(func(squad: Data.Squad) -> int: return squad.health),
+		combat.enemies.map(func(squad: Data.Squad) -> int: return squad.health)]
+
 func priority_targets(mask: int, omit_dead: bool) -> Array[Data.Squad]:
 	var squads: Array[Data.Squad] = []
 	for role in [Data.Role.FOOT, Data.Role.SHIELD, Data.Role.HORSE]:
