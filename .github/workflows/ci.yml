@@ -40,9 +40,33 @@ jobs:
       - name: Import and check scripts
         run: |
           godot --headless --path . --editor --quit 2>&1 | tee "$RUNNER_TEMP/godot-import.log"
-          ! grep -E 'SCRIPT ERROR:|ERROR:' "$RUNNER_TEMP/godot-import.log"
+          ! grep -E 'SCRIPT ERROR:|ERROR:' "$RUNNER_TEMP/godot-import.log" || exit 1
       - name: Run headless tests
         run: |
           godot --headless --path . --script tests/run_tests.gd 2>&1 | tee "$RUNNER_TEMP/godot-tests.log"
-          ! grep -E 'SCRIPT ERROR:|ERROR:' "$RUNNER_TEMP/godot-tests.log"
+          ! grep -E 'SCRIPT ERROR:|ERROR:' "$RUNNER_TEMP/godot-tests.log" || exit 1
           grep -Eq '^SUMMARY: [1-9][0-9]* checks, 0 failures$' "$RUNNER_TEMP/godot-tests.log"
+      - name: Verify intentional test failure
+        run: |
+          set +e
+          timeout 35s godot --headless --path . --script tests/run_tests.gd -- --force-failure 2>&1 | tee "$RUNNER_TEMP/godot-forced-tests.log"
+          godot_status=${PIPESTATUS[0]} tee_status=${PIPESTATUS[1]}
+          set -e
+          test "$godot_status" -eq 1
+          test "$tee_status" -eq 0
+          ! grep -E 'SCRIPT ERROR:|ERROR:' "$RUNNER_TEMP/godot-forced-tests.log" || exit 1
+          test "$(grep -Fxc 'FAIL forced runner failure' "$RUNNER_TEMP/godot-forced-tests.log")" -eq 1
+          test "$(grep -c '^FAIL ' "$RUNNER_TEMP/godot-forced-tests.log")" -eq 1
+          grep '^SUMMARY:' "$RUNNER_TEMP/godot-forced-tests.log" | tail -n 1 | grep -Eq '^SUMMARY: [1-9][0-9]* checks, 1 failures$'
+      - name: Rerun headless tests after intentional failure
+        run: |
+          godot --headless --path . --script tests/run_tests.gd 2>&1 | tee "$RUNNER_TEMP/godot-tests-rerun.log"
+          ! grep -E 'SCRIPT ERROR:|ERROR:' "$RUNNER_TEMP/godot-tests-rerun.log" || exit 1
+          grep -Eq '^SUMMARY: [1-9][0-9]* checks, 0 failures$' "$RUNNER_TEMP/godot-tests-rerun.log"
+      - name: Verify two-process persistence
+        run: |
+          timeout 35s godot --headless --path . --script tests/persistence_smoke.gd 2>&1 | tee "$RUNNER_TEMP/godot-persistence.log"
+          ! grep -E 'FAIL|SCRIPT ERROR:|ERROR:' "$RUNNER_TEMP/godot-persistence.log" || exit 1
+          for phase in earn reload two-process; do
+            grep -Eq "^SUMMARY: persistence $phase: [1-9][0-9]* checks, 0 failures \\(headless\\)$" "$RUNNER_TEMP/godot-persistence.log"
+          done
