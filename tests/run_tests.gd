@@ -110,6 +110,10 @@ func run() -> void:
 	test_progress_format()
 	test_progress_failures()
 	test_progress_adapter()
+	test_defensive_combat()
+	test_defense_preparation()
+	test_defense_routing()
+	test_defense_snapshots()
 	test_campaign_progression()
 	test_campaign_navigation()
 	test_campaign_losses()
@@ -406,6 +410,275 @@ func test_campaign_scene_lifecycle() -> void:
 			"Campaign scene: same timestamp cannot consume elapsed span twice")
 		scene.free()
 
+func test_defense_snapshots() -> void:
+	var runs: Array = []
+	for repeat in range(2):
+		var campaign := Campaign.new()
+		campaign.gold = 240 # Isolated funds; every owned level uses production purchases.
+		for role in range(3):
+			check(campaign.purchase(role) and campaign.purchase(role), "Defense passive: cap troops")
+		check(campaign.purchase_gate() and campaign.purchase_gate() and campaign.gold == 0,
+			"Defense passive: cap gate")
+		campaign.restart_battle()
+		var snapshots: Array = [campaign_snapshot(campaign, false)]
+		for stage in range(3):
+			campaign_finish(campaign)
+			snapshots.append(campaign_snapshot(campaign, false))
+		check(campaign.start_defense() != null, "Defense passive: explicit assault")
+		snapshots.append(campaign_snapshot(campaign, false))
+		var gold_before: int = campaign.gold
+		var assault := campaign_finish(campaign)
+		snapshots.append(campaign_snapshot(campaign, false))
+		check(campaign.phase == Campaign.Phase.CAMPAIGN_SECURED and assault.gate_health > 0
+			and campaign.gold == gold_before and assault.result == Combat.Result.VICTORY,
+			"Defense passive: real capped conquest and assault secure with zero defense gold")
+		print("DEFENSE passive rounds=%d gate=%d snapshot=%s" % [assault.rounds,
+			assault.gate_health, balance_snapshot(assault)])
+		runs.append(snapshots)
+	check(runs[0] == runs[1], "Defense: full capped sequence snapshots deterministic")
+	var campaign := Campaign.new()
+	campaign.restart_battle()
+	campaign_finish(campaign)
+	campaign_finish(campaign)
+	# Controlled Stronghold health permits baseline ownership at a real settled checkpoint.
+	for squad in campaign.battle.enemies:
+		squad.health = 1
+	campaign_finish(campaign)
+	var assault := campaign.start_defense()
+	assault.queue_commander()
+	assault.step_round()
+	var stats: Array = campaign_snapshot(campaign)[17]
+	var gate_before: int = assault.gate_health
+	campaign.gold = 80
+	check(campaign.purchase(0) and campaign.purchase_gate() and campaign.gold == 40
+		and campaign.levels == [2, 1, 1] and campaign.gate_level == 2
+		and campaign_snapshot(campaign)[17] == stats and assault.gate_health == gate_before
+		and assault.gate_max_health == 80 and assault.commander_damage == 6,
+		"Defense: active troop/gate purchases affect ownership only")
+	var other := defense_ready()
+	other.start_defense()
+	var other_before := campaign_snapshot(other)
+	assault.players[0].health = 0
+	assault.gate_health = 1
+	campaign_finish(campaign)
+	check(campaign.gold == 40 and campaign.gate_level == 2 and campaign.levels == [2, 1, 1],
+		"Defense: loss retains purchased ownership and wallet")
+	campaign.request_frontier()
+	campaign_finish(campaign)
+	var retry := campaign.start_defense()
+	campaign_fresh(campaign, assault, 4)
+	check(retry.players[0].health == 160 and retry.players[0].damage == 6
+		and retry.gate_health == 140 and retry.gate_max_health == 140
+		and retry.commander_damage == 6 and assault.gate_health == 0
+		and campaign_snapshot(other) == other_before,
+		"Defense: fresh retry applies purchases, old assault and other controller independent")
+	retry.players[0].health = 0
+	retry.enemies.assign([Data.Squad.new(Data.Role.HORSE, "Twelve", 100, 12)])
+	retry.step_round()
+	check(retry.gate_health == 128 and retry.players[1].health == 40 and retry.players[2].health == 60,
+		"Defense: owned level-two snapshot takes twelve gate damage only")
+
+func test_defense_routing() -> void:
+	for queued in [false, true]:
+		for farm_loss in [false, true]:
+			var campaign := defense_ready()
+			var stronghold := campaign.battle
+			var ready_before := campaign_snapshot(campaign)
+			check(not campaign.settle(stronghold) and campaign_snapshot(campaign) == ready_before,
+				"Defense guards: duplicate Stronghold before assault inert")
+			var assault := campaign.start_defense()
+			if queued:
+				check(campaign.request_farm(1) and campaign.request_farm(0),
+					"Defense: latest valid farm queues without abandoning")
+			var before := campaign_snapshot(campaign)
+			for invalid in [null, assault, Combat.new(Data.Encounter.COUNTERATTACK), stronghold]:
+				check(not campaign.settle(invalid) and campaign_snapshot(campaign) == before,
+					"Defense guards: null ongoing foreign stale settlement inert")
+			check(not campaign.request_frontier() and not campaign.request_farm(4)
+				and not campaign.request_farm(3) and not campaign.request_farm(-1)
+				and not campaign.request_farm(99) and campaign.start_defense() == null
+				and campaign.restart_battle() == null and campaign_snapshot(campaign) == before,
+				"Defense: invalid navigation preserves assault and latest intent")
+			assault.players[0].health = 0
+			assault.gate_health = 1
+			campaign_finish(campaign)
+			check(assault.defeat_reason == Combat.DefeatReason.GATE_DESTROYED and campaign.gold == 70
+				and campaign.levels == [3, 3, 3] and campaign.gate_level == 1
+				and campaign.border_cleared and campaign.archer_cleared and campaign.stronghold_cleared
+				and campaign.phase == Campaign.Phase.RUNNING and campaign.mode == Campaign.Mode.FARM
+				and campaign.current_encounter == (0 if queued else 1),
+				"Defense: free defeat preserves ownership and clearance, routes queued/default farm")
+			campaign_fresh(campaign, assault, 0 if queued else 1)
+			before = campaign_snapshot(campaign)
+			check(not campaign.settle(assault) and not campaign.settle(stronghold)
+				and campaign.start_defense() == null and campaign_snapshot(campaign) == before,
+				"Defense guards: duplicate loss cannot replace farm successor")
+			var reward: int = 10 if queued else 30
+			var farm := campaign_finish(campaign)
+			check(campaign.gold == 70 + reward and campaign.phase == Campaign.Phase.RUNNING,
+				"Defense: legitimate recovery farm pays once and repeats")
+			campaign.request_frontier()
+			before = campaign_snapshot(campaign)
+			check(not campaign.settle(farm) and campaign_snapshot(campaign) == before,
+				"Defense guards: old farm cannot consume newer frontier request")
+			if farm_loss:
+				for squad in campaign.battle.players:
+					squad.health = 0
+			campaign_finish(campaign)
+			check(campaign.phase == Campaign.Phase.CONQUEST_CLEARED and campaign.stronghold_cleared
+				and campaign.gold == 70 + reward * (1 if farm_loss else 2)
+				and not campaign.battle.is_defense, "Defense: farm win/loss frontier returns ready, not assault")
+			var previous := campaign.battle
+			check(campaign.start_defense() != null, "Defense: explicit fresh retry accepted")
+			campaign_fresh(campaign, previous, 4)
+	var secured := defense_ready()
+	var old_stronghold := secured.battle
+	secured.purchase_gate()
+	secured.purchase_gate()
+	secured.start_defense()
+	secured.request_farm(0)
+	var gold_before: int = secured.gold
+	var won := campaign_finish(secured)
+	check(won.result == Combat.Result.VICTORY and secured.phase == Campaign.Phase.CAMPAIGN_SECURED
+		and secured.battle == won and secured.gold == gold_before and secured.pending_farm == -1
+		and secured.pending_navigation == Campaign.Navigation.NONE and secured.farm_encounter == -1,
+		"Defense: victory security overrides queued farming, zero payout and retained battle")
+	var before := campaign_snapshot(secured)
+	check(not secured.settle(won) and not secured.settle(old_stronghold)
+		and not secured.request_farm(0) and not secured.request_farm(1) and not secured.request_frontier()
+		and secured.start_defense() == null and secured.restart_battle() == null
+		and secured.restart_battle(4) == null and campaign_snapshot(secured) == before,
+		"Defense: secured navigation and all duplicate settlements inert")
+
+func defense_ready() -> Campaign:
+	var campaign := Campaign.new()
+	campaign.gold = 180
+	for role in range(3):
+		check(campaign.purchase(role) and campaign.purchase(role), "Defense setup: real troop purchases")
+	campaign.restart_battle()
+	for stage in range(3):
+		campaign_finish(campaign)
+	check(campaign.phase == Campaign.Phase.CONQUEST_CLEARED, "Defense setup: real conquest checkpoint")
+	return campaign
+
+func test_defense_preparation() -> void:
+	check(Campaign.Phase.RUNNING == 0 and Campaign.Phase.CONQUEST_CLEARED == 1
+		and Campaign.Phase.DEFENDING == 2 and Campaign.Phase.CAMPAIGN_SECURED == 3
+		and Campaign.STAGES == [0, 1, 3], "Defense: stable phases and conquest stages")
+	var fresh := Campaign.new()
+	check(fresh.start_defense() == null and fresh.battle == null and fresh.gate_level == 1,
+		"Defense: fresh entry inert before first battle")
+	fresh.restart_battle()
+	var before := campaign_snapshot(fresh)
+	check(fresh.start_defense() == null and fresh.restart_battle(4) == null
+		and campaign_snapshot(fresh) == before, "Defense: running entry and generic bypass rejected")
+	check(fresh.gate_purchase_cost() == 20 and not fresh.purchase_gate()
+		and campaign_snapshot(fresh) == before, "Gate: insufficient funds inert")
+	fresh.gold = 60
+	check(fresh.purchase_gate() and fresh.gold == 40 and fresh.gate_level == 2
+		and fresh.gate_purchase_cost() == 40, "Gate: exact first purchase")
+	check(fresh.purchase_gate() and fresh.gold == 0 and fresh.gate_level == 3
+		and fresh.gate_purchase_cost() == 0, "Gate: exact second purchase and cap")
+	before = campaign_snapshot(fresh)
+	check(not fresh.purchase_gate() and campaign_snapshot(fresh) == before, "Gate: cap inert")
+	var campaign := defense_ready()
+	var stronghold := campaign.battle
+	var assault := campaign.start_defense()
+	campaign_fresh(campaign, stronghold, 4)
+	check(assault.is_defense and assault.gate_health == 80 and assault.commander_damage == 12
+		and campaign.phase == Campaign.Phase.DEFENDING and campaign.mode == Campaign.Mode.ADVANCE
+		and campaign.farm_encounter == -1 and campaign.pending_farm == -1,
+		"Defense: explicit direct entry snapshots and clears selection")
+	before = campaign_snapshot(campaign)
+	check(campaign.start_defense() == null and campaign.restart_battle() == null
+		and campaign.restart_battle(4) == null and campaign_snapshot(campaign) == before,
+		"Defense: repeated start and restart inert")
+	var returned := defense_ready()
+	returned.request_farm(0)
+	before = campaign_snapshot(returned)
+	check(returned.start_defense() == null and campaign_snapshot(returned) == before,
+		"Defense: farming entry rejected")
+	returned.request_frontier()
+	campaign_finish(returned)
+	var farm := returned.battle
+	check(returned.current_encounter == 0 and returned.start_defense() != null,
+		"Defense: entry accepts ordinary farm-return checkpoint")
+	campaign_fresh(returned, farm, 4)
+	var ordinary := Economy.new()
+	ordinary.levels.assign([3, 3, 3])
+	check(not ordinary.is_encounter_unlocked(4) and ordinary.restart_battle(4) == null
+		and ordinary.encounter_reward(4) == 0, "Defense: ordinary Economy cannot unlock or pay")
+
+func test_defensive_combat() -> void:
+	check(Data.Encounter.COUNTERATTACK == 4, "Defense: appended encounter ID")
+	var authored := Combat.new(Data.Encounter.COUNTERATTACK)
+	check(authored.enemies.map(func(s: Data.Squad) -> Array: return [s.health, s.damage])
+		== [[180, 12], [80, 10], [80, 12]], "Defense: exact authored enemies")
+	for shield_state in ["living", "dead", "absent"]:
+		var combat := Combat.new(Data.Encounter.COUNTERATTACK)
+		combat.players.reverse()
+		for squad in combat.players:
+			squad.title = "Scrambled"
+			if squad.role == Data.Role.SHIELD and shield_state == "dead":
+				squad.health = 0
+		if shield_state == "absent":
+			combat.players.remove_at(2)
+		combat.step_round()
+		check(combat.gate_health == (80 if shield_state == "living" else 46)
+			and combat.players[0].health == 60 and combat.players[1].health == 40,
+			"Defense: all enemy roles shield-only targeting %s" % shield_state)
+	for gate in [80, 140]:
+		var combat := Combat.new(Data.Encounter.COUNTERATTACK)
+		combat.gate_max_health = gate
+		combat.gate_health = gate
+		combat.players[0].health = 1
+		combat.enemies.assign([Data.Squad.new(Data.Role.HORSE, "Attack", 100, 12)])
+		combat.step_round()
+		check(combat.players[0].health == 0 and combat.gate_health == gate,
+			"Defense: shield death has no same-round spill")
+		combat.step_round()
+		check(combat.gate_health == gate - 12 and combat.players[1].health == 40
+			and combat.players[2].health == 60, "Defense: twelve damage reaches only gate")
+	for outcome in ["victory", "mutual", "army", "timeout", "sixty_win", "sixty_gate"]:
+		var combat := Combat.new(Data.Encounter.COUNTERATTACK)
+		combat.players.assign([Data.Squad.new(Data.Role.FOOT, "Last archer", 1, 0)])
+		combat.enemies.assign([Data.Squad.new(Data.Role.HORSE, "Last enemy", 1, 0)])
+		if outcome.begins_with("sixty") or outcome == "timeout":
+			for i in range(59):
+				combat.step_round()
+		if outcome != "timeout" and outcome != "army":
+			combat.players[0].damage = 1
+		if outcome == "mutual" or outcome == "sixty_gate":
+			combat.enemies[0].damage = 80
+		if outcome == "army":
+			combat.players[0].health = 0
+		combat.step_round()
+		var won: bool = outcome == "victory" or outcome == "sixty_win"
+		var reason: int = Combat.DefeatReason.NONE if won or outcome == "army" else (
+			Combat.DefeatReason.TIMEOUT if outcome == "timeout" else Combat.DefeatReason.GATE_DESTROYED)
+		check(combat.result == (Combat.Result.ONGOING if outcome == "army" else (
+			Combat.Result.VICTORY if won else Combat.Result.DEFEAT)) and combat.defeat_reason == reason,
+			"Defense: simultaneous outcome precedence %s" % outcome)
+		if outcome != "army":
+			var before: Array = [balance_snapshot(combat), combat.gate_health, combat.defeat_reason]
+			check(not combat.queue_commander(), "Defense: terminal input rejected")
+			combat.step_round()
+			check([balance_snapshot(combat), combat.gate_health, combat.defeat_reason] == before
+				and not combat.commander_queued, "Defense: terminal round inert")
+	var strike := Combat.new(Data.Encounter.COUNTERATTACK)
+	check(strike.commander_damage == 6 and strike.queue_commander() and not strike.queue_commander(),
+		"Defense: commander original strength and rate limit")
+	strike.step_round()
+	check(strike.enemies[0].health == 162 and not strike.commander_queued and strike.queue_commander(),
+		"Defense: commander retains frontline target and clears each round")
+	var death := Combat.new(Data.Encounter.COUNTERATTACK)
+	death.enemies.assign([Data.Squad.new(Data.Role.SHIELD, "Dying", 1, 12),
+		Data.Squad.new(Data.Role.FOOT, "Survivor", 80, 0)])
+	death.step_round()
+	check(death.players[0].health == 108, "Defense: dying enemy attacks simultaneously")
+	death.step_round()
+	check(death.players[0].health == 108, "Defense: dead enemy cannot attack later")
+
 func campaign_finish(campaign: Campaign) -> Combat:
 	var completed := campaign.battle
 	for i in range(60):
@@ -429,7 +702,8 @@ func campaign_snapshot(campaign: Campaign, identity: bool = true) -> Array:
 		campaign.farm_encounter, campaign.pending_navigation, campaign.pending_farm,
 		campaign.current_encounter, campaign._battle_reward, campaign._settled,
 		combat if identity else null, balance_snapshot(combat), combat.commander_queued,
-		combat.commander_damage, squads]
+		combat.commander_damage, squads, campaign.gate_level, combat.is_defense,
+		combat.gate_max_health, combat.gate_health, combat.defeat_reason]
 
 func campaign_fresh(campaign: Campaign, previous: Combat, encounter: int) -> void:
 	var combat := campaign.battle
@@ -441,7 +715,10 @@ func campaign_fresh(campaign: Campaign, previous: Combat, encounter: int) -> voi
 		and not is_same(combat.enemies, previous.enemies)
 		and combat.players[0] != previous.players[0] and combat.enemies[0] != previous.enemies[0]
 		and combat.rounds == 0 and combat.result == Combat.Result.ONGOING
-		and not combat.commander_queued and full and campaign.current_encounter == encounter,
+		and not combat.commander_queued and full and campaign.current_encounter == encounter
+		and combat.defeat_reason == Combat.DefeatReason.NONE
+		and combat.gate_health == combat.gate_max_health
+		and combat.gate_max_health == (80 + 60 * (campaign.gate_level - 1) if combat.is_defense else 0),
 		"Campaign: independent full-health successor %d" % encounter)
 
 func test_campaign_progression() -> void:
