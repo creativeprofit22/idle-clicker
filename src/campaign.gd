@@ -1,6 +1,6 @@
 extends "res://src/economy.gd"
 
-# Session-local campaign; the separate playable prototype exposes conquest only.
+# Session-local campaign; the separate playable prototype exposes conquest and defense.
 enum Phase { RUNNING, CONQUEST_CLEARED, DEFENDING, CAMPAIGN_SECURED }
 enum Mode { ADVANCE, FARM }
 enum Navigation { NONE, FARM, FRONTIER }

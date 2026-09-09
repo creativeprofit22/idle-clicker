@@ -9,12 +9,15 @@ const ENCOUNTER_TITLES: Dictionary = {
 	Data.Encounter.BORDER_SKIRMISH: "Border Skirmish",
 	Data.Encounter.ARCHER_POSITION: "Archer Position",
 	Data.Encounter.STRONGHOLD: "Stronghold",
+	Data.Encounter.COUNTERATTACK: "Counterattack",
 }
 
 var campaign := Campaign.new()
 var elapsed_usec: int = 0
 var last_frame_usec: int = 0
 var suspended: bool = false
+var focus_lost: bool = false
+var application_paused: bool = false
 var skip_resume_frame: bool = false
 
 @onready var upgrades: Array[Button] = [%ShieldUpgrade, %FootUpgrade, %HorseUpgrade]
@@ -23,10 +26,15 @@ func _ready() -> void:
 	%FarmBorder.pressed.connect(_request_farm.bind(Data.Encounter.BORDER_SKIRMISH))
 	%FarmArcher.pressed.connect(_request_farm.bind(Data.Encounter.ARCHER_POSITION))
 	%Frontier.pressed.connect(_request_frontier)
+	%StartDefense.pressed.connect(_start_defense)
+	%GateUpgrade.pressed.connect(_purchase_gate)
 	for role in range(upgrades.size()):
 		upgrades[role].pressed.connect(_purchase.bind(role))
 	campaign.restart_battle()
 	last_frame_usec = Time.get_ticks_usec()
+	# Check native mode even at idle checkpoints where this node stops processing.
+	get_tree().process_frame.connect(_sync_suspension)
+	_sync_suspension()
 	_refresh()
 
 func _process(_delta: float) -> void:
@@ -45,12 +53,13 @@ func advance_time(seconds: float) -> void:
 	advance_usec(roundi(seconds * USEC_PER_SECOND))
 
 func advance_usec(usec: int) -> void:
+	_sync_suspension()
 	if suspended:
 		return
 	if skip_resume_frame:
 		skip_resume_frame = false
 		return
-	if campaign.phase != Campaign.Phase.RUNNING:
+	if campaign.phase not in [Campaign.Phase.RUNNING, Campaign.Phase.DEFENDING]:
 		return
 	elapsed_usec += usec
 	while elapsed_usec >= ROUND_USEC:
@@ -63,25 +72,47 @@ func advance_usec(usec: int) -> void:
 			%LastResult.text = "%s: %s · +%d gold" % [ENCOUNTER_TITLES[encounter],
 				"Victory" if completed.result == Combat.Result.VICTORY else "Defeat",
 				campaign.gold - gold_before]
+			if completed.is_defense and completed.result == Combat.Result.DEFEAT:
+				%LastResult.text += " · %s. Farm to recover, return to the checkpoint after battle, then Start Defense to retry." % (
+					"Gate destroyed" if completed.defeat_reason == Combat.DefeatReason.GATE_DESTROYED else "Timeout")
 			# Campaign already routed: never restart or tick its fresh successor here.
 			elapsed_usec = 0
-			set_process(campaign.phase == Campaign.Phase.RUNNING)
+			set_process(campaign.phase in [Campaign.Phase.RUNNING, Campaign.Phase.DEFENDING])
 			_refresh()
 			break
 		_refresh()
 
 func _notification(what: int) -> void:
-	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_APPLICATION_FOCUS_OUT:
-		suspended = true
-	elif what == NOTIFICATION_APPLICATION_RESUMED or what == NOTIFICATION_APPLICATION_FOCUS_IN:
-		suspended = false
-		skip_resume_frame = true
-	else:
+	match what:
+		NOTIFICATION_APPLICATION_PAUSED:
+			application_paused = true
+		NOTIFICATION_APPLICATION_RESUMED:
+			application_paused = false
+		NOTIFICATION_APPLICATION_FOCUS_OUT:
+			focus_lost = true
+		NOTIFICATION_APPLICATION_FOCUS_IN:
+			focus_lost = false
+		_:
+			return
+	_sync_suspension()
+
+func _is_window_minimized() -> bool:
+	# Headless has no native window; its dummy backend always returns MINIMIZED.
+	return DisplayServer.get_name() != "headless" and is_inside_tree() \
+		and get_window().mode == Window.MODE_MINIMIZED
+
+func _sync_suspension() -> void:
+	var should_suspend: bool = focus_lost or application_paused or _is_window_minimized()
+	if suspended == should_suspend:
 		return
+	suspended = should_suspend
+	if not suspended:
+		skip_resume_frame = true
 	if is_node_ready():
 		_refresh()
 
 func _request_farm(encounter: int) -> void:
+	_sync_suspension()
 	if suspended:
 		return
 	var was_checkpoint: bool = campaign.phase == Campaign.Phase.CONQUEST_CLEARED
@@ -92,12 +123,30 @@ func _request_farm(encounter: int) -> void:
 	_refresh()
 
 func _request_frontier() -> void:
+	_sync_suspension()
 	if suspended:
 		return
 	campaign.request_frontier()
 	_refresh()
 
+func _start_defense() -> void:
+	_sync_suspension()
+	if suspended or campaign.start_defense() == null:
+		return
+	elapsed_usec = 0
+	last_frame_usec = Time.get_ticks_usec()
+	set_process(true)
+	_refresh()
+
+func _purchase_gate() -> void:
+	_sync_suspension()
+	if suspended:
+		return
+	campaign.purchase_gate()
+	_refresh()
+
 func _purchase(role: int) -> void:
+	_sync_suspension()
 	if suspended:
 		return
 	campaign.purchase(role)
@@ -105,14 +154,23 @@ func _purchase(role: int) -> void:
 
 func _refresh() -> void:
 	var checkpoint: bool = campaign.phase == Campaign.Phase.CONQUEST_CLEARED
-	%CampaignStatus.text = "%s · %s · %s" % [ENCOUNTER_TITLES[campaign.current_encounter],
-		"Farm" if campaign.mode == Campaign.Mode.FARM else "Advance",
-		"Conquest cleared — prototype ends here; ordinary farming remains available" if checkpoint else "Running"]
+	var defending: bool = campaign.phase == Campaign.Phase.DEFENDING
+	var secured: bool = campaign.phase == Campaign.Phase.CAMPAIGN_SECURED
+	match campaign.phase:
+		Campaign.Phase.RUNNING:
+			%CampaignStatus.text = "%s · %s · Running" % [ENCOUNTER_TITLES[campaign.current_encounter],
+				"Farm" if campaign.mode == Campaign.Mode.FARM else "Advance"]
+		Campaign.Phase.CONQUEST_CLEARED:
+			%CampaignStatus.text = "Conquest cleared — prepare upgrades, then Start Defense; ordinary farming remains available"
+		Campaign.Phase.DEFENDING:
+			%CampaignStatus.text = "Counterattack · Defending the Stronghold"
+		Campaign.Phase.CAMPAIGN_SECURED:
+			%CampaignStatus.text = "Campaign secured · Counterattack defeated"
 	if suspended:
 		%CampaignStatus.text += " · Paused"
 	match campaign.pending_navigation:
 		Campaign.Navigation.FARM:
-			%PendingNavigation.text = "Farm %s after this battle" % ENCOUNTER_TITLES[campaign.pending_farm]
+			%PendingNavigation.text = ("Recovery farm %s if defense fails; victory secures the campaign" if defending else "Farm %s after this battle") % ENCOUNTER_TITLES[campaign.pending_farm]
 		Campaign.Navigation.FRONTIER:
 			%PendingNavigation.text = "Return to cleared checkpoint after this battle" if campaign.stronghold_cleared else "Retry frontier after this battle"
 		_:
@@ -127,10 +185,17 @@ func _refresh() -> void:
 			rows.append("%s | HP %d / %d | Damage %d" % [
 				squad.title, squad.health, squad.max_health, squad.damage])
 		labels[i].text = "\n".join(rows)
-	%FarmBorder.disabled = suspended or not campaign.border_cleared
-	%FarmArcher.disabled = suspended or not campaign.archer_cleared
+	%GateHealth.visible = campaign.battle.is_defense
+	%GateHealth.text = "Gate HP: %d / %d" % [campaign.battle.gate_health, campaign.battle.gate_max_health]
+	var gate_cost: int = campaign.gate_purchase_cost()
+	%GateUpgrade.text = "Gate Lv.%d · %s" % [campaign.gate_level,
+		"MAX" if gate_cost == 0 else "Upgrade %d gold" % gate_cost]
+	%GateUpgrade.disabled = suspended or gate_cost <= 0 or campaign.gold < gate_cost
+	%StartDefense.disabled = suspended or not checkpoint or not campaign.stronghold_cleared
+	%FarmBorder.disabled = suspended or secured or not campaign.border_cleared
+	%FarmArcher.disabled = suspended or secured or not campaign.archer_cleared
 	# At the cleared checkpoint frontier is a controller no-op; farming remains available.
-	%Frontier.disabled = suspended or checkpoint or campaign.mode != Campaign.Mode.FARM
+	%Frontier.disabled = suspended or checkpoint or defending or secured or campaign.mode != Campaign.Mode.FARM
 	%Frontier.text = "Return to cleared checkpoint after battle" if campaign.stronghold_cleared else "Retry frontier after battle"
 	var titles: Array[String] = ["Shield infantry", "Foot archers", "Horse archers"]
 	for role in range(upgrades.size()):

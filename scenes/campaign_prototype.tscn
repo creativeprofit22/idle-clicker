@@ -80,6 +80,17 @@ unique_name_in_owner = true
 layout_mode = 2
 autowrap_mode = 2
 
+[node name="GateHealth" type="Label" parent="Margin/Scroll/Column"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 2
+
+[node name="StartDefense" type="Button" parent="Margin/Scroll/Column"]
+unique_name_in_owner = true
+layout_mode = 2
+action_mode = 0
+text = "Start Defense"
+
 [node name="FarmBorder" type="Button" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 layout_mode = 2
@@ -102,6 +113,16 @@ text = "Retry frontier after battle"
 layout_mode = 2
 text = "Purchases apply next battle"
 autowrap_mode = 2
+
+[node name="GateNotice" type="Label" parent="Margin/Scroll/Column"]
+layout_mode = 2
+text = "Gate upgrades apply next defense; they never repair the current gate."
+autowrap_mode = 2
+
+[node name="GateUpgrade" type="Button" parent="Margin/Scroll/Column"]
+unique_name_in_owner = true
+layout_mode = 2
+action_mode = 0
 
 [node name="ShieldUpgrade" type="Button" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true

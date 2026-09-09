@@ -11,6 +11,20 @@ const CampaignPresentation = preload("res://src/campaign_prototype.gd")
 const ProgressSave = preload("res://src/progress_save.gd")
 const ProgressFixture = preload("res://tests/progress_fixture.gd")
 
+# Only the OS window-state read is substituted; lifecycle, controls and clock are real.
+class CampaignWindowFixture extends CampaignPresentation:
+	var minimized: bool = false
+	func _is_window_minimized() -> bool:
+		return minimized
+	func set_reason(reason: int, active: bool) -> void:
+		if reason == 2:
+			minimized = active
+			get_tree().process_frame.emit()
+		else:
+			var events := [[MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT, MainLoop.NOTIFICATION_APPLICATION_FOCUS_IN],
+				[MainLoop.NOTIFICATION_APPLICATION_PAUSED, MainLoop.NOTIFICATION_APPLICATION_RESUMED]]
+			notification(events[reason][0 if active else 1])
+
 class FailingSave extends ProgressSave:
 	var fail_write: bool = false
 	var fail_move_to: String = ""
@@ -128,13 +142,18 @@ func run() -> void:
 	test_campaign_scene_purchases()
 	test_campaign_scene_checkpoint()
 	test_campaign_scene_lifecycle()
+	test_campaign_scene_defense()
+	test_campaign_scene_defense_lifecycle()
+	test_campaign_scene_conflicting_suspension()
 	if "--force-failure" in OS.get_cmdline_user_args():
 		check(false, "forced runner failure")
 	print("SUMMARY: %d checks, %d failures" % [checks, failures])
 	quit(0 if failures == 0 else 1)
 
-func campaign_scene_new() -> CampaignPresentation:
+func campaign_scene_new(script: GDScript = CampaignPresentation) -> CampaignPresentation:
 	var scene: CampaignPresentation = CampaignScene.instantiate()
+	if script != CampaignPresentation:
+		scene.set_script(script)
 	root.add_child(scene)
 	scene.set_process(false)
 	return scene
@@ -142,7 +161,7 @@ func campaign_scene_new() -> CampaignPresentation:
 func campaign_scene_finish(scene: CampaignPresentation) -> Combat:
 	var completed := scene.campaign.battle
 	for i in range(60):
-		if scene.campaign.battle != completed or scene.campaign.phase == Campaign.Phase.CONQUEST_CLEARED:
+		if scene.campaign.battle != completed or scene.campaign.phase in [Campaign.Phase.CONQUEST_CLEARED, Campaign.Phase.CAMPAIGN_SECURED]:
 			break
 		scene.advance_time(1.0)
 	check(completed.result != Combat.Result.ONGOING,
@@ -163,7 +182,7 @@ func test_campaign_scene_fresh() -> void:
 		and scene.get_node("%Gold").text == "Gold: 0"
 		and scene.get_node("%PendingNavigation").text == "No queued navigation",
 		"Campaign scene: fresh Border ownership and labels")
-	for name in ["FarmBorder", "FarmArcher", "Frontier", "ShieldUpgrade", "FootUpgrade", "HorseUpgrade"]:
+	for name in ["FarmBorder", "FarmArcher", "Frontier", "StartDefense", "GateUpgrade", "ShieldUpgrade", "FootUpgrade", "HorseUpgrade"]:
 		var button: Button = scene.get_node("%" + name)
 		check(button.disabled and button.action_mode == BaseButton.ACTION_MODE_BUTTON_PRESS,
 			"Campaign scene: initially disabled on-press control " + name)
@@ -316,7 +335,7 @@ func test_campaign_scene_checkpoint() -> void:
 	scene.get_node("%FarmBorder").pressed.emit()
 	var stronghold := scene.campaign.battle
 	for i in range(60):
-		if scene.campaign.phase == Campaign.Phase.CONQUEST_CLEARED:
+		if scene.campaign.phase in [Campaign.Phase.CONQUEST_CLEARED, Campaign.Phase.CAMPAIGN_SECURED]:
 			break
 		scene.advance_time(1.0)
 	check(stronghold.result == Combat.Result.VICTORY and scene.campaign.gold == 70
@@ -325,7 +344,7 @@ func test_campaign_scene_checkpoint() -> void:
 		and scene.campaign.pending_navigation == Campaign.Navigation.NONE
 		and scene.campaign.pending_farm == -1 and scene.elapsed_usec == 0
 		and scene.get_node("%LastResult").text == "Stronghold: Victory · +30 gold"
-		and scene.get_node("%CampaignStatus").text.contains("Conquest cleared — prototype ends here; ordinary farming remains available")
+		and scene.get_node("%CampaignStatus").text.contains("Conquest cleared — prepare upgrades, then Start Defense; ordinary farming remains available")
 		and scene.get_node("%PendingNavigation").text == "No queued navigation",
 		"Campaign scene: real conquest pays thirty once, clears intent, retains terminal display and stops processing")
 	check(scene.get_node("%Frontier").disabled and not scene.get_node("%FarmBorder").disabled
@@ -352,7 +371,7 @@ func test_campaign_scene_checkpoint() -> void:
 	scene.get_node("%Frontier").pressed.emit()
 	var farm := scene.campaign.battle
 	for i in range(60):
-		if scene.campaign.phase == Campaign.Phase.CONQUEST_CLEARED:
+		if scene.campaign.phase in [Campaign.Phase.CONQUEST_CLEARED, Campaign.Phase.CAMPAIGN_SECURED]:
 			break
 		scene.advance_time(1.0)
 	check(scene.campaign.phase == Campaign.Phase.CONQUEST_CLEARED and scene.campaign.battle == farm
@@ -383,7 +402,7 @@ func test_campaign_scene_lifecycle() -> void:
 		scene.notification(pair[0])
 		check(scene.suspended and scene.get_node("%CampaignStatus").text.contains("Paused"),
 			"Campaign scene: lifecycle suspension displayed")
-		for name in ["FarmBorder", "FarmArcher", "Frontier", "ShieldUpgrade", "FootUpgrade", "HorseUpgrade"]:
+		for name in ["FarmBorder", "FarmArcher", "Frontier", "StartDefense", "GateUpgrade", "ShieldUpgrade", "FootUpgrade", "HorseUpgrade"]:
 			var button: Button = scene.get_node("%" + name)
 			check(button.disabled, "Campaign scene: suspended control disabled " + name)
 			button.pressed.emit()
@@ -409,6 +428,236 @@ func test_campaign_scene_lifecycle() -> void:
 		check(scene.campaign.battle.rounds == 1 and scene.elapsed_usec == 0,
 			"Campaign scene: same timestamp cannot consume elapsed span twice")
 		scene.free()
+
+func campaign_scene_defense_ready(script: GDScript = CampaignPresentation) -> CampaignPresentation:
+	var scene := campaign_scene_new(script)
+	scene.campaign.gold = 180 # Isolated affordability fixture; conquest uses real rounds.
+	for button in scene.upgrades:
+		button.pressed.emit()
+		button.pressed.emit()
+	for i in range(3):
+		campaign_scene_finish(scene)
+	check(scene.campaign.phase == Campaign.Phase.CONQUEST_CLEARED
+		and not scene.get_node("%StartDefense").disabled, "Defense scene: real conquest enables explicit entry")
+	return scene
+
+func test_campaign_scene_defense() -> void:
+	for queued in [false, true]:
+		var scene := campaign_scene_defense_ready()
+		var campaign := scene.campaign
+		check(not scene.get_node("%GateHealth").visible
+			and scene.get_node("%GateUpgrade").text == "Gate Lv.1 · Upgrade 20 gold",
+			"Defense scene: preparation shows ownership/cost without a live gate preview")
+		scene.last_frame_usec = 1
+		scene.elapsed_usec = 123
+		var clock: int = Time.get_ticks_usec()
+		scene.get_node("%StartDefense").pressed.emit()
+		var assault := campaign.battle
+		check(campaign.phase == Campaign.Phase.DEFENDING and assault.rounds == 0
+			and assault.gate_health == 80 and assault.gate_max_health == 80
+			and campaign.pending_navigation == Campaign.Navigation.NONE and campaign.pending_farm == -1
+			and scene.elapsed_usec == 0 and scene.last_frame_usec >= clock and scene.is_processing()
+			and scene.get_node("%CampaignStatus").text == "Counterattack · Defending the Stronghold",
+			"Defense scene: explicit entry resets clock, queue and full gate at round zero")
+		for squad in assault.players:
+			check(squad.health == squad.max_health, "Defense scene: full troop snapshot")
+		scene.set_process(false)
+		scene.advance_foreground(scene.last_frame_usec + 250000)
+		clock = scene.last_frame_usec
+		for i in range(3):
+			scene.get_node("%StartDefense").pressed.emit()
+			scene.get_node("%Frontier").pressed.emit()
+		check(campaign.battle == assault and assault.rounds == 0 and scene.elapsed_usec == 250000
+			and scene.last_frame_usec == clock and scene.get_node("%StartDefense").disabled
+			and scene.get_node("%Frontier").disabled, "Defense scene: repeated start/frontier cannot escape or reset time")
+		var stats: Array = campaign_snapshot(campaign)[17]
+		scene.get_node("%GateUpgrade").pressed.emit()
+		check(campaign.gold == 50 and campaign.gate_level == 2
+			and scene.get_node("%GateUpgrade").text == "Gate Lv.2 · Upgrade 40 gold",
+			"Defense scene: gate level two charges exactly twenty")
+		scene.get_node("%GateUpgrade").pressed.emit()
+		for i in range(3):
+			scene.get_node("%GateUpgrade").pressed.emit()
+		check(campaign.gold == 10 and campaign.gate_level == 3 and campaign_snapshot(campaign)[17] == stats
+			and assault.gate_health == 80 and assault.gate_max_health == 80
+			and scene.get_node("%GateHealth").text == "Gate HP: 80 / 80"
+			and scene.get_node("%GateUpgrade").text == "Gate Lv.3 · MAX"
+			and scene.get_node("%GateUpgrade").disabled, "Defense scene: forty charge, cap and no live snapshot repair")
+		if queued:
+			scene.get_node("%FarmArcher").pressed.emit()
+			scene.get_node("%FarmBorder").pressed.emit()
+			scene._request_farm(Data.Encounter.STRONGHOLD)
+			check(scene.get_node("%PendingNavigation").text.contains("if defense fails; victory secures"),
+				"Defense scene: recovery intent explains victory override")
+		scene.advance_time(120.0)
+		check(assault.result == Combat.Result.DEFEAT and assault.defeat_reason == Combat.DefeatReason.GATE_DESTROYED
+			and campaign.battle != assault and campaign.battle.rounds == 0 and scene.elapsed_usec == 0
+			and campaign.current_encounter == (Data.Encounter.BORDER_SKIRMISH if queued else Data.Encounter.ARCHER_POSITION)
+			and campaign.gold == 10 and campaign.gate_level == 3 and campaign.levels == [3, 3, 3]
+			and campaign.border_cleared and campaign.archer_cleared and campaign.stronghold_cleared
+			and not scene.get_node("%GateHealth").visible
+			and scene.get_node("%LastResult").text.contains("Counterattack: Defeat · +0 gold · Gate destroyed")
+			and scene.get_node("%LastResult").text.contains("return to the checkpoint"),
+			"Defense scene: real defeat pays zero, preserves progress and routes one fresh recovery battle")
+		var recovery := campaign.battle
+		scene.get_node("%StartDefense").pressed.emit()
+		check(campaign.battle == recovery and scene.get_node("%StartDefense").disabled,
+			"Defense scene: farming cannot directly start defense")
+		scene.get_node("%Frontier").pressed.emit()
+		campaign_scene_finish(scene)
+		check(campaign.phase == Campaign.Phase.CONQUEST_CLEARED and not scene.get_node("%StartDefense").disabled,
+			"Defense scene: settled frontier return enables explicit retry")
+		scene.get_node("%StartDefense").pressed.emit()
+		assault = campaign.battle
+		check(assault != recovery and assault.rounds == 0 and assault.gate_health == 200
+			and assault.gate_max_health == 200, "Defense scene: retry snapshots full upgraded gate")
+		scene.get_node("%FarmBorder").pressed.emit()
+		var gold: int = campaign.gold
+		campaign_scene_finish(scene)
+		check(campaign.phase == Campaign.Phase.CAMPAIGN_SECURED and campaign.battle == assault
+			and assault.result == Combat.Result.VICTORY and assault.gate_health > 0
+			and campaign.gold == gold and campaign.pending_navigation == Campaign.Navigation.NONE
+			and scene.get_node("%CampaignStatus").text == "Campaign secured · Counterattack defeated"
+			and scene.get_node("%LastResult").text == "Counterattack: Victory · +0 gold"
+			and scene.get_node("%GateHealth").visible and not scene.is_processing(),
+			"Defense scene: real victory retains winning gate and overrides queued farm without reward")
+		var before := campaign_snapshot(campaign)
+		for name in ["StartDefense", "Frontier", "FarmBorder", "FarmArcher"]:
+			check(scene.get_node("%" + name).disabled, "Defense scene: secured control disabled " + name)
+			scene.get_node("%" + name).pressed.emit()
+			scene.advance_time(120.0)
+		check(campaign_snapshot(campaign) == before and scene.elapsed_usec == 0 and not scene.is_processing(),
+			"Defense scene: terminal signals/time cannot replace, tick, repay or resume")
+		scene.free()
+	# Explicit edge fixture: timeout is decided by a real Combat round, not a fabricated result.
+	var timeout := campaign_scene_defense_ready()
+	timeout.get_node("%StartDefense").pressed.emit()
+	timeout.campaign.battle.rounds = 59
+	timeout.advance_time(1.0)
+	check(timeout.get_node("%LastResult").text.contains("Defeat · +0 gold · Timeout")
+		and not timeout.get_node("%GateHealth").visible, "Defense scene: timeout reason survives recovery routing")
+	timeout.free()
+	var terminal := campaign_scene_defense_ready()
+	terminal.campaign.phase = Campaign.Phase.CAMPAIGN_SECURED # Ownership-only terminal eligibility fixture.
+	terminal._refresh()
+	terminal.get_node("%GateUpgrade").pressed.emit()
+	check(terminal.campaign.gate_level == 2 and terminal.campaign.gold == 50
+		and not terminal.is_processing(), "Defense scene: terminal gate purchases retain ownership-only semantics")
+	terminal.campaign.gold = 39
+	terminal._refresh()
+	terminal.get_node("%GateUpgrade").pressed.emit()
+	check(terminal.get_node("%GateUpgrade").disabled and terminal.campaign.gate_level == 2
+		and terminal.campaign.gold == 39, "Defense scene: insufficient gate funds reject direct emission")
+	terminal.free()
+
+func test_campaign_scene_defense_lifecycle() -> void:
+	for pair in [[MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT, MainLoop.NOTIFICATION_APPLICATION_FOCUS_IN],
+		[MainLoop.NOTIFICATION_APPLICATION_PAUSED, MainLoop.NOTIFICATION_APPLICATION_RESUMED]]:
+		var scene := campaign_scene_defense_ready()
+		scene.notification(pair[0])
+		var checkpoint := scene.campaign.battle
+		scene.get_node("%StartDefense").pressed.emit()
+		scene.get_node("%GateUpgrade").pressed.emit()
+		check(scene.campaign.battle == checkpoint and scene.campaign.gate_level == 1
+			and scene.get_node("%StartDefense").disabled, "Defense lifecycle: suspended checkpoint rejects new controls")
+		scene.notification(pair[1])
+		scene.get_node("%StartDefense").pressed.emit()
+		check(scene.skip_resume_frame, "Defense lifecycle: accepted entry preserves resume-gap guard")
+		scene.advance_foreground(scene.last_frame_usec + 9000000)
+		scene.advance_foreground(scene.last_frame_usec + 250000)
+		var before := campaign_snapshot(scene.campaign)
+		var gate: int = scene.campaign.battle.gate_health
+		scene.notification(pair[0])
+		for name in ["StartDefense", "GateUpgrade", "FarmBorder", "FarmArcher", "Frontier"]:
+			check(scene.get_node("%" + name).disabled, "Defense lifecycle: disabled " + name)
+			scene.get_node("%" + name).pressed.emit()
+		scene.advance_time(120.0)
+		check(campaign_snapshot(scene.campaign) == before and scene.campaign.battle.gate_health == gate
+			and scene.campaign.gate_level == 1 and scene.elapsed_usec == 250000,
+			"Defense lifecycle: suspended rounds, gate, ownership, gold and fraction freeze")
+		scene.notification(pair[1])
+		scene.advance_foreground(scene.last_frame_usec + 9000000)
+		check(campaign_snapshot(scene.campaign) == before and scene.elapsed_usec == 250000,
+			"Defense lifecycle: resume gap excluded")
+		scene.advance_foreground(scene.last_frame_usec + 749999)
+		check(scene.campaign.battle.rounds == 0 and scene.elapsed_usec == 999999,
+			"Defense lifecycle: remaining fraction does not round early")
+		scene.advance_foreground(scene.last_frame_usec + 1)
+		check(scene.campaign.battle.rounds == 1 and scene.elapsed_usec == 0,
+			"Defense lifecycle: exact remaining microsecond advances")
+		# _input settles before GUI handlers, using the same real foreground clock.
+		scene.last_frame_usec = Time.get_ticks_usec() - scene.ROUND_USEC
+		scene._input(InputEventKey.new())
+		check(scene.campaign.battle.rounds == 2, "Defense lifecycle: input settles due round before GUI purchase")
+		scene.free()
+
+func test_campaign_scene_conflicting_suspension() -> void:
+	# Focus/pause in both orders, minimize alone, and overlapping native/lifecycle reasons.
+	for order in [[0, 1], [1, 0], [2], [0, 2], [2, 0], [1, 2], [2, 1], [0, 1, 2], [2, 1, 0]]:
+		for reverse in [false, true]:
+			for defending in [false, true]:
+				var scene := campaign_scene_defense_ready(CampaignWindowFixture) as CampaignWindowFixture
+				if defending:
+					scene.get_node("%StartDefense").pressed.emit()
+					scene.advance_foreground(scene.last_frame_usec + 250000)
+				var before := campaign_snapshot(scene.campaign)
+				var elapsed: int = scene.elapsed_usec
+				var label := "Suspension overlap %s reverse=%s defense=%s: " % [order, reverse, defending]
+				for reason: int in order:
+					scene.set_reason(reason, true)
+				var releases: Array = order.duplicate()
+				if reverse:
+					releases.reverse()
+				for reason: int in releases:
+					check(scene.suspended and scene.get_node("%CampaignStatus").text.contains("Paused")
+						and scene.is_processing() == defending, label + "remaining reason suspends without changing processing")
+					for name in ["StartDefense", "GateUpgrade", "FarmBorder", "FarmArcher", "Frontier",
+						"ShieldUpgrade", "FootUpgrade", "HorseUpgrade"]:
+						var button: Button = scene.get_node("%" + name)
+						check(button.disabled, label + "disabled " + name)
+						button.pressed.emit()
+					scene.advance_foreground(scene.last_frame_usec + 9000000)
+					scene.advance_time(120.0)
+					check(campaign_snapshot(scene.campaign) == before and scene.elapsed_usec == elapsed,
+						label + "controls and time preserve gate, battle, ownership, gold and fraction")
+					scene.set_reason(reason, false)
+				check(not scene.suspended and scene.skip_resume_frame
+					and not scene.get_node("%GateUpgrade").disabled
+					and scene.get_node("%StartDefense").disabled == defending,
+					label + "only final cleared reason resumes eligible controls")
+				scene.advance_foreground(scene.last_frame_usec + 9000000)
+				check(not scene.skip_resume_frame and campaign_snapshot(scene.campaign) == before
+					and scene.elapsed_usec == elapsed, label + "first resumed frame excludes gap")
+				for reason in range(3):
+					scene.set_reason(reason, false)
+				check(not scene.skip_resume_frame, label + "duplicate resume events do not discard another frame")
+				if defending:
+					scene.advance_foreground(scene.last_frame_usec + 749999)
+					check(scene.campaign.battle.rounds == 0 and scene.elapsed_usec == 999999,
+						label + "fraction remains exact after conflicting events")
+					scene.advance_foreground(scene.last_frame_usec + 1)
+					check(scene.campaign.battle.rounds == 1 and scene.elapsed_usec == 0,
+						label + "last foreground microsecond advances one real round")
+				scene.free()
+	# A minimize change must also be observed by direct control/time entry points,
+	# before the next process_frame poll, including non-processing checkpoints.
+	var scene := campaign_scene_defense_ready(CampaignWindowFixture) as CampaignWindowFixture
+	var before := campaign_snapshot(scene.campaign)
+	scene.minimized = true
+	scene.get_node("%StartDefense").pressed.emit()
+	check(scene.suspended and scene.get_node("%StartDefense").disabled
+		and campaign_snapshot(scene.campaign) == before and not scene.is_processing(),
+		"Suspension: checkpoint control samples native mode before next frame")
+	scene.set_reason(2, false)
+	scene.get_node("%StartDefense").pressed.emit()
+	scene.advance_time(9.0) # Exclude resume gap before the second independent minimize.
+	scene.advance_time(0.25)
+	before = campaign_snapshot(scene.campaign)
+	scene.minimized = true
+	scene.advance_time(120.0)
+	check(scene.suspended and campaign_snapshot(scene.campaign) == before and scene.elapsed_usec == 250000,
+		"Suspension: direct time entry samples native mode before next frame")
+	scene.free()
 
 func test_defense_snapshots() -> void:
 	var runs: Array = []
