@@ -73,15 +73,700 @@ current battle settles, never abandoning its reward. Purchases apply next battle
 A long frame stops at the first battle boundary; focus loss/pause freezes combat,
 with no offline catch-up and the first resumed frame excluded.
 
-Stronghold clearance ends at **“Conquest cleared — prototype ends here; ordinary
-farming remains available”**. Frontier is a disabled no-op at that checkpoint;
-from farming it returns there after settlement without replaying Stronghold.
-There is no Fortified frontier, playable defense, dynasty, export or playable-release approval.
-Defense and gate preparation are model-only APIs, described below; this scene is unchanged.
+Stronghold clearance stops at a preparation checkpoint. **Start Defense** explicitly
+begins Counterattack; it never starts automatically after conquest, farming or resume.
+Ordinary farming remains available; Frontier returns after farm settlement without
+replaying Stronghold. Gate upgrades cost **20 then 40 gold**, cap at level 3, and
+apply only to the next defense: buying during combat never repairs its gate or
+changes its snapshot maximum. The gate HP label shows only retained defensive battles.
 
-**Campaign supervised graphical verification PASSED; automatic minimization remains a separate unresolved failure.**
+Defense uses foreground one-second rounds. Farm inputs queue recovery if defense
+fails; Frontier cannot abandon an assault. Defeat pays **0 gold**, retains purchases
+and clearances, displays gate-destroyed/timeout recovery guidance, and starts the
+latest queued ordinary farm (Archer by default). Settle a Frontier return before
+explicitly retrying with fresh troops and gate. Victory instead overrides farming,
+displays **Campaign secured**, retains the winning battle and gate HP, pays **0 gold**,
+and stops timing/navigation/start. Affordable purchases remain ownership-only operations,
+even after security. Suspension freezes combat and rejects every purchase/navigation input.
+There is no Fortified frontier, dynasty, campaign persistence, export or release approval.
 
-Latest complete run (2026-09-08, `--manual-focus`): **52 graphical checks,
+### Defense presentation verification — 8 September 2026
+
+At this checkpoint, implementation and headless gates were complete; **all five
+graphical gates and native PNG inspection were PENDING**. Supervision had not been
+confirmed, so no graphical commands had been launched or new captures inspected.
+The native-gate follow-up below records later runs; earlier conquest passes are
+historical evidence, not defense-presentation passes.
+
+Pinned `4.7.2.stable.official.ed1daf0bf`, unchanged **35-second caller bounds**:
+
+| Gate | Checks / failures | Exit |
+|---|---|---|
+| Headless editor import | Complete, no script/parse errors | 0 |
+| Headless normal / forced / normal | 1461/0 · 1462/1 · 1461/0 | 0 / 1 / 0 |
+| Default / progression / fortified graphical | Pending supervision | Not run |
+| Campaign `--manual-focus` | Pending supervision | Not run |
+| Campaign `--manual-focus --defense` | Pending supervision | Not run |
+
+Full headless logs were scanned: **162 balance rows in each run**, no script/parse
+errors, exactly one `FAIL forced runner failure` in the forced run, and complete
+summaries. The two existing `Exponent too high` negative-save-test warnings remain.
+Import took 5.915 seconds; headless runs took 1.964 / 1.745 / 1.840 seconds.
+Scene tests exercise real conquest and both defense outcomes, explicit entry and
+retry, snapshot-only gate purchases, zero rewards, terminal inertness, exact timing,
+input ordering, focus/pause freeze and resume. Small fixtures isolate timeout and
+terminal ownership eligibility; they do not replace the real combat outcome tests.
+
+Execution IDs: import `b23a9b98-1277-4f20-be6b-5c4393438318`; headless
+`cfeb7275-b66e-4742-9f3b-2fb218437f68`, `5a3992ef-3422-4768-9320-1356bb595e86`,
+`4717fbca-89bd-4415-b6cf-23d74979d925`. Full-log audit:
+`156b5d89-fbe1-4f61-9c97-95545b10d4b2`.
+
+Scoped diff inspection found only the two campaign presentation files, two existing
+test drivers, this README and the one-line Campaign comment correction. No default-game,
+balance, save, project configuration or dependency files changed. `git diff --check`
+passed; `.godot/`, campaign captures, local logs and `.env` remain ignored. Engine
+execution logs live outside the repository. No commit or push was made.
+
+The separate `--defense` graphical scenario uses real purchases and elapsed rounds:
+level-one defeat, in-assault gate upgrades, recovery, explicit upgraded retry,
+queued-farm victory override, physical minimize/freeze/restore and secured idle.
+It preserves the 15-second boundary and 60-second measured watchdog bounds and
+existing human-readiness/result-viewing exclusions. Expected ignored native captures:
+`defense-ready`, `defense-start`, `defense-damaged`, `defense-recovery`, `defense-retry`,
+`campaign-secured`, and the 540×480 `small-defense-controls`. These still require
+visual inspection for readable state/HP/recovery text, clipping and reachable controls.
+Native viewport input/captures do not prove physical input or independent OS focus.
+The inspected official Godot C# HUD sample supports callback-driven native controls
+only; local GDScript patterns and executable tests establish campaign behavior.
+
+### Native suspension gate follow-up — 9 September 2026 (UTC)
+
+The smoke helper now retains the battle identity before requesting minimization,
+requires the expected active phase (`DEFENDING` for the defense caller), an
+`ONGOING` result and enabled processing at observed minimization/suspension, and
+rechecks those conditions on every frame of the frozen interval and after restore.
+An expired/replaced battle reports **incomplete**, requires a full affected-scenario
+rerun, and propagates failure to the caller without running subsequent victory
+assertions. Human readiness remains unbounded; the 60-second measured watchdog,
+15-second battle bounds and production combat/focus behavior are unchanged.
+
+Supervision was confirmed and the pinned `4.7.2.stable.official.ed1daf0bf` Standard
+executable was used in managed background sessions. Actual results:
+
+| Run | Checks / failures | Exit | Evidence |
+|---|---|---|---|
+| Original defense helper, before editing | 59 / 0 | 0 | `6d0d1e39-e648-4201-873f-0e5debb117ca` |
+| Corrected defense, interrupted after active restore | 60 / 6 | 1 | `555205f9-5388-427c-a830-c2c3e9ce1fa9` |
+| Deliberately delayed defense minimize | 45 / 1, incomplete | 1 | `3f7a005e-e3f2-4235-9be3-1dcfcc7f479a` |
+| Intended prompt-minimize defense rerun, battle expired before click | 45 / 1, incomplete | 1 | `60255c30-94b5-4cb1-82de-5d9087218020` |
+| Corrected full conquest `--manual-focus` | Pending supervision | Not run | — |
+| Corrected `--manual-focus --focus-only` | Pending supervision | Not run | — |
+
+Both expired-battle runs reported `readiness outlasted the expected battle before
+observed minimization`, printed no suspension/freeze/restore pass, skipped subsequent
+victory checks, and exited 1 after the supervisor closed the window. The interrupted
+run did verify same-active-battle suspension/restore, but subsequent foreground loss,
+battle-boundary failure and watchdog timeout invalidate the full scenario. The
+original log did not capture state at minimize, and delayed physical action was not
+separately confirmed: its apparent pass is not proof of active-defense suspension.
+
+**Complete successful defense, conquest and focus-only graphical gates remain
+PENDING**, as does native PNG inspection. The final retry coordination received no
+answer, so no further graphical runs were launched. Retain these failed runs as
+evidence; rerun each full affected scenario with one prompt physical minimize, then
+keep the restored window selected until results. No automatic-minimization fix,
+artificial game freeze, injected lifecycle notification or outcome mutation was made.
+
+Headless checks retained 35-second caller bounds: editor import exit 0 in 4.842s
+(`5f28b8e2-e150-4a55-a53a-a2bceec69fc1`); normal/forced/normal tests produced
+1461/0, 1462/1 and 1461/0 with exits 0/1/0 in 1.926/1.728/1.739s
+(`97471f6b-3eae-4e59-810f-3f12582fec89`, `0c4043a8-92ae-4cd1-b8cf-35668f475c24`,
+`02cd0917-8aeb-47fb-a122-697d0865b27f`). Full-log audit
+`057020a2-2ff4-4b45-adf3-5c24bd40b3de` found 162 balance rows per run, complete
+summaries, no script/parse errors, exactly one intentional forced failure, and only
+the two existing `Exponent too high` warnings per test run.
+
+The corpus could not index GDScript. A read of Godot Dialogue Manager's C#
+`ResolveThingMethod` (revision `a719088aea342572f29b5559fd8726896c9519b2`,
+`addons/dialogue_manager/DialogueManager.cs:790–802`) provided an await-then-revalidate
+comparison, not evidence of native suspension correctness. This fix uses the local
+GDScript gate patterns; execution above establishes the observed behavior.
+Only this README and the campaign smoke driver were edited for this follow-up;
+pre-existing campaign changes were preserved. Captures and `.godot/` remain ignored.
+No dependencies, commits or pushes were added.
+
+### Measured watchdog accounting follow-up — 9 September 2026 (UTC)
+
+The manual minimize prompt now saves the watchdog remainder, assigns `INF` once
+for human readiness, and restores exactly that remainder on observed minimization.
+The per-frame 60-second reset is removed, including from unattended driver waits,
+which now remain measured. Initial START WHEN READY and final result viewing retain
+their unbounded exclusions. Active-battle checks, actual combat, the 60-second total
+measured allowance and 15-second battle bounds are unchanged.
+
+The existing graphical driver checks the readiness exclusion and exact restoration
+and prints both values. The equality check runs immediately after assignment without
+an intervening frame; subsequent frames consume the retained budget normally, with
+no added tolerance or deadline extension. A source-level reproduction failed before
+the change (`11d4dcf1-c6d8-400e-8e5e-a8da1656b2f5`) and passed afterward
+(`a7a69b20-949a-49c2-81a5-181f4de25d4a`); this is not graphical proof.
+
+With supervision confirmed, both requested manual commands ran sequentially as
+managed background sessions using pinned `4.7.2.stable.official.ed1daf0bf` Standard:
+
+| Scenario | Saved / restored seconds | Checks / failures | Exit on closing | Evidence |
+|---|---|---|---|---|
+| `--manual-focus` | 31.604610 / 31.604610 | 49 / 1, incomplete | 1 | `12938a9d-40be-4219-b547-58d19e889d40` |
+| `--manual-focus --defense` | 28.665164 / 28.665164 | 47 / 1, incomplete | 1 | `1c24762e-0535-4234-a077-023cf20d6fa4` |
+
+Both runs passed the new budget assertions, but observed minimization came after
+the expected battle ended or was replaced. Both correctly reported `readiness
+outlasted the expected battle before observed minimization`. No active-combat
+freeze/restore pass was reached; defense's subsequent victory and secured-idle
+checks were not reached. All reached 15-second battle checks passed. Neither run
+hit the measured watchdog. These failures do not establish that defense exceeds
+its retained budget. Both processes exited after result viewing; neither was killed.
+No unchanged manual retry was launched. **Successful full physical graphical gates
+remain pending**; retained-budget observation alone is not a full scenario pass.
+Subsequent automated results and new PNG inspection are recorded below.
+
+Regression checks used 35-second caller bounds:
+
+| Gate | Result | Exit / duration | Evidence |
+|---|---|---|---|
+| Headless import | No script/parse errors | 0 / 4.671s | `a893f358-941f-4a53-9059-124697b86818` |
+| Normal tests | 2515 checks / 0 failures | 0 / 3.821s | `db5b1ecd-17cd-44cd-bebd-9e154a20f1ca` |
+| Forced tests | 2516 checks / one intentional failure | 1 / 3.450s | `0a140a5f-8a4a-4dd5-afb6-eee7fd419673` |
+| Normal rerun | 2515 checks / 0 failures | 0 / 3.269s | `e427454f-ee18-48c5-8818-4b37e3de3a7c` |
+
+Full-log audit `3e26add0-b5bb-4ce1-953f-311e4947701a` confirmed complete
+summaries, 162 balance rows per test run, no script/parse errors, exactly one
+intentional forced failure and only the two existing `Exponent too high` warnings.
+The first audit command missed the log's `[stdout]` prefixes; correcting the reader
+verified the same logs without rerunning tests. Only the campaign smoke driver and
+this README were edited for this accounting fix; existing work was preserved.
+No model/default-game changes, dependencies or git-history changes were made.
+
+### Automated verification after watchdog fix — 9 September 2026 (UTC)
+
+Ran the existing Windows driver sequentially, with no code changes, using pinned
+Godot `4.7.2.stable.official.ed1daf0bf` Standard. Each retained its 65-second driver
+deadline, 75-second caller bound, 60-second smoke watchdog and 15-second battle bounds.
+
+| Command | Complete graphical summary | Child / driver exit | Duration | Evidence |
+|---|---|---|---|---|
+| `python tests/windows_campaign_driver.py campaign` | 52 checks, 0 failures | 0 / 0 | 31.339s | `49093517-905c-4528-8534-26bc759c85d2` |
+| `python tests/windows_campaign_driver.py defense` | 59 checks, 0 failures | 0 / 0 | 46.131s | `8182a605-bdc4-4233-8728-dcb03b6f472a` |
+
+Both passed native focus loss, suspension of the same ongoing battle, frozen rounds,
+accumulated time and gate, and restoration without catch-up. Windows independently
+confirmed minimized/not foreground and restored/foreground states. Both reported
+`native_observations_complete=True` and cleanup with child reaped (exit 0) and reader
+joined. Defense also reached victory, retained the winning gate without reward,
+and passed secured-idle and disabled-navigation checks. No script errors, timeouts
+or failed assertions appeared; no corrective changes or reruns were needed.
+
+Inspected all 14 newly captured campaign/defense PNGs. The campaign progression and
+checkpoint text were readable, narrow captures exposed focused farming/defense/gate
+controls through scrolling, and defense captures showed gate 80/80, damage 46/80,
+zero-gold defeat/recovery, fresh retry 200/200 and secured victory 94/200 with disabled
+navigation. Captures remain ignored generated evidence.
+
+These are **automated graphical passes**, not physical manual acceptance. They do
+not exercise human-readiness exclusion; the earlier manual runs separately observed
+exact remainder restoration but failed their active-battle gates. Physical manual
+acceptance remains pending, not waived. No assertions, focus/suspension behavior,
+deadlines or model logic were changed for these automated runs.
+
+### Current-checkpoint default scripted graphical verification — 9 September 2026 (UTC)
+
+Ran only `--path . --script tests/scene_smoke.gd` with pinned Godot
+`4.7.2.stable.official.ed1daf0bf` Standard, retaining the 35-second caller bound
+and unchanged internal deadline, assertions and focus/suspension behavior.
+
+| Gate | Complete summary | Exit | Duration | Evidence |
+|---|---|---|---|---|
+| Default scripted graphical | 105 graphical checks, 0 failures | 0 | 19.760s | `ec7a63b2-3910-458b-a3d8-16e73d6f9cd5` |
+
+The complete captured log was read: no script/parse errors, failed assertions or
+timeout. This clears only the current-checkpoint default scripted graphical gate.
+Progression, fortified and completed checks were not run. Generated PNGs were not
+visually inspected in this invocation. No code changed; only this evidence was added.
+
+Follow-up visual inspection opened all 12 native PNGs from that run in
+`.gg/screenshots/opening-battle/`: `initial`, `commander-queued`, `victory`,
+`restarted`, `small-restarted`, `small-queued`, `small-purchased`,
+`small-upgraded-replay`, `upgraded-replay`, `saved-reload`, `small-saved-reload`,
+and `small-save-warning`. All exist; their UTC modification times span
+04:06:55.621–04:07:14.186, within the recorded run (04:06:54.591 start,
+19.760s duration), matching its 12 named PNG-save passes. Timestamp inspection
+is recorded as `fb1b97b7-b9cb-4b32-9ae0-1537c68cccea`.
+
+At 720×960 and 540×720, visible HP, gold, state text, purchase labels and
+commander/restart controls were readable, with no observed overlap or horizontal
+text clipping. The queued control is dimmed; victory shows enemy HP 0/72 and
++10 gold; restart shows fresh HP and retained 10 gold. The purchase capture shows
+foot archers Lv.2 with current HP 40/40 and damage 8; replay captures show 52/52
+and damage 12. Saved-reload captures show shield Lv.2, HP 160/160 and autosave
+text. The small warning wraps its recovery explanation onto two readable lines
+and leaves restart fully visible. Its lower footer is outside the scroll viewport;
+this static inspection does not establish scrolling or physical input behavior.
+The small restarted capture also shows a visible commander focus outline.
+No test was rerun or code changed for this inspection.
+**Physical manual acceptance remains PENDING; the release task remains open.**
+
+### Fortified opt-in timing diagnostics — 9 September 2026 (UTC)
+
+The original current-checkpoint failure remains **37 checks / 4 failures, exit 1**,
+14.592s, execution `a59d9399-89e7-49a9-99a0-20a50e45fce8`. Its full log remains
+outside the repository; all six run-linked PNGs were preserved before the new run
+in ignored `.gg/screenshots/fortified-failed-a59d9399/`. The original victory,
+scaled and bottom captures showed ongoing round 6, enemy HP 52/160 and 26/80,
+and zero gold. That failure is not erased or retrospectively explained by this pass.
+
+Added opt-in `--fortified-diagnostics` alongside `--fortified`: the test enables
+read-only internal logging before scene entry. Logs include monotonic timestamps,
+application focus/pause notifications after state changes, actual resumed-update
+skips with discarded update duration, and combat-clock/round state at the victory
+wait start and first victory assertion. Default logging is off. No gameplay state
+transitions, assertions, 11.5s/1.5s local waits, 25s internal deadline or 35s caller
+bound changed. Corpus discovery found Dialogic, but indexing rejected its GDScript;
+local patterns and official GDScript documentation informed this implementation,
+not a verified comparable public diagnostics implementation.
+
+| Run | Summary | Exit | Duration | Evidence |
+|---|---|---|---|---|
+| Pinned headless editor import/script check | Complete, no script/parse errors | 0 | 11.107s | `ed5e88fc-5d92-411e-a1fb-815c57674efd` |
+| `--path . --script tests/scene_smoke.gd -- --fortified --fortified-diagnostics` | 37 graphical checks, 0 failures | 0 | 12.421s | `aada937f-6c53-4868-8283-02a4e1aeea1a` |
+
+The diagnostic wait started at 1,013,483 usec; the first assertion logged at
+10,995,114 usec (9.981631s later), before the unchanged 12,513ms local deadline.
+It showed round 10, victory, 54 gold, both enemy HP zero, replay timer running,
+focus true and suspension false. No focus/pause transition or resumed-update-skip
+lines appeared while this scene was instrumented. Those branches therefore remain
+unexercised by this run; startup notifications before scene entry are not covered.
+The original stall did not reproduce, so its cause remains unproven. All subsequent
+assertions passed. No fix or additional scenario run followed. New diagnostic PNGs
+were generated but not visually inspected. Physical manual acceptance remains
+**PENDING**, and the release task remains open.
+
+### Fortified on diagnostic code, diagnostics disabled — 9 September 2026 (UTC)
+
+Ran only `--path . --script tests/scene_smoke.gd -- --fortified` with pinned
+Godot Standard `4.7.2.stable.official.ed1daf0bf`, without diagnostics. Assertions,
+local waits, 25-second internal deadline, 35-second caller limit and
+focus/suspension behavior remained unchanged.
+
+| Run | Complete summary | Exit | Duration | Evidence |
+|---|---|---|---|---|
+| Fortified, diagnostics disabled | 37 graphical checks, 0 failures | 0 | 12.319s | `13ad109d-94a4-4ca5-b130-f4a2ade675e3` |
+
+Complete output showed no errors, failed assertions or diagnostic lines; all six
+named PNG-save checks passed. Opened `fortified-locked`, `fortified-selected`,
+`fortified-victory`, `fortified-small-scaled`, `fortified-small-bottom` and
+`fortified-small-archer` in `.gg/screenshots/opening-battle/`. Their UTC modification
+timestamps span 05:00:34.665615–05:00:45.885336, within this run (05:00:33.732 start,
+12.319s duration), matching the saved names. Timestamp inspection:
+`c4a49dec-31c4-4029-8968-d64a95db8eac`.
+
+Visual findings at 720×960 and 540×720: readable locked requirement, upgrade prices
+and full selected enemy rows (160/160, 80/80). Victory shows round 10, both enemies
+at zero, 54 gold and the +54 replay message; commander is dimmed. Scaled and bottom
+replay captures show full HP and retained 54 gold. The bottom view shows all
+purchases and fully visible focused restart. Archer restores enemy HP 100/100
+and 40/40 with retained 54 gold and +30 reward text. No label overlap or horizontal
+text clipping was observed. Selected/victory/scaled views crop the lower footer
+at the scroll boundary; scrolled views omit offscreen content. PNG inspection
+establishes visible states, not physical interaction.
+
+No code changed, no retries or other scenarios ran. The original unexplained
+37/4, exit 1 fortified failure and its archived captures remain preserved.
+**Physical acceptance remains PENDING; the release task stays open.**
+
+### Progression on diagnostic code, diagnostics disabled — 9 September 2026 (UTC)
+
+Ran only `--path . --script tests/scene_smoke.gd -- --progression` with pinned
+Godot Standard `4.7.2.stable.official.ed1daf0bf`, without diagnostic flags. All
+local waits, the 25-second internal deadline, 35-second caller limit and existing
+focus/suspension checks remained unchanged.
+
+| Run | Complete summary | Exit | Duration | Evidence |
+|---|---|---|---|---|
+| Progression, diagnostics disabled | 35 graphical checks, 0 failures | 0 | 10.379s | `6a137767-2826-4320-8fc7-57ed265ce632` |
+
+Complete output contained no error, failed assertion or diagnostic lines. All
+seven named PNG saves passed. Opened all seven native captures in
+`.gg/screenshots/opening-battle/`: `progression-locked`, `progression-archer`,
+`progression-victory`, `progression-small-scaled`, `progression-small-bottom`,
+`progression-small-border`, and `progression-small-warning`. Their UTC modification
+timestamps (04:57:09.117107–04:57:18.379467) fall within this run's interval
+(04:57:08.152 start, 10.379s duration), matching the save log names. Timestamp
+inspection: `08e3113a-69dc-4907-bc98-59841d317271`.
+
+Visual findings at 720×960 and 540×720: readable unlock hint, purchase prices and
+two Archer enemy rows (100/100 and 40/40). Victory shows round 8, both enemies at
+zero, 30 gold and the +30 replay message. Scaled replay restores full HP while
+retaining 30 gold. The narrow bottom capture shows readable purchases and fully
+visible focused restart. Border shows a focused selector, 72/72 enemy HP and
+retained 30 gold. The warning fully wraps its unsaved-changes loss message onto
+two readable lines. No label overlap or horizontal text clipping was observed;
+scrolled views omit offscreen content, and the warning view does not show restart.
+These static observations do not establish physical input behavior.
+
+No code changes, retries or other scenarios. The original unexplained fortified
+failure remains preserved. **Physical acceptance remains PENDING; the release
+task stays open and release acceptance is not complete.**
+
+### Default graphical on diagnostic code, diagnostics disabled — 9 September 2026 (UTC)
+
+Ran only the documented default `--path . --script tests/scene_smoke.gd` with
+pinned Godot Standard `4.7.2.stable.official.ed1daf0bf`, without diagnostic flags.
+All deadlines, the 35-second caller limit and focus/suspension checks were unchanged.
+
+| Run | Complete summary | Exit | Duration | Evidence |
+|---|---|---|---|---|
+| Default graphical, diagnostics disabled | 105 graphical checks, 0 failures | 0 | 19.841s | `851a9074-2a1a-4802-8365-5593f1d101c2` |
+
+Full-log inspection found all 12 named PNG-save passes, the complete summary,
+and no error, failed-check or diagnostic lines. Opened all 12 native PNGs in
+`.gg/screenshots/opening-battle/`: `initial`, `commander-queued`, `victory`,
+`restarted`, `small-restarted`, `small-queued`, `small-purchased`,
+`small-upgraded-replay`, `upgraded-replay`, `saved-reload`, `small-saved-reload`,
+`small-save-warning`. Their UTC modification timestamps span
+04:52:14.945194–04:52:33.479050, within this run (04:52:13.820 start, 19.841s).
+Provenance inspection: `6e0a9806-4abc-454a-9be7-e9ba421c82db`.
+
+At 720×960 and 540×720, visible HP, gold, status and purchase labels were readable
+without observed overlap or horizontal clipping. Queued controls were dimmed;
+victory showed round 3, enemy HP zero and 10 gold; restart showed full HP and
+retained 10 gold. Small restart showed the commander focus outline. Purchase
+showed foot archers Lv.2 but unchanged current stats; both upgraded replay views
+showed HP 52/52, damage 12 and commander +7. Both saved-reload views showed shield
+Lv.2, HP 160/160 and autosave text. The small warning's complete recovery message
+wrapped onto two lines, with restart fully visible; its footer remains below the
+scroll viewport. Static inspection does not establish physical input or scrolling.
+
+No code changed, no retry or other scenario ran. The original unexplained
+fortified failure remains preserved. **Physical acceptance and the release task
+remain pending; release acceptance is not complete.**
+
+### Headless sequence with diagnostics disabled — 9 September 2026 (UTC)
+
+On the unchanged diagnostic code, ran the required normal → forced failure →
+normal sequence using pinned Godot Standard `4.7.2.stable.official.ed1daf0bf`:
+`--headless --path . --script tests/run_tests.gd`, adding only
+`-- --force-failure` for the middle invocation. No diagnostic flag was supplied.
+
+| Run | Complete summary | Exit | Duration | Evidence |
+|---|---|---|---|---|
+| Normal | 2515 checks, 0 failures | 0 | 3.055s | `819f709c-3857-4762-aae5-29ac667b0e3d` |
+| Forced failure | 2516 checks, 1 failures | 1 | 2.935s | `fa274f66-e702-491c-b474-5764730dc19e` |
+| Normal rerun | 2515 checks, 0 failures | 0 | 4.535s | `f10c5e36-f0dc-442c-8545-e363f734456c` |
+
+Full-log checks confirmed exactly one intentional `FAIL forced runner failure`
+in the middle run and no normal failures. All summaries were complete; no script
+or parse errors, timeouts or `[FORTIFIED-DIAG]` output appeared. Each log contained
+two `WARNING: Exponent too high` messages; this is not a warning-free claim.
+Log inspection evidence: `c3d4cfd6-ac6e-43d9-b782-9462957bac74`.
+No code changed and no graphical scenarios ran. The original unexplained fortified
+failure remains preserved. **Physical and release acceptance remain PENDING;
+the release task stays open.**
+
+### Latest fortified verification and PNG inspection — 9 September 2026 (UTC)
+
+The subsequently requested verification of unchanged diagnostic code used the same
+pinned engine, command and limits:
+
+| Run | Complete summary | Exit | Duration | Evidence |
+|---|---|---|---|---|
+| Fortified with opt-in diagnostics | 37 graphical checks, 0 failures | 0 | 12.341s | `479b6207-07af-4af7-91d8-55bc3575de33` |
+
+Read its full log: all six named PNG-save checks passed, with no script/parse
+errors or failed assertions. Opened all six PNGs in
+`.gg/screenshots/opening-battle/` and matched their modification timestamps to
+this run's UTC interval (04:40:26.042 start, 12.341s duration):
+
+| Inspected PNG | Modification time (UTC) |
+|---|---|
+| `fortified-locked.png` | 04:40:27.011428 |
+| `fortified-selected.png` | 04:40:27.052304 |
+| `fortified-victory.png` | 04:40:37.100180 |
+| `fortified-small-scaled.png` | 04:40:38.121955 |
+| `fortified-small-bottom.png` | 04:40:38.189641 |
+| `fortified-small-archer.png` | 04:40:38.221303 |
+
+Timestamp inspection: `20d20651-36c8-4c18-98b3-0465fa428bab`. No captures were
+missing or outside the run interval; these are the latest run's captures, not the
+preserved original failure images.
+
+Visual findings at 720×960 and 540×720: readable locked hint and purchase labels;
+selected Fortified shows two full enemy rows (160/160, 80/80); victory shows round
+10, both enemies at zero, 54 gold and the +54 replay message. The commander is
+dimmed at victory. Scaled and bottom replay captures show fresh troop/enemy HP
+and retained 54 gold. The bottom capture exposes all purchases and a fully visible
+focused restart. Archer shows enemy HP 100/100 and 40/40, retained 54 gold and
++30 reward text. No overlapping labels or horizontal text clipping was observed.
+The selected/victory/scaled views crop the lower footer at the scroll boundary;
+the bottom and Archer views omit offscreen content. These captures establish
+visible states, not physical interaction or independent scrolling behavior.
+
+Only this documentation was updated during inspection; no code changed or tests
+ran. The original 37/4, exit 1 failure and its saved PNGs remain preserved and
+unexplained. No focus/suspension transitions or resumed skips occurred in the
+latest log, so those diagnostic branches remain unexercised. **Physical manual
+acceptance and release acceptance remain PENDING; the release task stays open.**
+
+### Current-checkpoint progression scripted graphical verification — 9 September 2026 (UTC)
+
+Ran only the documented `& $GODOT --path . --script tests/scene_smoke.gd -- --progression`
+(using Bash's equivalent executable invocation) with pinned Standard
+`4.7.2.stable.official.ed1daf0bf`. The 25-second internal deadline, 35-second caller
+bound, assertions and focus/suspension behavior were unchanged.
+
+| Gate | Complete summary | Exit | Duration | Evidence |
+|---|---|---|---|---|
+| Progression scripted graphical | 35 graphical checks, 0 failures | 0 | 10.439s | `f43290ab-326a-4f1a-b19a-8bae3041f8b2` |
+
+Complete output contained no script/parse errors, failed assertions or timeout.
+Opened and visually inspected all seven native PNGs under
+`.gg/screenshots/opening-battle/`: `progression-locked`, `progression-archer`,
+`progression-victory`, `progression-small-scaled`, `progression-small-bottom`,
+`progression-small-border`, and `progression-small-warning`. Their UTC modification
+times (04:24:59.186–04:25:08.495) fall within this run (start 04:24:58.190,
+10.439s duration) and match its named PNG-save passes; timestamp evidence:
+`087783de-2e77-4672-a54a-2ea12fa040b0`.
+
+The locked hint and purchase labels were readable. Archer captures showed both
+enemy rows (100/100 and 40/40), then both at zero with 30 gold and the +30 victory
+message. Scaled replay showed fresh enemy HP and retained 30 gold. The narrow
+bottom capture showed readable purchases and a fully visible focused restart;
+the Border capture showed the focused selector, enemy HP 72/72 and retained
+30 gold. The warning wrapped fully onto two readable lines, including the
+unsaved-changes loss warning. No overlapping labels or horizontal text clipping
+was observed. Scrolled captures omit content above/below the viewport; the warning
+capture does not show restart. The run separately passed focus-follow scrolling
+and keyboard return assertions; screenshots do not establish physical input.
+
+Only this pending scenario ran; no completed checks were rerun and no code changed.
+**Physical manual acceptance remains PENDING; the release task remains open.**
+
+### Automatic minimize diagnosis — 9 September 2026 (UTC)
+
+Only the campaign `--focus-only` graphical reproducer was run for this investigation;
+no manual interaction or wider-suite runs were requested. The original full failure
+log (`8dee68f8-1ab4-441c-8a99-c2b1be53aad0`) contained only a combined suspension
+failure. Temporary harness-only observations then recorded real application/window
+focus events, Godot state, battle identity and monotonic time. A bounded Python
+parent queried the game's HWND with Windows `IsIconic` and `GetForegroundWindow`;
+it did not change native state or inject notifications.
+
+The detailed run (`df33c6b4-b990-4289-955b-a26e81e1be4a`, 2.372s, exit 1;
+12-second child / 20-second caller bounds) showed:
+
+- Windows really minimized the window: `IsIconic=true`, foreground HWND not the game.
+  Both Godot mode getters agreed on minimized mode (`1`).
+- Application focus-out (`2017`) set production `suspended=true`; 4.533ms later,
+  focus-in (`2016`) set it back to false while still minimized. Window focus-in
+  signals followed; both Godot focus getters remained true.
+- The existing nominal 0.2-second timer gate was reached about 71ms after the mode
+  setter returned in this run. Its failure was recorded **before** an additional
+  1.2-second, monotonic, observation-only interval; extra observation could not pass
+  the failed check. State did not recover: the same ongoing battle advanced from
+  round 0 to round 1 while Windows still reported minimized. This is not merely a
+  short wait or a replaced/terminal battle.
+- That diagnostic run reported 5 checks / 2 failures (the original assertion and
+  final incomplete gate). Temporary traces, observers and extra waits were removed.
+  Only explicit state values in the existing failure message were retained.
+
+The final ordinary reproducer (`9f3c08d3-4957-42c2-85ac-3c095de203b8`) exited 1
+in 1.151s under a 12-second bound: 4 checks / 1 failure, `mode=1 focus=true
+suspended=false processing=true phase=0 expected_phase=0 same_battle=true result=0`.
+**The unattended gate remains failed; no fix or graphical pass is claimed.**
+
+Official [Window documentation](https://docs.godotengine.org/en/stable/classes/class_window.html)
+and the pinned release's [Window](https://github.com/godotengine/godot/blob/4.7.2-stable/doc/classes/Window.xml)
+and [DisplayServer](https://github.com/godotengine/godot/blob/4.7.2-stable/doc/classes/DisplayServer.xml)
+API definitions confirm the native mode/focus getters and HWND access.
+[MainLoop documentation](https://docs.godotengine.org/en/stable/classes/class_mainloop.html#constants)
+confirms desktop focus notifications; pause/resume notifications are Android/iOS-specific.
+The production handler responds correctly to the events delivered, but the unexpected
+focus-in resumes gameplay while the window is minimized.
+
+The pinned [Windows backend](https://github.com/godotengine/godot/blob/4.7.2-stable/platform/windows/display_server_windows.cpp#L2787-L2799)
+calls `ShowWindow(SW_MINIMIZE)`, then `_update_window_style`. That helper's
+[`SetWindowPos` call](https://github.com/godotengine/godot/blob/4.7.2-stable/platform/windows/display_server_windows.cpp#L2680)
+omits `SWP_NOACTIVATE` for ordinary minimized windows.
+[Microsoft documents](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos)
+that omission as activating the window. This source path matches the observed
+focus-out/focus-in sequence inside the minimize setter.
+
+**Historical engine fix proposal, not applied (application-layer follow-up below):** include minimized windows in
+that backend call's `SWP_NOACTIVATE` condition (`wd.minimized || wd.no_focus ||
+wd.is_popup`). Validate it with this unchanged focus-only gate against a corrected
+engine before rerunning wider scenarios. A longer harness wait would not repair the
+persistent focus state; guarding production resume alone would still fail the
+required native-focus assertion. No engine binary, production handler, test condition,
+manual requirement or existing watchdog/battle bound was changed.
+
+### Application-layer suspension fix — 9 September 2026 (UTC)
+
+Campaign presentation now retains independent focus-loss and application-pause
+reasons, combining them with the current minimized window mode. Focus-in clears
+only focus loss; application-resume clears only application pause. Gameplay resumes
+only after every reason clears. The first resumed frame still excludes the gap,
+preserves the partial round, and repeated resume events no longer discard extra
+foreground frames. Disabled controls and direct-handler guards use the same state.
+A scene-tree frame signal observes minimize/restore even at non-processing idle
+checkpoints; direct controls and clock entry points also sample mode before acting.
+
+Confirmed against the pinned official source: [`Window::get_mode`](https://github.com/godotengine/godot/blob/4.7.2-stable/scene/main/window.cpp#L547-L552)
+queries DisplayServer for its native window. The [headless backend](https://github.com/godotengine/godot/blob/4.7.2-stable/servers/display/display_server_headless.h#L122-L123)
+always returns minimized despite having no window, so only that dummy native reason
+is excluded in headless mode. Focus and pause handling remain active. New regression
+fixtures replace only the OS mode read, exercising overlapping focus/pause/minimize
+orders, both release orders, idle checkpoints, active defense, direct controls,
+exact fractional timing and duplicate resumes. Existing assertions were retained.
+
+Actual verification using the pinned executable:
+
+| Check | Result | Exit / duration | Caller bound | Evidence |
+|---|---|---|---|---|
+| Import | No script/parse errors | 0 / 4.991s | 35s | `bc99c223-2e84-43f4-84cf-a932f5bcbd14` |
+| Normal headless | 2515 checks / 0 failures | 0 / 2.579s | 35s | `2b4f6047-2af1-4e79-ae47-403cd8b6cb98` |
+| Forced headless | 2516 checks / exactly one intentional failure | 1 / 2.697s | 35s | `7665203c-29b9-4b12-a292-62b7b1f44322` |
+| Normal headless rerun | 2515 checks / 0 failures | 0 / 2.675s | 35s | `d4e01f99-4a13-4f40-9ff9-aa3596102223` |
+| Unattended graphical `--focus-only` | Incomplete: 4 checks / 1 failure | 1 / 1.243s | 12s | `1f584b93-ab28-4da4-a0fd-70eb9768ff5e` |
+
+Full-log audit `3271cf99-7bbc-4baf-8c6a-48d190461417` confirms complete headless
+summaries, 162 balance rows per test run, no script/parse errors and only the two
+existing `Exponent too high` warnings. An initial development run failed because of
+the dummy headless minimized mode; the source-backed exclusion above resolved it
+without changing existing assertions.
+
+**Remaining native failure is separate:** the graphical log now reports `mode=1
+focus=true suspended=true processing=true phase=0 expected_phase=0 same_battle=true
+result=0`. Application suspension remains asserted despite erroneous native focus,
+but the unchanged `not root.has_focus()` requirement still fails. The run therefore
+does not reach its frozen-interval/restore assertions and is not a graphical pass.
+Regression tests cover application freeze/restore logic, not physical OS behavior.
+No engine modification, manual run, weakened native assertion, combat/balance change,
+commit or push was made. Full manual graphical gates remain pending.
+
+### Focus-only result separation — 9 September 2026 (UTC)
+
+Only unattended `--focus-only` now records native-focus failure without immediately
+aborting otherwise safe gameplay observations. Minimized mode, suspension, expected
+active phase, battle identity and enabled processing remain mandatory; losing any
+of them aborts the gate. Frozen-state and per-frame native-focus checks remain in
+place. Native-focus failure is retained in the final count and nonzero exit.
+Manual runs and full campaign/defense runs retain strict native-focus aborts; no
+physical requirement, continuous foreground check, timing bound or engine changed.
+
+Actual pinned-engine run `9fcc7094-dad3-4b12-b219-53d89392e9e0` completed in
+2.553s under a 12-second caller bound: **9 graphical checks, 1 failure, exit 1**.
+
+- **Native focus: FAIL** — the minimized window still reports focused.
+- **Gameplay safety/frozen state: PASS** — the same ongoing battle remains suspended
+  with processing enabled; rounds, accumulated time, gate health, gold and gate level
+  stay unchanged throughout the existing 1.2-second interval.
+- **Restore: PASS** — focused, unminimized and resumed; same active battle, no catch-up round.
+- **Continuous foreground outside the suspension interval: PASS.**
+
+Import (`2dd3780e-c4a5-4b57-8cd8-5a5123e331e5`) exited 0 in 4.300s;
+headless tests (`15c773a2-956b-4ef0-adbb-0385a8826cc2`) reported 2515 checks /
+0 failures, exit 0 in 2.779s. Both used 35-second caller bounds. These separate
+native gameplay passes do not make the overall graphical gate pass or replace the
+pending manual scenarios. No manual interaction was requested.
+
+### Native Windows driver prototype — 9 September 2026 (UTC)
+
+`python tests/windows_campaign_driver.py` runs exactly one unattended focus-only
+probe with the pinned Standard engine. The prototype launches the underlying
+`Godot_v4.7.2-stable_win64.exe` directly, rather than its console forwarder, so its
+process handle/PID owns both the window and the cleanup target. The new
+`--native-window-driver` smoke mode reuses the manual route's observed-minimization
+wait without its human Start/close prompts. Initially restricted to unattended focus-only,
+it now also supports explicit full-scenario selection as documented below.
+Existing assertions, the frozen interval, focus audits and resume deadline remain.
+
+Verified [ShowWindowAsync](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindowasync)
+with [SW_MINIMIZE / SW_RESTORE](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow)
+issues native minimize/restore, not Godot mode setters. Before every command,
+[GetWindowThreadProcessId](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowthreadprocessid)
+must match the live launched PID; the HWND cannot change. No broadcast input,
+foreground stealing, lifecycle injection or engine patch is used.
+`IsIconic` and `GetForegroundWindow` independently observe minimized/restored state.
+A targeted `WM_CLOSE` follows results and preserves the smoke's recorded exit code.
+The driver's 12-second overall deadline and `finally` cleanup kill/reap only its own
+child when necessary, then join the output reader. Invoke the Python driver, not the
+internal handshake flag directly. No dependency installation is required.
+
+**Single actual run: 9 graphical checks / 0 failures, child and driver exits 0**, in
+2.666s under a 20-second caller bound (`0e388df1-7b69-4a86-9f45-1184f7046765`).
+Native focus loss, same-active-battle frozen state, focused/unminimized restore,
+no catch-up and continuous foreground checks all passed. Windows independently
+confirmed minimized/not-foreground and restored/foreground states. Cleanup reported
+child reaped (exit 0) and reader joined. No retry or wider suite was run.
+
+**This is automated evidence, not the required physical manual gate.** Full campaign
+and defense were unverified at the initial prototype checkpoint; later evidence follows.
+Physical scenarios remain pending. Ordinary Godot-setter runs retain their known
+native-focus failure. No assertion was relaxed.
+
+### Full native-driver scenarios — 9 September 2026 (UTC)
+
+Explicit, fixed scenario selection (no arbitrary executable, window or command input):
+
+```sh
+python tests/windows_campaign_driver.py focus-only
+python tests/windows_campaign_driver.py campaign
+python tests/windows_campaign_driver.py defense
+```
+
+Omitting the scenario still selects focus-only (12-second driver deadline). Campaign
+and defense each have a 65-second driver deadline; use a 75-second caller bound to
+include cleanup. The smoke's 60-second measured watchdog, 15-second battle bounds,
+strict full-scenario focus gate, all gameplay assertions and PID/HWND-scoped native
+actions remain intact. Driver mode cannot be combined with physical `--manual-focus`.
+
+| Actual run | Complete summary | Child / driver exit | Duration | Evidence |
+|---|---|---|---|---|
+| Import (35-second bound) | No script/parse errors | 0 | 5.055s | `7fb3e07e-5f63-4123-a240-045771f3cabe` |
+| Full campaign | 52 graphical checks / 0 failures | 0 / 0 | 30.647s | `e50cc0ed-040a-4f56-879c-43429fab2430` |
+| Full defense | 59 graphical checks / 0 failures | 0 / 0 | 45.631s | `b698fdc3-a273-4153-a9b8-da3ac9225af9` |
+
+The initial campaign attempt exited 1 in 7.171s
+(`5e014266-5471-4ca0-9979-031fde2440c6`) after purchases, before the next battle
+settlement. The user confirmed accidental window interference and explicitly requested
+a fresh launch. It is retained as an incomplete attempt, not discarded as a pass;
+the complete campaign rerun above used unchanged assertions.
+
+**No later checks were unreached in either completed run.** Both passed native focus
+loss, same-active-battle freezing/restoration and continuous foreground checks.
+Defense additionally reached real victory after restore, cleared queued farming,
+retained the surviving gate without reward, remained secured/idle, disabled all four
+navigation controls and saved the secured capture. Both drivers independently
+confirmed Windows minimized/not-foreground and restored/foreground state, then
+reported child reaped and output reader joined.
+
+All **14 freshly captured PNGs** in ignored `.gg/screenshots/campaign/` were opened
+and inspected: `initial`, `archer`, `farm`, `stronghold`, `conquest`, `small-scrolled`,
+`small-checkpoint`, `defense-ready`, `small-defense-controls`, `defense-start`,
+`defense-damaged`, `defense-recovery`, `defense-retry`, and `campaign-secured`.
+Readable labels, wrapped recovery/queue text, expected enabled/disabled controls,
+visible focus outlines and working narrow-window scrolling were observed. Defense
+captures show gate 80/80 initially, 46/80 after damage despite a level-three purchase,
+200/200 on fresh retry, and 94/200 at secured victory with 40 gold and +0 reward.
+Scroll-viewport cropping is expected; no overlapping labels or new visual defect was
+observed. Native PNG inspection is complete for these automated runs.
+
+**The separate physical manual gate remains PENDING.** No human interaction was
+requested, engine modified, assertion weakened, or broader automation framework added.
+
+**Historical conquest-only supervised graphical verification PASSED; automatic minimization remains a separate unresolved failure.**
+
+Earlier complete run (2026-09-08, `--manual-focus`): **52 graphical checks,
 0 failures, exit 0**, about 51 seconds including user interaction. The user
 started the test, minimized when prompted, and closed the window after results.
 The same run covered campaign progression through conquest, deferred navigation,
@@ -96,12 +781,16 @@ or a headless substitute. No milestone beyond campaign verification is started.
 & $GODOT --path . --script tests/campaign_scene_smoke.gd -- --focus-only
 # Same assertions, with a physical title-bar minimize click instead of automatic minimization:
 & $GODOT --path . --script tests/campaign_scene_smoke.gd -- --manual-focus
+# Separate bounded defense scenario, with the same supervision requirements:
+& $GODOT --path . --script tests/campaign_scene_smoke.gd -- --manual-focus --defense
 ```
 
 Keep the window focused and unminimized except during the explicit suspension test.
 Manual mode first displays **START WHEN READY**, without a countdown. After
 starting, minimize only when its title says **MINIMIZE**; the driver waits for
-that click without a countdown, then restores automatically. The window stays
+that click without a countdown, then restores automatically. Minimize promptly:
+if the original battle ends or is replaced before the click, the native gate is
+incomplete and the entire affected scenario must be rerun. The window stays
 open after success or failure until you close it; the title displays the result.
 Closing before completion exits with failure. `--focus-only` can be combined
 with `--manual-focus` for the short physical check. The 60-second watchdog
@@ -175,12 +864,13 @@ out before SUMMARY during existing timing tests; it is failed evidence, not a
 pass. The subsequent direct normal/forced/normal sequence above completed under
 the same bounds without code changes. No graphical or human-persistence claim.
 
-## Model-only Counterattack — verified 8 September 2026
+## Historical model-only Counterattack verification — 8 September 2026
 
 Campaign now exposes `start_defense()` only at `CONQUEST_CLEARED` with Stronghold
 cleared, including checkpoints returned to from ordinary farming. It never starts
-automatically, and generic restart cannot enter or abandon defense. Neither playable
-scene has defense controls; the campaign scene retains its conquest-only wording.
+automatically, and generic restart cannot enter or abandon defense. At this model-only
+verification point neither playable scene had defense controls; the campaign scene
+still had conquest-only wording. The later presentation implementation is documented above.
 
 Counterattack is encounter ID **4**, outside conquest stages **0 → 1 → 3** and
 locked in ordinary Economy. Its fresh shield/foot/horse enemies have **180/80/80 HP**
@@ -204,7 +894,7 @@ terminal battle and enters `CAMPAIGN_SECURED`. Navigation, start and restart are
 inert there; existing purchases remain ownership operations. Stronghold still pays
 30 only once per controller. All outcomes reuse inherited once-only settlement.
 
-**Current verification**, pinned `4.7.2.stable.official.ed1daf0bf`:
+**Historical model-only verification**, pinned `4.7.2.stable.official.ed1daf0bf`:
 
 | Gate | Checks / failures | Exit |
 |---|---|---|
@@ -239,7 +929,8 @@ graphical `5b6a415e-f2a1-4e04-bee4-34276ad15bd4`,
 campaign `f1a2fbfd-bdf2-44e8-9d9d-2b3af5b9d5cb`. Logs and captures remain ignored.
 
 Defense, gate ownership and security are **in-memory only**. No campaign save,
-reload protection, dynasty/reset, doctrine, UI, new dependencies or export was added.
+reload protection, dynasty/reset, doctrine, UI, new dependencies or export was added
+in that model-only step; the later campaign UI work is described above.
 The separate automatic-minimize issue remains unresolved; human persistence remains
 **DEFERRED**, not passed by these runs. Earlier release-gate history below is retained.
 External guard-first zero-health code informed eligibility only; comparable GDScript
@@ -782,7 +1473,7 @@ its random/physics behavior is not used. The local specification and executable
 tests, not that unrelated demo, establish combat correctness.
 
 The default game has no automatic encounter advancement or gate/defense controls.
-Campaign gate upgrades and defense exist only in the in-memory model API above;
+The separate session-local campaign exposes gate upgrades and defense through its native UI;
 dynasty, final art and Android tooling remain unimplemented. Border Skirmish, Archer Position and
 Fortified Position repeat by manual selection; both older fixtures are unchanged.
 Viewport-injected input is **not physical mouse/touch verification**. Suspension tests exercise lifecycle notifications,
