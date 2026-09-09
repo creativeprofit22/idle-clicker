@@ -31,6 +31,7 @@ func run() -> void:
 	check(directory_error == OK, "capture directory available")
 	scene = BattleScene.instantiate()
 	scene.progress_save = null
+	scene.fortified_diagnostics = "--fortified" in OS.get_cmdline_user_args() and "--fortified-diagnostics" in OS.get_cmdline_user_args()
 	root.add_child(scene)
 	current_scene = scene
 	await process_frame
@@ -130,8 +131,12 @@ func test_fortified_progression() -> void:
 		and scene.health_bars[3].value == 160 and scene.health_bars[4].value == 80, "Fortified graphical: viewport selection full enemy rows")
 	await capture("fortified-selected")
 	var deadline: int = Time.get_ticks_msec() + 11500
+	scene.trace_fortified("victory-wait-start deadline_msec=%d" % deadline)
 	while scene.battle.result == Combat.Result.ONGOING and Time.get_ticks_msec() < deadline:
 		await process_frame
+	scene.trace_fortified("first-assertion deadline_msec=%d status=%s enemy_hp=%s/%s replay_stopped=%s" % [
+		deadline, scene.status_label.text, scene.health_bars[3].value,
+		scene.health_bars[4].value, scene.replay_timer.is_stopped()])
 	check(root.has_focus() and not scene.suspended and scene.battle.rounds == 10
 		and scene.battle.result == Combat.Result.VICTORY and scene.economy.gold == 54
 		and scene.status_label.text.contains("+54") and scene.health_bars[3].value == 0

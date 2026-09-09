@@ -16,6 +16,14 @@ var elapsed_usec: int = 0
 var suspended: bool = false
 var skip_resume_frame: bool = false
 var last_frame_usec: int = 0
+var fortified_diagnostics: bool = false
+
+func trace_fortified(event: String, update_usec: int = 0) -> void:
+	if fortified_diagnostics:
+		print("[FORTIFIED-DIAG] t_usec=%d event=%s focus=%s suspended=%s skip_resume=%s processing=%s last_frame_usec=%d update_usec=%d elapsed_usec=%d rounds=%d result=%d gold=%d" % [
+			Time.get_ticks_usec(), event, get_window().has_focus(), suspended,
+			skip_resume_frame, is_processing(), last_frame_usec, update_usec, elapsed_usec,
+			battle.rounds if battle != null else -1, battle.result if battle != null else -1, economy.gold])
 
 @onready var status_label: Label = %Status
 @onready var round_label: Label = %Round
@@ -112,6 +120,7 @@ func advance_usec(usec: int) -> void:
 	if suspended:
 		return
 	if skip_resume_frame:
+		trace_fortified("resumed-update-skipped", usec)
 		skip_resume_frame = false
 		return
 	if battle.result != Combat.Result.ONGOING:
@@ -140,6 +149,9 @@ func _notification(what: int) -> void:
 		skip_resume_frame = true
 		if is_node_ready():
 			replay_timer.paused = false
+	if what in [NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_APPLICATION_FOCUS_OUT,
+			NOTIFICATION_APPLICATION_RESUMED, NOTIFICATION_APPLICATION_FOCUS_IN]:
+		trace_fortified("notification-%d" % what)
 
 func _command() -> void:
 	if not suspended and battle.queue_commander():
