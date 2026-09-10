@@ -2,9 +2,9 @@
 
 **Only the implemented-scope section below describes approved, delivered work.** The later first-playable rules, tables, formulas, and acceptance thresholds remain proposals unless explicitly identified as already implemented. Their presence does not approve another milestone or validate the complete proposed game loop.
 
-The broader vision includes offline single-player play, pre-gunpowder historical armies, attack and defense, level-1 resets retaining selected benefits, and eventual Android support. Defense and gate upgrades are now model-only; dynasty/reset progression, full campaign saving, and Android delivery remain unimplemented.
+The broader vision includes offline single-player play, pre-gunpowder historical armies, attack and defense, level-1 resets retaining selected benefits, and eventual Android support. Playable defense, gate upgrades and one session-only dynasty reset are delivered in the separate campaign. Full campaign saving, permanent doctrine and Android delivery remain deferred.
 
-## Approved implemented scope — 8 September 2026
+## Approved implemented scope — 10 September 2026
 
 The project uses **Godot 4.7.2 Standard, GDScript, and native controls**. The current
 [README](../README.md) is authoritative for launch commands, playable contracts,
@@ -17,8 +17,9 @@ verification evidence, and remaining release gates. Two separate playable scenes
 - **Separate campaign prototype:** `scenes/campaign_prototype.tscn` and
   `src/campaign_prototype.gd` connect the in-memory `src/campaign.gd` model to a native UI.
   Real-time automatic progression, deferred farm/frontier requests, purchases, scrolling,
-  and the conquest checkpoint are implemented. This session-only scene neither loads nor
-  writes the default game's save. Closing it discards campaign progress.
+  conquest preparation, explicit defense/recovery, secured idle and one confirmed dynasty
+  reset are implemented. This session-only scene neither loads nor writes the default
+  game's save. Closing/recreating it discards campaign progress and inherited doctrine.
 
 The approved campaign prototype and its scene integration are implemented, not deferred.
 It does not replace the default farming game or constitute acceptance of the broader
@@ -29,7 +30,7 @@ Stronghold (ID 3), using clearance-based access. Archer pays **30 gold**, supers
 original provisional 15-gold proposal without retuning the approved economy. Fortified
 Position remains ID 2: two enemies, all troops level 2+ to unlock, and 54 gold per victory
 in ordinary Economy. It is neither Stronghold nor a campaign frontier. Stronghold is a
-separate three-enemy fixture and awards 30 gold once per in-memory controller instance.
+separate three-enemy fixture and awards 30 gold once per run, including the successor run.
 
 Campaign navigation retains only the latest valid request and waits for settlement.
 Victory rewards and clearances precede navigation; Stronghold victory overrides queued
@@ -41,88 +42,95 @@ and clears navigation without paying; it cannot switch destinations or restart a
 Farming after conquest clearance preserves it; retry frontier finishes that farm battle
 and returns to the checkpoint without recreating or repaying Stronghold.
 
-Settlement is synchronous and once-only in memory, not a durable transaction. Campaign
-saving, live battle resume, crash/reload duplicate protection and dynasty remain
-unimplemented. Main-game Save-v1 does not save campaign, gate or security state.
-`CONQUEST_CLEARED` remains the playable scene's terminal frontier checkpoint, with
-ordinary farming available. The model-only API can explicitly enter defense from it.
+Settlement is synchronous and once-only in memory, not a durable transaction.
+Campaign saving, live battle resume and crash/reload duplicate protection remain
+deferred. Main-game Save-v1 does not save campaign, gate, security or doctrine state.
 
-**Recorded verification, not new runs from this documentation edit:** the full supervised
-campaign graphical driver passed **52 checks, zero failures, exit 0**. Opening-battle,
-Archer, and Fortified graphical modes passed **105 / 35 / 37** checks; the integrated
-headless suite passed **1,157**, with exactly one intentional failure in forced mode.
-Headless and graphical isolated persistence each passed **13 + 10 + 4** checks. See README
-and the checkpoint commit evidence for run provenance and historical failures. Physical
-campaign minimize/resume passed, but the separate automatic-minimize failure remains
-unresolved. Scripted viewport input does not establish human gameplay/persistence release
-acceptance; that human persistence gate remains **DEFERRED**.
+### Playable Counterattack and session-only dynasty
 
-### Model-only Counterattack extension — verified 8 September 2026
+The native **Start Defense** control explicitly enters Counterattack from
+`CONQUEST_CLEARED`, including farm-return checkpoints; defense never starts automatically.
+Gate upgrades cost **20 then 40 gold**, cap at level 3 and snapshot **80/140/200 HP**
+at the next assault. Mid-assault purchases never repair or change the active gate.
+Counterattack (ID 4) remains outside conquest and unavailable in ordinary Economy.
+Enemies target living shield infantry, then the gate; simultaneous attacks do not
+spill on shield death. Gate zero defeats first, otherwise enemy elimination wins,
+then unresolved round 60 times out. Army elimination alone is not defensive defeat.
 
-The existing Campaign/Combat now support explicit `start_defense()` at
-`CONQUEST_CLEARED` with Stronghold cleared, including farm-return checkpoints.
-Neither scene gains controls or changes behavior. Start rejects fresh, running,
-farming, defending and secured states without mutation; generic restart cannot
-bypass entry. `DEFENDING` and `CAMPAIGN_SECURED` append phases without changing
-existing IDs. Phase alone indicates security; there is no reset action.
+Defense pays **0 gold**. Defeat retains ownership and clearances and enters the latest
+queued ordinary farm (Archer by default). Frontier cannot abandon defense; retry needs
+farm settlement, return to preparation and explicit Start Defense. Victory overrides
+queued farming, retains the winning battle/gate and stops timing/navigation at
+`CAMPAIGN_SECURED`. Affordable purchases remain ownership-only outside the reset preview.
 
-Counterattack ID **4** sits outside conquest **0 → 1 → 3**, locked and unrewarded
-in ordinary Economy. Fresh shield/foot/horse enemies have **180/80/80 HP** and
-**12/10/12 damage**. All living enemies target living player SHIELD, otherwise only
-the gate. Simultaneous damage prevents same-round shield-death spill and preserves
-death-round attacks. Surviving player archers and commander retain existing targeting.
-Gate zero defeats first; otherwise all enemies dead wins, then unresolved round 60
-times out. Army elimination alone is not defensive defeat. Conquest retains its
-army-death-first precedence. Defeat reasons distinguish army, gate and timeout.
+Only first-dynasty **settled defensive victory with a surviving gate**, all clearances
+and an unused reset enables **Found a Dynasty**. The native preview shows actual gold,
+troop and gate levels and all losses. Cancel or Escape changes no gameplay state and
+returns focus; preview-open purchase/navigation handlers are blocked. Confirmation
+requires an open preview, fresh model eligibility and no suspension, and applies once.
 
-Campaign owns gate levels **1–3**, health **80/140/200**, costing **20 then 40 gold**
-via `gate_purchase_cost()` / `purchase_gate()`. Exact guard-first purchases affect
-ownership only. Every explicit assault snapshots full-health independent troops
-and gate, ongoing result, no defeat reason, round zero and no queued strike.
-Mid-assault purchases apply next time. The model accumulates no active-play time.
+**Confirm reset — start dynasty 2** loses all gold and territory/security, returns all
+troop/gate levels to 1, clears battle progress, queued commands/navigation, farm selection
+and fractional time, then starts fresh round-zero Border in Advance mode. Roster access
+remains. **Inherited Drill** applies exactly **2× squad damage after level additions**;
+health, enemies, gold rewards and one-second rounds are unchanged. The passive opening
+takes two rounds rather than four. Commander snapshot strength derives from damage,
+but the campaign UI has no commander control. Doctrine survives in-session farming,
+purchases, defeat, recovery and defense; duplicates cannot restart or stack it.
 
-Defense uses inherited once-only settlement, paying/charging zero. Defeat preserves
-wallet, purchases and clearances, then honors the latest valid ordinary farm or
-defaults to Archer. Invalid requests preserve valid intent. Frontier/start/restart
-cannot interrupt defense. Retry requires farm settlement, frontier return, then
-explicit start. Victory overrides queued farming and retains the terminal battle
-at `CAMPAIGN_SECURED`; navigation/start/restart thereafter are inert. Purchases
-remain ownership operations. Stronghold still pays 30 once per controller; ordinary
-farm victories still pay once each. No durable outcome ledger was introduced.
+Stronghold pays **30 gold once per run**, including dynasty 2. Securing the successor
+grants no additional bonus/reset and displays **Slice complete — no further dynasty
+reset.** Only one reset/bonus is available per session. Closing or recreating the
+campaign discards the doctrine too; main-game saves are never loaded or changed.
+Permanent doctrine, cross-launch retention, reset saving and full campaign persistence
+are explicitly deferred, not delivered by this slice.
 
-**New verification:** pinned Godot 4.7.2 Standard import exited 0; integrated
-normal/forced/normal yielded **1361/0 · 1362/1 · 1361/0** checks/failures and exits
-**0/1/0**, with **162 balance rows each**. The sole forced failure was intentional.
-No script/parse errors occurred; two expected excessive-exponent save warnings remain.
-Supervised graphical default/progression/Fortified passed **105/35/37 checks**, zero
-failures, exit 0 within 35-second caller bounds. Campaign `--manual-focus` passed
-**52 checks**, zero failures, exit 0, including physical minimize/freeze/restore.
-Its interactive process took about 5.2 minutes including human readiness/results
-viewing; existing internal watchdogs remained unchanged. See README's model-only
-Counterattack section for execution IDs and exact observed times.
+### Current verification — 10 September 2026
 
-Two real passive capped troop/gate conquest-plus-defense sequences matched full
-snapshots: **11 defensive rounds, gate 94/200, player HP 0/64/100, zero defense gold**.
-These are observed results, not retuned balance or promised session duration.
-Tests add entry guards, targeting, simultaneous outcomes, commander limits,
-round-60 precedence, terminal inertness, exact purchases, retry snapshots,
-isolation, recovery navigation and duplicate settlement. All existing scene,
-Economy, save and balance regressions remain intact.
+The native smoke's 200ms transition wait and 1.2s frozen interval now use monotonic
+wall time rather than engine-delta timers. Duration assertions failed before the
+repair; existing focus/frozen-state assertions, native actions and deadlines remain.
+Final native **focus-only 11/0, campaign 54/0, defense 61/0 and dynasty 57/0** passed
+with child/driver exits 0, complete observations and reaped-child/joined-reader cleanup.
+Import passed; headless normal/forced/immediate normal passed **2753/0 · 2754/1 · 2753/0**,
+exits **0/1/0**, exactly one intentional failure. Default graphical smoke passed **105/0**.
+All 16 current campaign captures were opened, including the secured checkpoint,
+narrow reset preview and fresh round-zero successor. README records log IDs and
+retains an intermediate early-restoration failure whose external source is unconfirmed.
+**Physical manual acceptance remains PENDING**, including reset preview/cancel/confirm;
+automated passes do not waive it or claim release readiness.
 
-Defense is **in-memory only**, with no persistence/reload guarantees, dynasty/reset,
-doctrine, UI, new dependencies, exports or economy retuning. Manual-focus evidence
-does not resolve the separate automatic-minimize issue. Human persistence remains
-**DEFERRED**, and the complete first playable is not approved. External zero-health
-eligibility code provided narrow grounding, not comparable GDScript defense proof;
-local executable tests establish this model's behavior.
+### Historical verification — 10 September 2026
+
+No checks were rerun for that documentation-only review. Step 6 recorded import exit 0;
+headless normal/forced/immediate normal **2753/0 · 2754/1 · 2753/0**, exits **0/1/0**
+(exactly one intentional failure); Save-v1 persistence **13/0 + 10/0 + 4/0**; and main
+graphical **105/0 · 35/0 · 37/0**. Initial native focus-only/campaign passed **9/0 · 52/0**.
+Initial defense **59/11** exposed click sampling before deferred scrolling settled.
+After the shared two-frame click-helper repair, import passed and native defense
+**59/0**, dynasty **55/0** passed with child/driver exits 0, complete native observations
+and reaped-child/joined-reader cleanup. However, post-repair campaign was **incomplete,
+47 checks / 1 failure**, child/driver exits 1, cleanup complete: minimized native focus
+remained true after 44 interaction passes; freeze/restore checks were unreached. No
+unchanged retry followed. Earlier dynasty **53/2** harness failures were repaired; an
+unreadable exit-1 attempt remains unresolved despite later UTF-8-captured **55/0** passes.
+
+Step-6 PNG inspection covered all 25 main-game and 14 campaign/defense captures, then
+corrected final defense-retry/secured and dynasty captures. See README's dynasty
+verification section for external log locations and retained failure history. No CI run
+exists for HEAD `35d88d1`; historical successful run `34324612490` is another SHA, not
+this dirty diff. **Verification is not all green; physical manual acceptance remains
+PENDING**, including real reset preview/cancel/confirm interaction. Automated evidence
+does not waive that gate. No export, Android or release acceptance is claimed.
 
 ## Future first-playable proposal — NOT APPROVED
 
-Everything from this heading onward describes the proposed larger loop, not an instruction
-to implement it. Combat, conquest, and model-only defense/gate rules overlap implemented work above;
-playable defense, dynasty reset, permanent doctrine, and full-state campaign persistence
-do not exist. Proposed save/load and reset guarantees must not be attributed to Save-v1 or
-the session-only campaign. Future work requires separate approval.
+Everything below describes the proposed larger loop, not an instruction to implement it.
+Combat, conquest, playable defense/gates and the session-local reset overlap delivered
+work above. **Permanent** doctrine, cross-launch reset retention and full-state campaign
+persistence remain deferred. The save/load, durable reset and atomic-saving promises below
+are proposals only and must not be attributed to Save-v1 or the session-only campaign.
+Future work requires separate approval.
 
 ## The player's first run — provisional experience
 
@@ -248,4 +256,4 @@ Beyond the implemented scope above, the remaining proposal is documentation only
 
 The design authority is `docs/game-design.md`, especially its core loop, roles, non-destructive failure, reset payoff, first scope, and offline distinction. A corpus search/read inspected `etlegacy/etlegacy`, `src/game/g_combat.c`, lines 1153–1176, revision `631d0c936ee935e3c2ddb1ffc8278c5cdbe94319`: https://github.com/etlegacy/etlegacy/blob/631d0c936ee935e3c2ddb1ffc8278c5cdbe94319/src/game/g_combat.c#L1153-L1176. Its explicit exclusion of zero-health entities is a narrow real-code reference for dead-target eligibility. Its shooter-specific systems are not suitable architecture or balance references and are not imported.
 
-Combat, economy, main-game saving, the session-only campaign, and model-only defense/gate upgrades have executable verification recorded above. The complete proposed defense/reset/full-state-save loop is not implemented or validated against an executable prototype or comparable idle-game implementation. Future acceptance examples remain expected outcomes, not passed tests. Remaining design risks include uninteresting upgrade allocation, insufficient passive survivability, the defense targeting exception feeling arbitrary, and an overly short campaign failing to establish prestige's emotional payoff. Evaluate those only within separately approved work rather than preemptively adding systems. Direct doctrine granting, no closed-app rewards, and fixed roster access are explicit simplifications relative to the broader brainstorm.
+Combat, economy, main-game saving, playable campaign defense/gates and the session-only dynasty reset have executable evidence recorded above, with historical verification failures retained and physical acceptance still pending. The proposed cross-launch doctrine/full-state-save loop is not implemented or validated. Future acceptance examples remain expected outcomes, not passed tests. Remaining design risks include uninteresting upgrade allocation, insufficient passive survivability, the defense targeting exception feeling arbitrary, and an overly short campaign failing to establish prestige's emotional payoff. Evaluate those only within separately approved work rather than preemptively adding systems. Direct doctrine granting, no closed-app rewards, and fixed roster access are explicit simplifications relative to the broader brainstorm.

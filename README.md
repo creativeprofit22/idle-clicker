@@ -53,7 +53,7 @@ the viewport; the existing canvas scaling remains unchanged.
 
 ## Separate session-only campaign prototype
 
-For a future separate launch using the pinned Standard executable above:
+Launch separately using the pinned Standard executable above:
 
 ```powershell
 & $GODOT --path . --scene res://scenes/campaign_prototype.tscn
@@ -64,7 +64,7 @@ With `godot` on PATH, the equivalent is
 The normal main scene and its launch instructions are unchanged.
 
 This isolated native-control prototype owns one in-memory Campaign. Closing or
-recreating it resets gold, upgrades and clearances; main-game saves are never
+recreating it resets gold, upgrades, clearances and dynasty/doctrine state; main-game saves are never
 loaded or changed. No main-menu link, commander or restart control is included.
 Border → Archer → Stronghold transitions settle immediately, with the last
 result retained onscreen rather than a replay delay. Farm requests require that
@@ -88,7 +88,174 @@ explicitly retrying with fresh troops and gate. Victory instead overrides farmin
 displays **Campaign secured**, retains the winning battle and gate HP, pays **0 gold**,
 and stops timing/navigation/start. Affordable purchases remain ownership-only operations,
 even after security. Suspension freezes combat and rejects every purchase/navigation input.
-There is no Fortified frontier, dynasty, campaign persistence, export or release approval.
+There is no Fortified frontier, campaign persistence, export or release approval.
+
+### One session-only dynasty reset
+
+Only a **settled Counterattack victory with a surviving gate**, all three clearances,
+first dynasty and unused allowance enables **Found a Dynasty**. Stronghold alone is
+not enough. Opening the native preview shows actual gold/troop/gate losses; **Cancel**
+or Escape changes no gameplay state and returns focus to Found a Dynasty. Purchases
+and navigation are blocked while the preview is open; suspension also rejects reset
+inputs. **Confirm reset — start dynasty 2** rechecks eligibility and applies once.
+
+Confirmation loses all gold, troop/gate upgrades (levels return to 1), territory and
+security; clears battle progress, queued commands/navigation, farm selection and
+fractional time; and starts fresh full-health Border in Advance mode at round zero.
+All three troop types remain available. **Inherited Drill** doubles squad damage
+exactly once, **after level additions**, without changing health, enemies, rewards
+or one-second round frequency. The passive opening becomes two rounds instead of
+four. The doctrine survives in-session purchases, farming, defeat, recovery and defense.
+
+Stronghold pays **30 gold once per run**, including the successor run, not once forever
+per Campaign object; defense pays **0**. Securing dynasty 2 displays **Slice complete —
+no further dynasty reset.** There is no second reset, stacked multiplier, Legacy or
+extra victory bonus. Secured purchases remain ownership-only outside the preview.
+This is **one reset/bonus for this session only**: closing or recreating the campaign
+also discards Inherited Drill. Main-game saves remain untouched. Cross-launch doctrine,
+campaign save/load, durable outcome protection and reset saving are explicitly deferred.
+
+### Native suspension wall-time repair — 10 September 2026
+
+**Current automated checks pass; physical manual acceptance remains PENDING.**
+The older failures below are retained history, not the latest verification status.
+
+The native gate used `SceneTreeTimer` for a 200ms transition wait and 1.2s frozen
+interval. Those timers consume engine frame delta, not monotonic wall time: a
+reproduced defense failure checked focus after about 63ms, while combat stayed
+frozen. Regression assertions against `Time.get_ticks_usec()` failed before the
+repair, including the too-short frozen interval. Both waits now use that monotonic
+clock with the same 200ms/1.2s durations. Two duration assertions were added; all
+existing focus, identity, frozen-state and restoration assertions remain. Native
+PID/window-scoped actions, 12s/65s driver deadlines, 20s/75s caller bounds and the
+smoke watchdog are unchanged. No production focus workaround was introduced.
+
+One intermediate focus-only run still failed because the window restored during
+the frozen interval before any driver restore request (`bd204bcf-8404-4bce-987b-a4f724aa8dab`).
+The driver has no startup restore logic; the source of that restoration is unconfirmed.
+That failed result is retained, not converted into a pass. Temporary event/frame
+tracing and post-failure observation were removed; the existing bounded snapshots remain.
+
+Final runs on the repaired code, with complete native observations and child/driver
+exits 0, each confirming child reaped and reader joined:
+
+| Scenario | Checks / failures | Execution log ID |
+|---|---|---|
+| Defense | 61 / 0 | `848c5bda-4983-4a36-8285-1e33884fb9b1` |
+| Dynasty | 57 / 0 | `a61b50c6-8952-4eab-bfbe-7254c1ce7309` |
+| Campaign | 54 / 0 | `d13908e8-0972-44f0-8756-8de90f33a25e` |
+| Focus-only | 11 / 0 | `b44ae26a-b0b5-472e-baa4-b40126930f80` |
+
+Logs are outside the repository under `%USERPROFILE%/.gg/foreground/<ID>.log`.
+All 16 current campaign PNGs were opened, including secured, narrow reset preview
+and fresh successor: notices and focused controls were readable, scroll cropping
+was expected, and the successor showed round zero, zero gold and doubled damage.
+Captures remain ignored. Import and normal/forced/immediate-normal headless checks
+passed: **2753/0, 2754/1, 2753/0**, exits **0/1/0**, exactly one intentional failure
+(`43ce22a1-a4c9-424a-ab2c-e0527d93f1eb`). Default graphical smoke passed **105/0**, exit 0
+(`4d9f5d71-a1e9-4468-8b54-21d651be9d00`). These automated runs do not prove physical
+input acceptance or release readiness. No new export or Android claim is made.
+
+### Historical dynasty verification — 10 September 2026
+
+At this checkpoint, implementation was delivered; **verification was not all green**. These are recorded
+step-6 results, not checks rerun for this documentation-only review. Raw logs remain
+outside the repository under `%TEMP%/idle-step6-verification/` and
+`%TEMP%/idle-step6-click-repair/`. Earlier sections below are historical checkpoints.
+
+| Gate | Recorded result |
+|---|---|
+| Initial import | Exit 0 |
+| Headless normal / forced / immediate normal | 2753/0 · 2754/1 (exactly one intentional failure) · 2753/0; exits 0/1/0 |
+| Main-game persistence regression | 13/0 + 10/0 + 4/0; existing Save-v1 only |
+| Main graphical default / progression / fortified | 105/0 · 35/0 · 37/0, exits 0 |
+| Initial native focus-only / campaign | 9/0 · 52/0, child and driver exits 0 |
+| Initial native defense | 59/11, failed: click target sampled before deferred scrolling settled |
+| After shared click-helper repair | Import exit 0; defense 59/0 and dynasty 55/0, child and driver exits 0; native observations complete, child reaped and reader joined |
+| Post-repair native campaign | **Incomplete, 47 checks / 1 failure**, child and driver exits 1; cleanup complete |
+
+The click helper now awaits two layout frames before sampling; all callers await it,
+with assertions and deadlines retained. The post-repair campaign passed 44 interaction
+checks but the minimized native window retained focus: freeze/restore checks were
+**unreached**. No unchanged retry was made; its earlier pass does not clear this failure.
+Initial dynasty 53/2 harness failures were repaired; another exit-1 attempt had unreadable
+output and remains unresolved. Subsequent UTF-8-captured dynasty runs passed 55/0 both
+before and after the shared click repair; failed attempts are not erased by those passes.
+
+### Native suspension diagnostic follow-up — 10 September 2026 (UTC)
+
+Added read-only `NATIVE_DIAG` snapshots in the shared smoke gate and receipt-time
+`DRIVER DIAG` OS observations, including failures before successful assertions.
+Snapshots include timestamps, owned HWND/PID, iconic/foreground equality, Godot
+mode/focus, suspension/lifecycle flags, processing, phase, original/current battle
+identity/result, rounds and elapsed time. OS samples follow pipe receipt; they are
+not atomic with Godot snapshots and never set successful-observation bookkeeping.
+No production code, assertions, native actions, waits or deadlines changed.
+Existing uncommitted work was preserved with user approval.
+
+Ran each native scenario once with `PYTHONIOENCODING=utf-8 python
+tests/windows_campaign_driver.py <scenario>`, pinned Standard
+`4.7.2.stable.official.ed1daf0bf`. Caller/driver bounds remained 75/65 seconds
+(full scenarios) and 20/12 seconds (focus-only); Godot's 60-second watchdog remains.
+
+| Gate | Actual summary | Child / driver exits | Duration | Execution log ID |
+|---|---|---|---|---|
+| Full campaign | 52 checks, 0 failures; native observations complete | 0 / 0 | 30.690s | `9e5e8d43-482c-4697-a23f-4ae312786652` |
+| Focus-only | 9 checks, 0 failures; native observations complete | 0 / 0 | 2.424s | `69a4cf9d-a7c8-4d56-a31a-4154144b7404` |
+| Full defense | **Incomplete: 45 checks, 1 failure** | 1 / 1 | 32.583s | `11468e86-6186-4513-8340-af1dde4c32e8` |
+| Full dynasty | **Incomplete: 25 checks, 1 failure** | 1 / 1 | 22.196s | `3f25bfe6-29da-4789-8e95-34f6f9c7286f` |
+
+All four drivers confirmed child reaped and reader joined. No unchanged retries.
+Logs reside under `%USERPROFILE%/.gg/foreground/<ID>.log`, outside this repository.
+The original failed campaign log remains untouched at
+`%TEMP%/idle-step6-click-repair/campaign.log` (47/1, exits 1/1).
+
+**Observed, not a root-cause repair:** the passing campaign initially reported
+`mode=1 focus=true focus_lost=true suspended=true`; Windows reported iconic and
+not foreground. At the existing suspension check 76,194 usec later, Godot focus
+was false. It then passed the real frozen interval and same-battle restore.
+In defense (owned PID 15944, HWND 19794004) and dynasty (PID 15528, HWND 19925076),
+Windows still reported iconic/not foreground at failure while Godot reported
+`mode=1 focus=true focus_lost=false suspended=true`. Both retained the original
+ongoing defense, processing enabled, round zero, and unchanged accumulated time
+from observed minimization to failure (34,379 and 16,455 usec respectively).
+Godot timestamps span 62,890 and 118,056 usec from first minimized observation to
+check; these are observed wall intervals, not claims that the 0.2-second scene
+timer guaranteed that much wall time.
+
+This confirms engine/OS focus disagreement at the failed shared gate, **not broken
+production suspension or dynasty reset**. The passing run shows transient disagreement;
+the failed runs stop at their existing assertion, so delayed notification beyond
+failure versus persistent disagreement remains unproven. No actionable production
+cause was demonstrated; no engine workaround or timing tolerance was introduced.
+Defense and dynasty freeze/restore, later victory/secured checks, and dynasty
+preview/cancel/reset/successor checks were unreached. Their required gates remain
+**FAILED/incomplete**, despite the new campaign pass.
+
+Opened all 13 fresh PNGs: campaign `initial`, `archer`, `farm`, `stronghold`,
+`conquest`, `small-scrolled`, `small-checkpoint`; defense `defense-ready`,
+`small-defense-controls`, `defense-start`, `defense-damaged`, `defense-recovery`,
+`defense-retry`. UTC timestamps fall within their runs (07:17:35.946–07:18:04.283
+and 07:18:37.786–07:18:52.083). Labels/wrapped notices and focused controls were
+readable; narrow captures show expected scroll cropping. Gate images show 80/80,
+46/80 and fresh 200/200; recovery retains +0 defeat and retry queues farming.
+No new secured or dynasty PNG was reached; older files are not current evidence.
+Captures remain ignored under `.gg/screenshots/campaign/`.
+
+Pinned import passed (4.407s, `48297036-d57b-4dc1-9afb-b57b6427a684`). Headless
+normal/forced/normal completed 2753/0, 2754/1, 2753/0, exits 0/1/0 in
+2.573/2.427/2.502s; exactly one intentional failure, no script errors, and the two
+existing exponent warnings per run. Log IDs: `ef3f8ce9-c8c8-4db7-8596-9e4d9e8692b1`,
+`afa3d9f4-9932-4709-afda-734135117764`, `f136f991-e80f-4c29-9701-4fc1e9512c96`.
+Main-game graphical/persistence and CI were not rerun for this diagnostic-only change.
+**Physical acceptance remains PENDING. No repair, release, or all-gates-passed claim.**
+
+Step-6 visual review covered all 25 main-game and 14 campaign/defense PNGs, then corrected
+final defense-retry/secured and dynasty captures. These automated observations are not
+physical input proof. `gh` found no run for HEAD `35d88d1`; successful historical run
+`34324612490` targets another SHA and does not validate this dirty diff.
+**Physical manual acceptance, including reset preview/cancel/confirm, remains PENDING.**
+No export, Android or release acceptance is claimed.
 
 ### Defense presentation verification — 8 September 2026
 
@@ -722,10 +889,12 @@ Explicit, fixed scenario selection (no arbitrary executable, window or command i
 python tests/windows_campaign_driver.py focus-only
 python tests/windows_campaign_driver.py campaign
 python tests/windows_campaign_driver.py defense
+python tests/windows_campaign_driver.py dynasty
 ```
 
-Omitting the scenario still selects focus-only (12-second driver deadline). Campaign
-and defense each have a 65-second driver deadline; use a 75-second caller bound to
+Omitting the scenario still selects focus-only (12-second driver deadline; use a
+20-second caller bound). Campaign, defense and dynasty each have a 65-second driver
+deadline; use a 75-second caller bound to
 include cleanup. The smoke's 60-second measured watchdog, 15-second battle bounds,
 strict full-scenario focus gate, all gameplay assertions and PID/HWND-scoped native
 actions remain intact. Driver mode cannot be combined with physical `--manual-focus`.
@@ -892,7 +1061,8 @@ Frontier must finish that farm before returning to the ready checkpoint; retry t
 requires another explicit start. Victory overrides queued farming, retains the
 terminal battle and enters `CAMPAIGN_SECURED`. Navigation, start and restart are
 inert there; existing purchases remain ownership operations. Stronghold still pays
-30 only once per controller. All outcomes reuse inherited once-only settlement.
+30 only once per controller at that historical checkpoint; the delivered dynasty slice
+now pays it once per run, including the successor. All outcomes reuse inherited once-only settlement.
 
 **Historical model-only verification**, pinned `4.7.2.stable.official.ed1daf0bf`:
 
@@ -1473,8 +1643,9 @@ its random/physics behavior is not used. The local specification and executable
 tests, not that unrelated demo, establish combat correctness.
 
 The default game has no automatic encounter advancement or gate/defense controls.
-The separate session-local campaign exposes gate upgrades and defense through its native UI;
-dynasty, final art and Android tooling remain unimplemented. Border Skirmish, Archer Position and
+The separate session-local campaign exposes gate upgrades, defense and one confirmed
+dynasty reset through its native UI; campaign persistence, final art and Android tooling
+remain unimplemented. Border Skirmish, Archer Position and
 Fortified Position repeat by manual selection; both older fixtures are unchanged.
 Viewport-injected input is **not physical mouse/touch verification**. Suspension tests exercise lifecycle notifications,
 not a physical Android device or OS sleep. No mobile export, sustained device
