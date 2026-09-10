@@ -14,6 +14,9 @@ var watchdog: SceneTreeTimer
 var manual: bool = "--manual-focus" in OS.get_cmdline_user_args()
 var native_driver: bool = "--native-window-driver" in OS.get_cmdline_user_args()
 var exit_status: int = 1
+# Read-only context for native failure diagnostics; never used by gate conditions.
+var diagnostic_battle: RefCounted
+var diagnostic_expected_phase: int = -1
 
 func _initialize() -> void:
 	run.call_deferred()
@@ -101,7 +104,7 @@ func run() -> void:
 		"real-time Border victory automatically advances to Archer and pays once")
 	await capture("archer")
 	var archer := campaign.battle
-	click(scene.get_node("%FarmBorder"))
+	await click(scene.get_node("%FarmBorder"))
 	check(campaign.battle == archer and campaign.pending_navigation == Campaign.Navigation.FARM
 		and scene.get_node("%PendingNavigation").text.contains("after this battle"),
 		"viewport farm request defers without abandoning Archer")
@@ -110,8 +113,8 @@ func run() -> void:
 	scene._refresh()
 	var old_health: int = archer.players[0].max_health
 	for button in scene.upgrades:
-		click(button)
-		click(button)
+		await click(button)
+		await click(button)
 	check(campaign.levels == [3, 3, 3] and campaign.gold == 10
 		and archer.players[0].max_health == old_health, "mouse purchases charge 180; current snapshot unchanged")
 	await next_battle()
@@ -139,7 +142,7 @@ func run() -> void:
 	await create_timer(1.2).timeout
 	check(campaign.battle == terminal and campaign.gold == 80 and not scene.is_processing(),
 		"checkpoint remains idle without replay or duplicate reward")
-	click(scene.get_node("%FarmArcher"))
+	await click(scene.get_node("%FarmArcher"))
 	check(campaign.phase == Campaign.Phase.RUNNING and campaign.mode == Campaign.Mode.FARM
 		and campaign.current_encounter == Data.Encounter.ARCHER_POSITION and scene.is_processing(),
 		"checkpoint farming resumes real processing")
@@ -178,8 +181,8 @@ func test_defense() -> bool:
 	scene._refresh()
 	await process_frame
 	for button in scene.upgrades:
-		click(button)
-		click(button)
+		await click(button)
+		await click(button)
 	check(campaign.gold == 0 and campaign.levels == [3, 3, 3], "real troop purchases charge 180")
 	for i in range(3):
 		await next_battle()
@@ -205,15 +208,15 @@ func test_defense() -> bool:
 	root.content_scale_size = Vector2i(720, 720)
 	await process_frame
 	await process_frame
-	click(scene.get_node("%StartDefense"))
+	await click(scene.get_node("%StartDefense"))
 	var assault := campaign.battle
 	check(campaign.phase == Campaign.Phase.DEFENDING and assault.rounds == 0
 		and assault.gate_health == 80 and assault.gate_max_health == 80,
 		"viewport starts fresh level-one defense without checkpoint catch-up")
 	scene.get_node("Margin/Scroll").scroll_vertical = 0
 	await capture("defense-start")
-	click(scene.get_node("%GateUpgrade"))
-	click(scene.get_node("%GateUpgrade"))
+	await click(scene.get_node("%GateUpgrade"))
+	await click(scene.get_node("%GateUpgrade"))
 	check(campaign.gate_level == 3 and campaign.gold == 10
 		and assault.gate_health == 80 and assault.gate_max_health == 80,
 		"live purchases charge sixty without changing current gate snapshot")
@@ -234,11 +237,11 @@ func test_defense() -> bool:
 	await next_battle()
 	check(campaign.phase == Campaign.Phase.CONQUEST_CLEARED and campaign.gold == 40
 		and not scene.get_node("%StartDefense").disabled, "keyboard return settles farm before explicit retry")
-	click(scene.get_node("%StartDefense"))
+	await click(scene.get_node("%StartDefense"))
 	assault = campaign.battle
 	check(assault.rounds == 0 and assault.gate_health == 200 and assault.gate_max_health == 200,
 		"retry gets fresh full upgraded gate")
-	click(scene.get_node("%FarmBorder"))
+	await click(scene.get_node("%FarmBorder"))
 	check(campaign.battle == assault and campaign.pending_navigation == Campaign.Navigation.FARM
 		and scene.get_node("%PendingNavigation").text.contains("if defense fails"), "defense farm input queues recovery only")
 	scene.get_node("Margin/Scroll").scroll_vertical = 0
@@ -283,6 +286,8 @@ func test_native_resume(expected_phase: Campaign.Phase = Campaign.Phase.RUNNING)
 	# Only unattended focus-only diagnoses gameplay beyond a native focus failure.
 	var separate_native_focus: bool = "--focus-only" in OS.get_cmdline_user_args() and not manual
 	var battle := scene.campaign.battle
+	diagnostic_battle = battle
+	diagnostic_expected_phase = expected_phase
 	var same_active_battle := func() -> bool:
 		return scene.campaign.battle == battle and scene.campaign.phase == expected_phase \
 			and battle.result == Presentation.Combat.Result.ONGOING and scene.is_processing()
@@ -302,6 +307,7 @@ func test_native_resume(expected_phase: Campaign.Phase = Campaign.Phase.RUNNING)
 			print("ACTION: waiting for you — click the Godot title-bar minimize button when ready")
 		while root.mode != Window.MODE_MINIMIZED:
 			await process_frame
+		native_diagnostic("minimized-observed")
 		if manual:
 			check(watchdog.time_left == INF, "human readiness excluded from measured watchdog")
 			watchdog.time_left = remaining
@@ -312,7 +318,13 @@ func test_native_resume(expected_phase: Campaign.Phase = Campaign.Phase.RUNNING)
 		root.mode = Window.MODE_MINIMIZED
 	if not same_active_battle.call():
 		return native_gate_incomplete("readiness outlasted the expected battle before observed minimization")
-	await create_timer(0.2).timeout
+	var suspension_wait_start: int = Time.get_ticks_usec()
+	# Native transitions use wall time, not the engine's smoothed frame delta.
+	while Time.get_ticks_usec() - suspension_wait_start < 200000:
+		await process_frame
+	check(Time.get_ticks_usec() - suspension_wait_start >= 200000,
+		"native suspension wait covers at least 200ms of monotonic time")
+	native_diagnostic("suspension-check")
 	if not same_active_battle.call() or root.mode != Window.MODE_MINIMIZED or not scene.suspended:
 		return native_gate_incomplete("OS minimization did not suspend the same ongoing battle with processing enabled "
 			+ "(mode=%d focus=%s suspended=%s processing=%s phase=%d expected_phase=%d same_battle=%s result=%d)" % [
@@ -328,8 +340,8 @@ func test_native_resume(expected_phase: Campaign.Phase = Campaign.Phase.RUNNING)
 	var gate: int = battle.gate_health
 	var gold: int = scene.campaign.gold
 	var level: int = scene.campaign.gate_level
-	var frozen_interval := create_timer(1.2)
-	while frozen_interval.time_left > 0:
+	var frozen_start: int = Time.get_ticks_usec()
+	while Time.get_ticks_usec() - frozen_start < 1200000:
 		await process_frame
 		if not same_active_battle.call() or root.mode != Window.MODE_MINIMIZED or not scene.suspended \
 			or battle.rounds != rounds or scene.elapsed_usec != elapsed or battle.gate_health != gate \
@@ -341,6 +353,8 @@ func test_native_resume(expected_phase: Campaign.Phase = Campaign.Phase.RUNNING)
 			if not native_focus_failed:
 				check(false, "native window regained focus during minimized interval")
 				native_focus_failed = true
+	check(Time.get_ticks_usec() - frozen_start >= 1200000,
+		"native frozen interval covers at least 1.2s of monotonic time")
 	check(true, "native minimized interval freezes same active battle, rounds, accumulated time and gate")
 	if native_driver:
 		native_driver_request("restore")
@@ -351,6 +365,7 @@ func test_native_resume(expected_phase: Campaign.Phase = Campaign.Phase.RUNNING)
 		return native_gate_incomplete("native restore did not regain focus")
 	if not same_active_battle.call() or battle.rounds != rounds:
 		return native_gate_incomplete("native restore changed active battle or added a catch-up round")
+	native_diagnostic("restore-observed")
 	check(true, "native restore retains same active battle; no catch-up round")
 	watching_focus = true
 	# Completed gameplay observations do not erase native failures: finish() exits nonzero.
@@ -359,8 +374,23 @@ func test_native_resume(expected_phase: Campaign.Phase = Campaign.Phase.RUNNING)
 func native_driver_request(action: String) -> void:
 	print("NATIVE_DRIVER: %s hwnd=%d pid=%d" % [action,
 		DisplayServer.window_get_native_handle(DisplayServer.WINDOW_HANDLE, root.get_window_id()), OS.get_process_id()])
+	if action != "complete":
+		native_diagnostic(action + "-requested")
+
+func native_diagnostic(stage: String) -> void:
+	if not native_driver or diagnostic_battle == null:
+		return
+	print("NATIVE_DIAG: stage=%s ticks_usec=%d unix=%.6f hwnd=%d pid=%d mode=%d focus=%s suspended=%s focus_lost=%s application_paused=%s skip_resume_frame=%s processing=%s phase=%d expected_phase=%d battle_id=%d expected_battle_id=%d same_battle=%s result=%d expected_result=%d rounds=%d elapsed_usec=%d last_frame_usec=%d" % [
+		stage, Time.get_ticks_usec(), Time.get_unix_time_from_system(),
+		DisplayServer.window_get_native_handle(DisplayServer.WINDOW_HANDLE, root.get_window_id()), OS.get_process_id(),
+		root.mode, root.has_focus(), scene.suspended, scene.focus_lost, scene.application_paused,
+		scene.skip_resume_frame, scene.is_processing(), scene.campaign.phase, diagnostic_expected_phase,
+		scene.campaign.battle.get_instance_id(), diagnostic_battle.get_instance_id(),
+		scene.campaign.battle == diagnostic_battle, scene.campaign.battle.result, diagnostic_battle.result,
+		diagnostic_battle.rounds, scene.elapsed_usec, scene.last_frame_usec])
 
 func native_gate_incomplete(reason: String) -> bool:
+	native_diagnostic("incomplete")
 	check(false, "native suspension gate incomplete: " + reason)
 	print("SUMMARY: campaign: incomplete — rerun the full affected scenario; %d checks, %d failures" % [checks, failures])
 	if not native_driver:
@@ -370,6 +400,9 @@ func native_gate_incomplete(reason: String) -> bool:
 
 func click(button: Button) -> void:
 	scene.get_node("Margin/Scroll").ensure_control_visible(button)
+	# Let deferred scroll layout settle before checking or sampling the target.
+	await process_frame
+	await process_frame
 	check(not button.disabled and root.get_visible_rect().encloses(button.get_global_rect()),
 		"mouse target enabled and fully visible")
 	var point: Vector2 = button.get_global_rect().get_center()

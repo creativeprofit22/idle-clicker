@@ -113,6 +113,16 @@ def main() -> int:
                     raise ctypes.WinError(ctypes.get_last_error())
                 actions.append(action)
                 print(f"DRIVER: queued native {action} for owned HWND={hwnd}", flush=True)
+            if hwnd is not None and (line.startswith("NATIVE_DIAG:") or line.startswith("FAIL campaign: native")):
+                # Read-only failure-time evidence, independent of PASS bookkeeping.
+                # These samples occur on receipt, not atomically with Godot's snapshot.
+                owned_window(hwnd)
+                owner = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+                print(f"DRIVER DIAG: received_monotonic={time.monotonic():.6f} unix={time.time():.6f} "
+                      f"hwnd={hwnd} child_pid={process.pid} owner_pid={owner.value} "
+                      f"iconic={bool(user32.IsIconic(hwnd))} "
+                      f"foreground_equal={user32.GetForegroundWindow() == hwnd}", flush=True)
             if line.startswith("PASS campaign: native minimized interval freezes"):
                 owned_window(hwnd)
                 observed_minimized = bool(user32.IsIconic(hwnd)) and user32.GetForegroundWindow() != hwnd
