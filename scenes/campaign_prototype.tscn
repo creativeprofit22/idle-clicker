@@ -41,12 +41,46 @@ autowrap_mode = 2
 [node name="SessionNotice" type="Label" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Session-only progress. Closing resets this campaign. Main-game saves are not loaded or changed."
+text = "Session-only progress. Closing/recreating resets this campaign and discards its doctrine. Main-game saves are not loaded or changed."
 autowrap_mode = 2
 
 [node name="CampaignStatus" type="Label" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 layout_mode = 2
+autowrap_mode = 2
+
+[node name="DynastyStatus" type="Label" parent="Margin/Scroll/Column"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 2
+
+[node name="FoundDynasty" type="Button" parent="Margin/Scroll/Column"]
+unique_name_in_owner = true
+layout_mode = 2
+action_mode = 0
+text = "Found a Dynasty"
+
+[node name="DynastyPreview" type="VBoxContainer" parent="Margin/Scroll/Column"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+
+[node name="DynastyLosses" type="Label" parent="Margin/Scroll/Column/DynastyPreview"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 2
+
+[node name="CancelDynasty" type="Button" parent="Margin/Scroll/Column/DynastyPreview"]
+unique_name_in_owner = true
+layout_mode = 2
+action_mode = 0
+text = "Cancel"
+
+[node name="ConfirmDynasty" type="Button" parent="Margin/Scroll/Column/DynastyPreview"]
+unique_name_in_owner = true
+layout_mode = 2
+action_mode = 0
+text = "Confirm reset — start dynasty 2"
 autowrap_mode = 2
 
 [node name="PendingNavigation" type="Label" parent="Margin/Scroll/Column"]

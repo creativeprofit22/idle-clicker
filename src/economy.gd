@@ -41,6 +41,9 @@ func encounter_reward(encounter: int) -> int:
 		Data.Encounter.FORTIFIED_POSITION: return 54
 	return 0
 
+func _squad_damage_multiplier() -> int:
+	return 1
+
 func restart_battle(encounter: int = -1) -> Combat:
 	var requested: int = current_encounter if encounter == -1 else encounter
 	if not is_encounter_unlocked(requested):
@@ -51,6 +54,7 @@ func restart_battle(encounter: int = -1) -> Combat:
 		var upgrades: int = levels[squad.role] - 1
 		squad.max_health += HEALTH_GAIN[squad.role] * upgrades
 		squad.damage += DAMAGE_GAIN[squad.role] * upgrades
+		squad.damage *= _squad_damage_multiplier()
 	battle = Combat.new(requested, army)
 	current_encounter = requested
 	_battle_reward = encounter_reward(requested)

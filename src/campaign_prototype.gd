@@ -19,6 +19,7 @@ var suspended: bool = false
 var focus_lost: bool = false
 var application_paused: bool = false
 var skip_resume_frame: bool = false
+var dynasty_preview_open: bool = false
 
 @onready var upgrades: Array[Button] = [%ShieldUpgrade, %FootUpgrade, %HorseUpgrade]
 
@@ -28,6 +29,9 @@ func _ready() -> void:
 	%Frontier.pressed.connect(_request_frontier)
 	%StartDefense.pressed.connect(_start_defense)
 	%GateUpgrade.pressed.connect(_purchase_gate)
+	%FoundDynasty.pressed.connect(_open_dynasty_preview)
+	%CancelDynasty.pressed.connect(_cancel_dynasty_preview)
+	%ConfirmDynasty.pressed.connect(_confirm_dynasty)
 	for role in range(upgrades.size()):
 		upgrades[role].pressed.connect(_purchase.bind(role))
 	campaign.restart_battle()
@@ -40,9 +44,12 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	advance_foreground(Time.get_ticks_usec())
 
-func _input(_event: InputEvent) -> void:
+func _input(event: InputEvent) -> void:
 	# Settle elapsed rounds before GUI activation, including currently disabled buttons.
 	advance_foreground(Time.get_ticks_usec())
+	if dynasty_preview_open and event.is_action_pressed("ui_cancel"):
+		_cancel_dynasty_preview()
+		get_viewport().set_input_as_handled()
 
 func advance_foreground(now: int) -> void:
 	var usec: int = now - last_frame_usec
@@ -111,9 +118,38 @@ func _sync_suspension() -> void:
 	if is_node_ready():
 		_refresh()
 
+func _open_dynasty_preview() -> void:
+	_sync_suspension()
+	if suspended or dynasty_preview_open or not campaign.can_found_dynasty():
+		return
+	dynasty_preview_open = true
+	_refresh()
+	%CancelDynasty.grab_focus()
+
+func _cancel_dynasty_preview() -> void:
+	_sync_suspension()
+	if suspended or not dynasty_preview_open:
+		return
+	dynasty_preview_open = false
+	_refresh()
+	%FoundDynasty.grab_focus()
+
+func _confirm_dynasty() -> void:
+	_sync_suspension()
+	if suspended or not dynasty_preview_open or not campaign.can_found_dynasty():
+		return
+	if campaign.found_dynasty() == null:
+		return
+	dynasty_preview_open = false
+	elapsed_usec = 0
+	last_frame_usec = Time.get_ticks_usec()
+	%LastResult.text = "No completed battle"
+	set_process(true)
+	_refresh()
+
 func _request_farm(encounter: int) -> void:
 	_sync_suspension()
-	if suspended:
+	if suspended or dynasty_preview_open:
 		return
 	var was_checkpoint: bool = campaign.phase == Campaign.Phase.CONQUEST_CLEARED
 	if campaign.request_farm(encounter) and was_checkpoint:
@@ -124,14 +160,14 @@ func _request_farm(encounter: int) -> void:
 
 func _request_frontier() -> void:
 	_sync_suspension()
-	if suspended:
+	if suspended or dynasty_preview_open:
 		return
 	campaign.request_frontier()
 	_refresh()
 
 func _start_defense() -> void:
 	_sync_suspension()
-	if suspended or campaign.start_defense() == null:
+	if suspended or dynasty_preview_open or campaign.start_defense() == null:
 		return
 	elapsed_usec = 0
 	last_frame_usec = Time.get_ticks_usec()
@@ -140,19 +176,32 @@ func _start_defense() -> void:
 
 func _purchase_gate() -> void:
 	_sync_suspension()
-	if suspended:
+	if suspended or dynasty_preview_open:
 		return
 	campaign.purchase_gate()
 	_refresh()
 
 func _purchase(role: int) -> void:
 	_sync_suspension()
-	if suspended:
+	if suspended or dynasty_preview_open:
 		return
 	campaign.purchase(role)
 	_refresh()
 
 func _refresh() -> void:
+	var blocked: bool = suspended or dynasty_preview_open
+	%DynastyStatus.text = "Dynasty %d · %s" % [campaign.dynasty,
+		"Inherited Drill: 2× squad damage" if campaign.inherited_drill else "No inherited doctrine"]
+	%DynastyPreview.visible = dynasty_preview_open
+	%FoundDynasty.disabled = blocked or not campaign.can_found_dynasty()
+	%CancelDynasty.disabled = suspended
+	%ConfirmDynasty.disabled = suspended or not dynasty_preview_open or not campaign.can_found_dynasty()
+	%DynastyLosses.text = ("Lose all current gold: %d gold. Shield infantry Lv.%d, Foot archers Lv.%d, Horse archers Lv.%d and Gate Lv.%d all return to level 1.\n"
+		+ "Lose all conquered territory and security; restart Border Skirmish in Advance mode with fresh full-health troops.\n"
+		+ "Clear battle progress, pending commands, farming/navigation choices and fractional round time.\n"
+		+ "Keep access to the same three troop types. Gain Inherited Drill: exactly 2× squad damage after level additions; health, gold rewards and round frequency are unchanged.\n"
+		+ "This is the only reset/bonus for this session. Closing/recreating the campaign discards the doctrine too; main-game saves are untouched.") % [
+		campaign.gold, campaign.levels[0], campaign.levels[1], campaign.levels[2], campaign.gate_level]
 	var checkpoint: bool = campaign.phase == Campaign.Phase.CONQUEST_CLEARED
 	var defending: bool = campaign.phase == Campaign.Phase.DEFENDING
 	var secured: bool = campaign.phase == Campaign.Phase.CAMPAIGN_SECURED
@@ -166,6 +215,8 @@ func _refresh() -> void:
 			%CampaignStatus.text = "Counterattack · Defending the Stronghold"
 		Campaign.Phase.CAMPAIGN_SECURED:
 			%CampaignStatus.text = "Campaign secured · Counterattack defeated"
+			if campaign.reset_used:
+				%CampaignStatus.text += " · Slice complete — no further dynasty reset."
 	if suspended:
 		%CampaignStatus.text += " · Paused"
 	match campaign.pending_navigation:
@@ -190,16 +241,16 @@ func _refresh() -> void:
 	var gate_cost: int = campaign.gate_purchase_cost()
 	%GateUpgrade.text = "Gate Lv.%d · %s" % [campaign.gate_level,
 		"MAX" if gate_cost == 0 else "Upgrade %d gold" % gate_cost]
-	%GateUpgrade.disabled = suspended or gate_cost <= 0 or campaign.gold < gate_cost
-	%StartDefense.disabled = suspended or not checkpoint or not campaign.stronghold_cleared
-	%FarmBorder.disabled = suspended or secured or not campaign.border_cleared
-	%FarmArcher.disabled = suspended or secured or not campaign.archer_cleared
+	%GateUpgrade.disabled = blocked or gate_cost <= 0 or campaign.gold < gate_cost
+	%StartDefense.disabled = blocked or not checkpoint or not campaign.stronghold_cleared
+	%FarmBorder.disabled = blocked or secured or not campaign.border_cleared
+	%FarmArcher.disabled = blocked or secured or not campaign.archer_cleared
 	# At the cleared checkpoint frontier is a controller no-op; farming remains available.
-	%Frontier.disabled = suspended or checkpoint or defending or secured or campaign.mode != Campaign.Mode.FARM
+	%Frontier.disabled = blocked or checkpoint or defending or secured or campaign.mode != Campaign.Mode.FARM
 	%Frontier.text = "Return to cleared checkpoint after battle" if campaign.stronghold_cleared else "Retry frontier after battle"
 	var titles: Array[String] = ["Shield infantry", "Foot archers", "Horse archers"]
 	for role in range(upgrades.size()):
 		var cost: int = campaign.purchase_cost(role)
 		upgrades[role].text = "%s Lv.%d · %s" % [titles[role], campaign.levels[role],
 			"MAX" if cost == 0 else "Upgrade %d gold" % cost]
-		upgrades[role].disabled = suspended or cost <= 0 or campaign.gold < cost
+		upgrades[role].disabled = blocked or cost <= 0 or campaign.gold < cost

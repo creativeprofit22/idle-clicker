@@ -94,6 +94,12 @@ func run() -> void:
 			return
 		finish()
 		return
+	if "--dynasty" in OS.get_cmdline_user_args():
+		if not await test_dynasty():
+			end_run(1)
+			return
+		finish()
+		return
 	var campaign := scene.campaign
 	check(campaign.gold == 0 and campaign.levels == [1, 1, 1]
 		and scene.get_node("%FarmBorder").disabled, "fresh session and locked farming")
@@ -172,6 +178,137 @@ func run() -> void:
 		end_run(1)
 		return
 	finish()
+
+func test_dynasty() -> bool:
+	var campaign := scene.campaign
+	check(campaign.dynasty == 1 and not campaign.inherited_drill and not campaign.reset_used
+		and campaign.gold == 0 and campaign.levels == [1, 1, 1], "dynasty starts without doctrine or purchases")
+	if not await observe_passive_border(false):
+		return false
+	# Established affordability fixture only; every clearance and outcome uses real elapsed combat.
+	campaign.gold += 180
+	scene._refresh()
+	for button in scene.upgrades:
+		await click(button)
+		await click(button)
+	check(campaign.gold == 10 and campaign.levels == [3, 3, 3], "dynasty troop purchases charge 180 after passive baseline")
+	await next_battle()
+	await next_battle()
+	check(campaign.phase == Campaign.Phase.CONQUEST_CLEARED and campaign.gold == 70
+		and not campaign.can_found_dynasty(), "real conquest alone cannot found dynasty")
+	await click(scene.get_node("%GateUpgrade"))
+	await click(scene.get_node("%GateUpgrade"))
+	await keyboard(scene.get_node("%StartDefense"))
+	var defense := campaign.battle
+	check(campaign.phase == Campaign.Phase.DEFENDING and defense.rounds == 0
+		and defense.gate_health == 200 and campaign.gold == 10, "prepared level-three gate begins real defense")
+	if not await test_native_resume(Campaign.Phase.DEFENDING):
+		return false
+	await next_battle()
+	check(campaign.can_found_dynasty() and campaign.battle == defense and defense.gate_health > 0
+		and campaign.gold == 10 and not scene.is_processing(), "settled real defense enables optional reset without payment")
+	if not campaign.can_found_dynasty():
+		return false
+	var checkpoint := dynasty_checkpoint()
+	root.size = Vector2i(540, 480)
+	root.content_scale_size = Vector2i(540, 480)
+	await process_frame
+	await process_frame
+	await click(scene.get_node("%FoundDynasty"))
+	await process_frame
+	await process_frame
+	check(scene.dynasty_preview_open and scene.get_node("%CancelDynasty").has_focus()
+		and dynasty_checkpoint() == checkpoint, "mouse preview moves focus without changing secured gameplay")
+	var losses: String = scene.get_node("%DynastyLosses").text
+	check(losses.contains("10 gold") and losses.count("Lv.3") == 4
+		and losses.contains("all return to level 1") and losses.contains("territory and security")
+		and losses.contains("fractional round time") and losses.contains("2× squad damage after level additions")
+		and losses.contains("health, gold rewards and round frequency are unchanged")
+		and losses.contains("only reset/bonus for this session") and losses.contains("main-game saves are untouched"),
+		"native preview discloses actual losses, exact benefit and session limits")
+	# Opening already focused Cancel; use actual focus transitions, not a no-op grab.
+	for name in ["ConfirmDynasty", "CancelDynasty", "ConfirmDynasty"]:
+		var button: Button = scene.get_node("%" + name)
+		button.grab_focus()
+		await process_frame
+		await process_frame
+		check(button.has_focus() and not button.disabled
+			and root.get_visible_rect().encloses(button.get_global_rect())
+			and scene.get_node("Margin/Scroll").scroll_vertical > 0,
+			"narrow focus-follow exposes " + name)
+	await capture("dynasty-preview")
+	await keyboard(scene.get_node("%CancelDynasty"))
+	check(not scene.dynasty_preview_open and scene.get_node("%FoundDynasty").has_focus()
+		and dynasty_checkpoint() == checkpoint, "keyboard Cancel restores unchanged secured checkpoint")
+	await keyboard(scene.get_node("%FoundDynasty"))
+	for down in [true, false]:
+		var event := InputEventKey.new()
+		event.keycode = KEY_ESCAPE
+		event.pressed = down
+		root.push_input(event, true)
+	check(not scene.dynasty_preview_open and scene.get_node("%FoundDynasty").has_focus()
+		and dynasty_checkpoint() == checkpoint, "Escape dismisses reopened preview without gameplay mutation")
+	await click(scene.get_node("%FoundDynasty"))
+	# Observe the synchronous transition after the scene handler, before key release
+	# legitimately contributes foreground microseconds through Presentation._input().
+	scene.get_node("%ConfirmDynasty").pressed.connect(func() -> void:
+		check(scene.elapsed_usec == 0 and campaign.battle.rounds == 0,
+			"confirmation press clears fractional clock before subsequent input"), CONNECT_ONE_SHOT)
+	await keyboard(scene.get_node("%ConfirmDynasty"))
+	var successor := campaign.battle
+	check(successor != defense and campaign.dynasty == 2 and campaign.inherited_drill and campaign.reset_used
+		and campaign.gold == 0 and campaign.levels == [1, 1, 1] and campaign.gate_level == 1
+		and not campaign.border_cleared and not campaign.archer_cleared and not campaign.stronghold_cleared
+		and campaign.mode == Campaign.Mode.ADVANCE and campaign.farm_encounter == -1
+		and campaign.pending_navigation == Campaign.Navigation.NONE and campaign.pending_farm == -1
+		and successor.rounds == 0 and not successor.commander_queued and not successor.is_defense
+		and scene.is_processing() and not scene.dynasty_preview_open
+		and scene.get_node("%LastResult").text == "No completed battle"
+		and scene.get_node("%DynastyStatus").text.contains("Inherited Drill: 2×"),
+		"keyboard confirmation creates clean round-zero successor and clears ownership, progress and clock")
+	root.size = Vector2i(720, 960)
+	root.content_scale_size = Vector2i(720, 960)
+	scene.get_node("Margin/Scroll").scroll_vertical = 0
+	await capture("dynasty-fresh-successor")
+	if not await observe_passive_border(true):
+		return false
+	check(not campaign.settle(successor) and not campaign.settle(defense) and campaign.gold == 10,
+		"old defense and successor cannot settle twice")
+	return true
+
+func dynasty_checkpoint() -> Array:
+	var campaign := scene.campaign
+	return [campaign.battle, campaign.battle.rounds, campaign.battle.gate_health, campaign.gold,
+		campaign.levels.duplicate(), campaign.gate_level, campaign.phase, campaign.mode,
+		campaign.border_cleared, campaign.archer_cleared, campaign.stronghold_cleared,
+		campaign.pending_navigation, campaign.pending_farm, campaign.farm_encounter,
+		campaign.dynasty, campaign.inherited_drill, campaign.reset_used, scene.elapsed_usec,
+		scene.get_node("%LastResult").text, scene.is_processing()]
+
+func observe_passive_border(inherited: bool) -> bool:
+	var campaign := scene.campaign
+	var battle := campaign.battle
+	var total: int = 2 if inherited else 4
+	check(campaign.current_encounter == Data.Encounter.BORDER_SKIRMISH and battle.rounds == 0
+		and campaign.gold == 0 and battle.enemies[0].health == 72
+		and battle.players[0].health == 120 and battle.players[1].health == 40 and battle.players[2].health == 60,
+		"passive %d-round Border begins fresh with zero gold" % total)
+	for round_number in range(1, total + 1):
+		var deadline: int = Time.get_ticks_msec() + 2000
+		while battle.rounds < round_number and Time.get_ticks_msec() < deadline:
+			await process_frame
+		var correct: bool = battle.rounds == round_number \
+			and battle.enemies[0].health == maxi(0, 72 - round_number * (36 if inherited else 18)) \
+			and battle.players[0].health == 120 - 3 * round_number \
+			and battle.players[1].health == 40 and battle.players[2].health == 60 \
+			and battle.result == (Presentation.Combat.Result.VICTORY if round_number == total else Presentation.Combat.Result.ONGOING)
+		check(correct, "passive %d-second Border round %d: exact health and result" % [total, round_number])
+		if not correct:
+			return false
+	check(campaign.battle != battle and campaign.current_encounter == Data.Encounter.ARCHER_POSITION
+		and campaign.gold == 10 and scene.get_node("%LastResult").text == "Border Skirmish: Victory · +10 gold",
+		"passive Border settles ordinary ten gold exactly at final round")
+	return true
 
 func test_defense() -> bool:
 	var campaign := scene.campaign

@@ -107,6 +107,7 @@ func run() -> void:
 	check(dead.enemies[0].health == 66 and dead.players[2].health == 57,
 		"dead attackers excluded; mobile takes damage before ranged")
 	check(Combat.new().players[0].health == 120, "fixtures: independent health")
+	test_dynasty()
 	test_conquest_targeting()
 	test_archer_position()
 	test_progression_balance()
@@ -145,6 +146,7 @@ func run() -> void:
 	test_campaign_scene_defense()
 	test_campaign_scene_defense_lifecycle()
 	test_campaign_scene_conflicting_suspension()
+	test_campaign_scene_dynasty()
 	if "--force-failure" in OS.get_cmdline_user_args():
 		check(false, "forced runner failure")
 	print("SUMMARY: %d checks, %d failures" % [checks, failures])
@@ -170,11 +172,140 @@ func campaign_scene_finish(scene: CampaignPresentation) -> Combat:
 	scene.set_process(false)
 	return completed
 
+func test_campaign_scene_dynasty() -> void:
+	var scene := campaign_scene_new(CampaignWindowFixture) as CampaignWindowFixture
+	var campaign := scene.campaign
+	var before := campaign_snapshot(campaign)
+	for name in ["FoundDynasty", "ConfirmDynasty", "CancelDynasty"]:
+		scene.get_node("%" + name).pressed.emit()
+	check(campaign_snapshot(campaign) == before and not scene.dynasty_preview_open,
+		"Dynasty scene: premature emitted reset actions reject")
+	# Earn funds through real scene rounds; leave a gate upgrade affordable at security.
+	campaign_scene_finish(scene)
+	scene.get_node("%FarmBorder").pressed.emit()
+	campaign_scene_finish(scene)
+	for i in range(40):
+		if campaign.gold >= 260:
+			break
+		campaign_scene_finish(scene)
+	check(campaign.gold >= 260, "Dynasty scene: earned preparation wallet")
+	scene.get_node("%GateUpgrade").pressed.emit()
+	for button in scene.upgrades:
+		button.pressed.emit()
+		button.pressed.emit()
+	scene.get_node("%Frontier").pressed.emit()
+	campaign_scene_finish(scene)
+	for i in range(4):
+		if campaign.phase != Campaign.Phase.RUNNING:
+			break
+		campaign_scene_finish(scene)
+	scene.get_node("%StartDefense").pressed.emit()
+	var defense := campaign_scene_finish(scene)
+	check(campaign.can_found_dynasty() and defense.result == Combat.Result.VICTORY,
+		"Dynasty scene: real earned conquest and defense enable reset")
+	scene.elapsed_usec = 345678
+	scene.last_frame_usec = 1
+	before = campaign_snapshot(campaign)
+	scene.get_node("%ConfirmDynasty").pressed.emit()
+	check(campaign_snapshot(campaign) == before, "Dynasty scene: confirm without preview rejects")
+	scene.get_node("%FoundDynasty").pressed.emit()
+	check(scene.dynasty_preview_open and scene.get_node("%DynastyPreview").visible
+		and scene.get_viewport().gui_get_focus_owner() == scene.get_node("%CancelDynasty")
+		and scene.get_node("Margin/Scroll").follow_focus
+		and scene.elapsed_usec == 345678 and scene.last_frame_usec == 1
+		and campaign_snapshot(campaign) == before, "Dynasty scene: preview focuses native cancel without gameplay or clock mutation")
+	var copy: String = scene.get_node("%DynastyLosses").text
+	for text in ["%d gold" % campaign.gold, "Shield infantry Lv.3", "Foot archers Lv.3", "Horse archers Lv.3",
+		"Gate Lv.2", "return to level 1", "territory and security", "Border Skirmish in Advance",
+		"fresh full-health troops", "pending commands", "farming/navigation", "fractional round time",
+		"same three troop types", "exactly 2× squad damage after level additions",
+		"health, gold rewards and round frequency are unchanged", "only reset/bonus for this session",
+		"Closing/recreating", "main-game saves are untouched"]:
+		check(copy.contains(text), "Dynasty scene: preview discloses " + text)
+	for name in ["GateUpgrade", "ShieldUpgrade", "FootUpgrade", "HorseUpgrade", "FarmBorder", "FarmArcher", "Frontier", "StartDefense", "FoundDynasty"]:
+		check(scene.get_node("%" + name).disabled, "Dynasty scene: preview disables " + name)
+		scene.get_node("%" + name).pressed.emit()
+	check(campaign_snapshot(campaign) == before, "Dynasty scene: emitted blocked signals preserve preview losses")
+	scene.get_node("%CancelDynasty").pressed.emit()
+	check(not scene.dynasty_preview_open and campaign_snapshot(campaign) == before
+		and scene.elapsed_usec == 345678 and not scene.get_node("%GateUpgrade").disabled
+		and scene.get_viewport().gui_get_focus_owner() == scene.get_node("%FoundDynasty"),
+		"Dynasty scene: cancel restores secured ownership controls and focus")
+	scene.get_node("%FoundDynasty").pressed.emit()
+	var escape := InputEventKey.new()
+	escape.keycode = KEY_ESCAPE
+	escape.pressed = true
+	scene._input(escape)
+	check(not scene.dynasty_preview_open and campaign_snapshot(campaign) == before
+		and scene.elapsed_usec == 345678, "Dynasty scene: Escape dismisses without gameplay mutation")
+	# Every lifecycle reason rejects opening and confirmation; overlapping reasons stay authoritative.
+	for reason in range(3):
+		scene.set_reason(reason, true)
+		scene.get_node("%FoundDynasty").pressed.emit()
+		check(not scene.dynasty_preview_open, "Dynasty scene: suspended opening rejected")
+		scene.set_reason(reason, false)
+	scene.get_node("%FoundDynasty").pressed.emit()
+	for reason in range(3):
+		scene.set_reason(reason, true)
+	for reason in range(3):
+		for name in ["ConfirmDynasty", "CancelDynasty", "GateUpgrade", "FarmBorder"]:
+			scene.get_node("%" + name).pressed.emit()
+		scene.advance_time(120.0)
+		check(scene.suspended and scene.dynasty_preview_open and campaign_snapshot(campaign) == before
+			and scene.elapsed_usec == 345678, "Dynasty scene: conflicting suspension rejects preview actions and time")
+		scene.set_reason(reason, false)
+	# Fresh model eligibility is checked even when a previously enabled signal is emitted.
+	campaign.border_cleared = false
+	var stale := campaign_snapshot(campaign)
+	scene.get_node("%ConfirmDynasty").pressed.emit()
+	check(campaign_snapshot(campaign) == stale and scene.dynasty_preview_open,
+		"Dynasty scene: stale model eligibility rejects confirmation")
+	campaign.border_cleared = true
+	var now := Time.get_ticks_usec()
+	scene.get_node("%ConfirmDynasty").pressed.emit()
+	var successor := campaign.battle
+	check(successor != defense and campaign.dynasty == 2 and campaign.gold == 0
+		and campaign.levels == [1, 1, 1] and campaign.gate_level == 1
+		and scene.elapsed_usec == 0 and scene.last_frame_usec >= now and successor.rounds == 0
+		and scene.is_processing() and scene.skip_resume_frame and not scene.dynasty_preview_open
+		and scene.get_node("%LastResult").text == "No completed battle"
+		and scene.get_node("%DynastyStatus").text == "Dynasty 2 · Inherited Drill: 2× squad damage",
+		"Dynasty scene: single clean-clock successor preserves resume gate and clears old presentation")
+	before = campaign_snapshot(campaign)
+	for name in ["ConfirmDynasty", "FoundDynasty", "CancelDynasty", "ConfirmDynasty"]:
+		scene.get_node("%" + name).pressed.emit()
+	check(campaign_snapshot(campaign) == before and not campaign.settle(defense),
+		"Dynasty scene: duplicate and stale signals cannot restart or settle old defense")
+	scene.advance_foreground(scene.last_frame_usec + 9000000)
+	check(successor.rounds == 0 and scene.elapsed_usec == 0 and not scene.skip_resume_frame,
+		"Dynasty scene: first resumed triggering gap excluded")
+	scene.advance_usec(999999)
+	check(successor.rounds == 0, "Dynasty scene: successor retains one-second round frequency")
+	scene.advance_usec(1)
+	check(successor.rounds == 1 and successor.enemies[0].health == 36,
+		"Dynasty scene: successor passive first round deals doubled damage")
+	scene.advance_time(1.0)
+	check(successor.rounds == 2 and successor.result == Combat.Result.VICTORY and campaign.gold == 10,
+		"Dynasty scene: passive successor victory pays ordinary reward after two rounds")
+	var fresh := campaign_scene_new()
+	check(fresh.campaign.dynasty == 1 and not fresh.campaign.inherited_drill
+		and fresh.campaign.battle.players[0].damage == 4 and not fresh.dynasty_preview_open,
+		"Dynasty scene: concurrent fresh instance has no doctrine")
+	fresh.free()
+	dynasty_prepare(campaign)
+	scene._refresh()
+	scene.get_node("%StartDefense").pressed.emit()
+	campaign_scene_finish(scene)
+	check(scene.get_node("%CampaignStatus").text.contains("Slice complete — no further dynasty reset.")
+		and scene.get_node("%FoundDynasty").disabled and not scene.is_processing(),
+		"Dynasty scene: real successor completion is terminal with exact status")
+	scene.free()
+
 func test_campaign_scene_fresh() -> void:
 	var scene := campaign_scene_new()
 	check(scene.get_node("%Title").text == "Campaign prototype"
 		and scene.get_node("%SessionNotice").visible
-		and scene.get_node("%SessionNotice").text == "Session-only progress. Closing resets this campaign. Main-game saves are not loaded or changed.",
+		and scene.get_node("%SessionNotice").text == "Session-only progress. Closing/recreating resets this campaign and discards its doctrine. Main-game saves are not loaded or changed.",
 		"Campaign scene: permanent session-only notice and title")
 	check(scene.campaign.gold == 0 and scene.campaign.levels == [1, 1, 1]
 		and scene.campaign.current_encounter == 0 and scene.campaign.battle.rounds == 0
@@ -928,6 +1059,177 @@ func test_defensive_combat() -> void:
 	death.step_round()
 	check(death.players[0].health == 108, "Defense: dead enemy cannot attack later")
 
+func dynasty_rejected(campaign: Campaign, title: String) -> void:
+	var before := campaign_snapshot(campaign)
+	check(not campaign.can_found_dynasty() and campaign.found_dynasty() == null
+		and campaign_snapshot(campaign) == before, "Dynasty rejected unchanged: " + title)
+
+func dynasty_prepare(campaign: Campaign) -> void:
+	# Earn every upgrade through ordinary farming; never inject wins or funds.
+	check(campaign.request_farm(Data.Encounter.BORDER_SKIRMISH), "Dynasty: queue earned Border farm")
+	campaign_finish(campaign)
+	dynasty_rejected(campaign, "farming")
+	for role in range(3):
+		while campaign.levels[role] < 3:
+			while campaign.gold < campaign.purchase_cost(role):
+				campaign_finish(campaign)
+			check(campaign.purchase(role), "Dynasty: earned troop purchase")
+	while campaign.gate_level < 3:
+		while campaign.gold < campaign.gate_purchase_cost():
+			campaign_finish(campaign)
+		check(campaign.purchase_gate(), "Dynasty: earned gate purchase")
+	check(campaign.request_frontier(), "Dynasty: return to conquest")
+	campaign_finish(campaign)
+	for i in range(3):
+		if campaign.phase != Campaign.Phase.RUNNING:
+			break
+		var reward_before: int = campaign.gold
+		var completed := campaign_finish(campaign)
+		if campaign.stronghold_cleared:
+			check(completed.result == Combat.Result.VICTORY and campaign.gold == reward_before + 30,
+				"Dynasty: Stronghold pays normal 30 this run")
+	dynasty_rejected(campaign, "conquest preparation")
+
+func test_dynasty() -> void:
+	var campaign := Campaign.new()
+	check(campaign.dynasty == 1 and not campaign.inherited_drill and not campaign.reset_used
+		and not campaign.can_found_dynasty() and campaign.found_dynasty() == null
+		and campaign.battle == null and campaign.gold == 0 and campaign.levels == [1, 1, 1],
+		"Dynasty: fresh session rejects without creating battle")
+	var baseline := campaign.restart_battle()
+	dynasty_rejected(campaign, "ongoing conquest")
+	for i in range(4):
+		baseline.step_round()
+		check(baseline.enemies[0].health == [54, 36, 18, 0][i]
+			and baseline.players[0].health == 120 - 3 * (i + 1)
+			and baseline.players[1].health == 40 and baseline.players[2].health == 60
+			and baseline.rounds == i + 1
+			and baseline.result == (Combat.Result.VICTORY if i == 3 else Combat.Result.ONGOING),
+			"Dynasty: baseline exact passive round %d" % (i + 1))
+	dynasty_rejected(campaign, "unsettled conquest victory")
+	check(campaign.settle(baseline), "Dynasty: settle baseline")
+	dynasty_prepare(campaign)
+	var defense := campaign.start_defense()
+	campaign.request_farm(0)
+	dynasty_rejected(campaign, "ongoing defense with queued navigation")
+	for i in range(60):
+		if defense.result != Combat.Result.ONGOING:
+			break
+		defense.step_round()
+	check(defense.result == Combat.Result.VICTORY and defense.gate_health > 0,
+		"Dynasty: real victorious surviving defense")
+	dynasty_rejected(campaign, "actual unconsumed defensive victory")
+	var wallet: int = campaign.gold
+	check(campaign.settle(defense) and campaign.gold == wallet and campaign.can_found_dynasty(),
+		"Dynasty: only settled defense enables reset, no reward")
+	# Each eligibility conjunct independently protects an otherwise secured model.
+	for field in ["dynasty", "inherited_drill", "reset_used", "border_cleared", "archer_cleared",
+		"stronghold_cleared", "_settled", "current_encounter"]:
+		var original: Variant = campaign.get(field)
+		campaign.set(field, 2 if field == "dynasty" else (0 if field == "current_encounter" else not original))
+		dynasty_rejected(campaign, "guard " + field)
+		campaign.set(field, original)
+	var surviving_gate: int = defense.gate_health
+	defense.gate_health = 0
+	dynasty_rejected(campaign, "no surviving gate")
+	defense.gate_health = surviving_gate
+	var old_state := campaign_snapshot(campaign)
+	var successor := campaign.found_dynasty()
+	check(successor != null and campaign.dynasty == 2 and campaign.inherited_drill and campaign.reset_used,
+		"Dynasty: one synchronous successor and consumed allowance")
+	campaign_fresh(campaign, defense, Data.Encounter.BORDER_SKIRMISH)
+	check(campaign.gold == 0 and campaign.levels == [1, 1, 1] and campaign.gate_level == 1
+		and campaign.phase == Campaign.Phase.RUNNING and campaign.mode == Campaign.Mode.ADVANCE
+		and not campaign.border_cleared and not campaign.archer_cleared and not campaign.stronghold_cleared
+		and campaign.farm_encounter == -1 and campaign.pending_navigation == Campaign.Navigation.NONE
+		and campaign.pending_farm == -1 and not campaign._settled and campaign._battle_reward == 10
+		and not successor.is_defense and successor.commander_damage == 12,
+		"Dynasty: complete reset ownership, progression, navigation, settlement and commander")
+	var saved_successor := campaign_snapshot(campaign)
+	# Reuse the full snapshot helper to prove the old Combat was not mutated.
+	campaign.battle = defense
+	var retained := campaign_snapshot(campaign)
+	campaign.battle = successor
+	check(retained.slice(14, 18) == old_state.slice(14, 18)
+		and retained.slice(19, 23) == old_state.slice(19, 23), "Dynasty: prior winning battle unchanged")
+	check(not campaign.settle(defense) and campaign_snapshot(campaign) == saved_successor,
+		"Dynasty: prior defense cannot settle again")
+	dynasty_rejected(campaign, "duplicate reset")
+	for role in range(3):
+		check(successor.players[role].health == [120, 40, 60][role]
+			and successor.players[role].damage == [8, 16, 12][role], "Dynasty: base health and doubled damage")
+	check(successor.enemies[0].max_health == 72 and successor.enemies[0].damage == 3,
+		"Dynasty: authored enemy unchanged")
+	for i in range(2):
+		successor.step_round()
+		check(successor.enemies[0].health == [36, 0][i] and successor.rounds == i + 1
+			and successor.players[0].health == [117, 114][i]
+			and successor.players[1].health == 40 and successor.players[2].health == 60
+			and successor.result == (Combat.Result.ONGOING if i == 0 else Combat.Result.VICTORY),
+			"Dynasty: successor exact passive round %d" % (i + 1))
+	check(campaign.gold == 0 and campaign.settle(successor) and campaign.gold == 10
+		and not campaign.settle(successor) and campaign.gold == 10, "Dynasty: ordinary Border reward once")
+	var formula := Campaign.new()
+	formula.inherited_drill = true
+	formula.levels = [2, 2, 2]
+	var upgraded := formula.restart_battle()
+	var ordinary := Economy.new()
+	ordinary.levels = [2, 2, 2]
+	var normal := ordinary.restart_battle()
+	for role in range(3):
+		check(upgraded.players[role].damage == [12, 24, 18][role]
+			and normal.players[role].damage == [6, 12, 9][role]
+			and upgraded.players[role].max_health == normal.players[role].max_health,
+			"Dynasty: level additions before isolated multiplier, unchanged health")
+	check(upgraded.commander_damage == 18 and normal.commander_damage == 9,
+		"Dynasty: commander derives upgraded snapshot")
+	var fresh := Campaign.new()
+	check(not fresh.inherited_drill and fresh.dynasty == 1 and not fresh.reset_used
+		and fresh.restart_battle().players[0].damage == 4
+		and Economy.new().restart_battle().players[0].damage == 4, "Dynasty: fresh model and Economy isolation")
+	dynasty_prepare(campaign)
+	campaign.start_defense()
+	wallet = campaign.gold
+	var final_defense := campaign_finish(campaign)
+	check(final_defense.result == Combat.Result.VICTORY and campaign.phase == Campaign.Phase.CAMPAIGN_SECURED
+		and campaign.gold == wallet and campaign.inherited_drill and campaign.dynasty == 2
+		and final_defense.players[0].damage == 16, "Dynasty: successor secured, zero bonus, no stacking")
+	dynasty_rejected(campaign, "second secured campaign")
+	var terminal := campaign_snapshot(campaign)
+	check(not campaign.settle(final_defense) and campaign.restart_battle() == null
+		and not campaign.request_frontier() and not campaign.request_farm(0)
+		and campaign_snapshot(campaign) == terminal, "Dynasty: successor checkpoint stays inert")
+	# Real unupgraded defensive defeat and recovery also cannot authorize a reset.
+	var loss := Campaign.new()
+	loss.border_cleared = true
+	loss.archer_cleared = true
+	loss.stronghold_cleared = true
+	loss.phase = Campaign.Phase.CONQUEST_CLEARED
+	var lost := loss.start_defense()
+	for i in range(60):
+		if lost.result != Combat.Result.ONGOING:
+			break
+		lost.step_round()
+	check(lost.result == Combat.Result.DEFEAT, "Dynasty: real defensive defeat fixture")
+	dynasty_rejected(loss, "unsettled defensive defeat")
+	check(loss.settle(lost), "Dynasty: settle defeat for recovery")
+	dynasty_rejected(loss, "defensive recovery")
+	# Isolate doctrine retention through a gate-destruction/recovery boundary.
+	loss.dynasty = 2
+	loss.inherited_drill = true
+	loss.reset_used = true
+	check(loss.request_frontier(), "Dynasty: recovery frontier queued")
+	campaign_finish(loss)
+	var retry := loss.start_defense()
+	retry.players[0].health = 0
+	retry.gate_health = 1
+	campaign_finish(loss)
+	check(retry.result == Combat.Result.DEFEAT and loss.inherited_drill and loss.reset_used
+		and loss.dynasty == 2 and loss.mode == Campaign.Mode.FARM
+		and loss.battle.players[0].damage == 8 and loss.battle.commander_damage == 12,
+		"Dynasty: defeat and recovery preserve doctrine without stacking")
+	dynasty_rejected(loss, "successor defensive recovery")
+
 func campaign_finish(campaign: Campaign) -> Combat:
 	var completed := campaign.battle
 	for i in range(60):
@@ -952,7 +1254,8 @@ func campaign_snapshot(campaign: Campaign, identity: bool = true) -> Array:
 		campaign.current_encounter, campaign._battle_reward, campaign._settled,
 		combat if identity else null, balance_snapshot(combat), combat.commander_queued,
 		combat.commander_damage, squads, campaign.gate_level, combat.is_defense,
-		combat.gate_max_health, combat.gate_health, combat.defeat_reason]
+		combat.gate_max_health, combat.gate_health, combat.defeat_reason,
+		campaign.dynasty, campaign.inherited_drill, campaign.reset_used]
 
 func campaign_fresh(campaign: Campaign, previous: Combat, encounter: int) -> void:
 	var combat := campaign.battle

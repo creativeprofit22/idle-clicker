@@ -1,6 +1,6 @@
 """One bounded native-Windows smoke scenario; NOT the physical manual gate.
 
-Run: python tests/windows_campaign_driver.py [focus-only|campaign|defense]
+Run: python tests/windows_campaign_driver.py [focus-only|campaign|defense|dynasty]
 APIs: https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-showwindowasync
 Uses only stdlib; never broadcasts input, changes engine state, or touches other PIDs.
 """
@@ -21,10 +21,10 @@ import time
 def main() -> int:
     if sys.platform != "win32":
         raise RuntimeError("This native driver requires Windows")
-    scenarios = {"focus-only": ["--focus-only"], "campaign": [], "defense": ["--defense"]}
+    scenarios = {"focus-only": ["--focus-only"], "campaign": [], "defense": ["--defense"], "dynasty": ["--dynasty"]}
     scenario = sys.argv[1] if len(sys.argv) == 2 else "focus-only"
     if len(sys.argv) > 2 or scenario not in scenarios:
-        raise RuntimeError("Usage: windows_campaign_driver.py [focus-only|campaign|defense]")
+        raise RuntimeError("Usage: windows_campaign_driver.py [focus-only|campaign|defense|dynasty]")
     timeout = 12.0 if scenario == "focus-only" else 65.0
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(errors="backslashreplace")

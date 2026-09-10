@@ -16,6 +16,39 @@ var farm_encounter: int = -1
 var pending_navigation: Navigation = Navigation.NONE
 var pending_farm: int = -1
 var gate_level: int = 1
+var dynasty: int = 1
+var inherited_drill: bool = false
+var reset_used: bool = false
+
+func _squad_damage_multiplier() -> int:
+	return 2 if inherited_drill else 1
+
+func can_found_dynasty() -> bool:
+	return dynasty == 1 and not inherited_drill and not reset_used \
+		and phase == Phase.CAMPAIGN_SECURED \
+		and border_cleared and archer_cleared and stronghold_cleared \
+		and current_encounter == Data.Encounter.COUNTERATTACK \
+		and battle != null and battle.is_defense and _settled \
+		and battle.result == Combat.Result.VICTORY and battle.gate_health > 0
+
+func found_dynasty() -> Combat:
+	if not can_found_dynasty():
+		return null
+	dynasty = 2
+	inherited_drill = true
+	reset_used = true
+	gold = 0
+	levels = [1, 1, 1]
+	gate_level = 1
+	phase = Phase.RUNNING
+	mode = Mode.ADVANCE
+	border_cleared = false
+	archer_cleared = false
+	stronghold_cleared = false
+	farm_encounter = -1
+	pending_navigation = Navigation.NONE
+	pending_farm = -1
+	return _begin_encounter(Data.Encounter.BORDER_SKIRMISH)
 
 func gate_purchase_cost() -> int:
 	return 0 if gate_level >= LEVEL_CAP else 20 * gate_level
