@@ -70,3 +70,10 @@ jobs:
           for phase in earn reload two-process; do
             grep -Eq "^SUMMARY: persistence $phase: [1-9][0-9]* checks, 0 failures \\(headless\\)$" "$RUNNER_TEMP/godot-persistence.log"
           done
+      - name: Verify campaign cross-process persistence
+        run: |
+          timeout 90s godot --headless --path . --script tests/campaign_persistence_smoke.gd 2>&1 | tee "$RUNNER_TEMP/godot-campaign-persistence.log"
+          ! grep -E 'FAIL|SCRIPT ERROR:|ERROR:' "$RUNNER_TEMP/godot-campaign-persistence.log" || exit 1
+          for phase in conquest resume-conquest checkpoint resume-defense reset-interrupt reset successor successor-complete two-process; do
+            grep -Eq "^SUMMARY: campaign persistence $phase: [1-9][0-9]* checks, 0 failures \\(headless\\)$" "$RUNNER_TEMP/godot-campaign-persistence.log"
+          done
