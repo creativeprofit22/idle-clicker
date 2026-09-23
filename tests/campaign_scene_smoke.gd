@@ -18,6 +18,8 @@ var foreground_broken: bool = false
 var watchdog: SceneTreeTimer
 var manual: bool = "--manual-focus" in OS.get_cmdline_user_args()
 var native_driver: bool = "--native-window-driver" in OS.get_cmdline_user_args()
+# Physical title-bar minimize with the native driver's restore (never a driver minimize).
+var human_minimize: bool = "--human-minimize" in OS.get_cmdline_user_args()
 var exit_status: int = 1
 # Read-only context for native failure diagnostics; never used by gate conditions.
 var diagnostic_battle: RefCounted
@@ -36,6 +38,7 @@ func audit_foreground() -> void:
 	if watching_focus and (not root.has_focus() or root.mode == Window.MODE_MINIMIZED or scene.suspended):
 		foreground_broken = true
 		watching_focus = false
+		native_diagnostic("foreground-interrupted")
 		check(false, "foreground interrupted (mode=%d focus=%s suspended=%s)" % [root.mode, root.has_focus(), scene.suspended])
 		print("SUMMARY: campaign: incomplete — foreground interrupted; %d checks, %d failures" % [checks, failures])
 		if not manual:
@@ -46,6 +49,10 @@ func audit_foreground() -> void:
 func run() -> void:
 	if native_driver and manual:
 		print("FAIL native driver cannot replace physical manual verification; SUMMARY: incomplete")
+		quit(1)
+		return
+	if human_minimize and not native_driver:
+		print("FAIL --human-minimize requires the native Windows driver; SUMMARY: incomplete")
 		quit(1)
 		return
 	if native_driver:
@@ -443,21 +450,26 @@ func test_native_resume(expected_phase: Campaign.Phase = Campaign.Phase.RUNNING)
 	watching_focus = false
 	if manual or native_driver:
 		var remaining: float = watchdog.time_left
-		if manual:
+		var human: bool = manual or human_minimize
+		if human:
 			# Exclude only human readiness, never replenish measured time already spent.
 			watchdog.time_left = INF
-		if native_driver:
+		if native_driver and not human_minimize:
 			native_driver_request("minimize")
 		else:
+			if human_minimize:
+				native_driver_request("await-minimize")
 			root.title = "Campaign smoke: MINIMIZE THIS WINDOW NOW; automatic restore follows"
 			print("ACTION: waiting for you — click the Godot title-bar minimize button when ready")
 		while root.mode != Window.MODE_MINIMIZED:
 			await process_frame
 		native_diagnostic("minimized-observed")
-		if manual:
+		if human:
 			check(watchdog.time_left == INF, "human readiness excluded from measured watchdog")
 			watchdog.time_left = remaining
-			check(watchdog.time_left == remaining and remaining > 0.0 and remaining < 60.0,
+			# Focus-only reaches this gate before the first timer tick, so a saved 60.0 is legitimate;
+			# equality with the pre-wait remainder is what proves nothing was replenished.
+			check(watchdog.time_left == remaining and remaining > 0.0 and remaining <= 60.0,
 				"watchdog restores saved remainder, not a fresh 60 seconds")
 			print("WATCHDOG: saved=%.6f restored=%.6f seconds" % [remaining, watchdog.time_left])
 	else:
@@ -516,6 +528,9 @@ func test_native_resume(expected_phase: Campaign.Phase = Campaign.Phase.RUNNING)
 	if not same_active_battle.call() or battle.rounds != rounds:
 		return native_gate_incomplete("native restore changed active battle or added a catch-up round")
 	native_diagnostic("restore-observed")
+	if manual or human_minimize:
+		# The stale minimize prompt must not invite a second, test-breaking click.
+		root.title = "Campaign check — restored; hands off until results appear"
 	check(true, "native restore retains same active battle; no catch-up round")
 	watching_focus = true
 	# Completed gameplay observations do not erase native failures: finish() exits nonzero.

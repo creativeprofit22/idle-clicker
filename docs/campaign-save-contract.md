@@ -79,7 +79,10 @@ reset. Last-result text is not persisted.
 **D6 Save triggers (autosave, no new controls).** Save after every accepted mutation: troop or
 gate purchase, navigation request, Start Defense, each settlement (reward, clearance and routing
 in one write), dynasty confirm. Also a best-effort save on suspension (focus loss, application
-pause) and on window close request, capturing mid-round progress. No per-round save.
+pause, window minimize) and on window close request, capturing mid-round progress. No per-round save.
+*Clarified 23 September 2026:* window minimize was added to the suspension list to align this
+text with the delivered suspension behavior (minimize already suspends and saves); it is a
+correction of the text, not a new decision.
 
 **D7 Acknowledgement and failure feedback.** The in-memory transition applies first, then the
 save. A status label shows "Saved" only after the staged file re-reads identically and is

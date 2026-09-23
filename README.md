@@ -1733,6 +1733,41 @@ Run with `Godot_v4.7.2-stable_win64.exe`:
 
 The physical manual gate remains **pending**.
 
+## Physical acceptance checklist
+
+Single list of the human-operated gates. Historical sections above are
+unchanged. Automation (viewport injection, the native Windows driver, scripted quit) never
+substitutes for these. Operator-only statements are recorded as **operator-reported**, not
+independent evidence. Each gameplay session (G2–G5) uses a fresh, uniquely named disposable
+project copy (scenes/src/project.godot only, no `.godot/`) whose application name differs, so
+its user-data folder is new; the real `progress.json`/`campaign.json` are never used.
+
+| Gate | Procedure | Pass criteria | Status |
+|---|---|---|---|
+| G1 Campaign supervised minimize | `& $GODOT --path . --script tests/campaign_scene_smoke.gd -- --manual-focus`, then `-- --manual-focus --focus-only`, then `-- --manual-focus --defense`. Click START, minimize promptly at MINIMIZE, keep the restored window selected. | Complete SUMMARY, 0 failures, exit 0 for all three; new captures inspected. Expired battle or focus loss = rerun whole scenario, never a pass. | PASSED (physical minimize) — see Results |
+| G2 Default-game Save-v1 release gate | Main scene in the copy: 0 gold at start; commander strike by mouse and keyboard; Restart; two Border victories → 20 gold; buy shield (0 gold, [2,1,1]); close with **X**; relaunch. Also select Archer, narrow-window scrolling, save status line. | Relaunch shows [2,1,1], shield health 160, fresh combat, no offline gold, exactly +10 from next victory; disposable `progress.json` matches each step. | PASSED (partly operator-reported) — see Results |
+| G3 Main-game human graphical gate | Covered by the G2 session (physical mouse/keyboard, Archer selection, narrow scrolling). | Controls reachable and behave as documented. | PASSED (operator-reported) — see Results |
+| G4 Campaign reset preview | Campaign scene in the copy, dynasty 1 secured: open preview → Cancel; open → Escape; open → Confirm. | Cancel/Escape change nothing and `campaign.json` bytes are identical; Confirm starts dynasty 2 once. | PASSED (window-driven) — see Results |
+| G5 Campaign saved-loop relaunch | Campaign scene in the copy: close with X mid-battle (damaged) → relaunch; close at Stronghold checkpoint → relaunch; after Confirm close → relaunch; secure dynasty 2 → relaunch. | Same health/round/gold, no progress while closed; checkpoint does not auto-start defense; dynasty 2 with drill applied once (Border in 2 passive rounds); dynasty 2 shows "no further dynasty reset"; copy's `progress.json` byte-identical throughout. | PASSED (window-driven) — see Results |
+
+### Results — 23 Sep 2026 (game code at `475f440`; test-only changes in the recording commit)
+
+Status key: **PASSED (physical)** = a person operated the input; **PASSED (window-driven)** =
+the real game build in a real window on this PC, driven by window-scoped posted mouse/key/close
+messages (no global cursor, no desktop capture) with results read from the disposable save
+files and window-only captures. Window-driven is not human operation. The user asked for the
+remaining sessions to be automated.
+
+| Gate | Result | Evidence |
+|---|---|---|
+| G1 | **PASSED (physical minimize)** | Full `--manual-focus`: 58/0, exit 0. `--manual-focus --focus-only`: first run 7/2 (minimized too late: battle expired), second run 15/1 because the watchdog assertion rejected a legitimate unticked 60.0 s remainder. Fixed test to `<= 60.0` (equality with the pre-wait remainder still proves nothing was replenished), then 15/0. `--manual-focus --defense`: two failures (after the auto-restore, the window was minimized again because the stale MINIMIZE title invited a second click; the Godot-setter restore is also the documented unreliable route). Added a driver `--human-minimize` mode: the person clicks the title-bar minimize, Windows confirms `IsIconic`, then the verified native restore runs, and only the wait for the click is excluded from the deadline. The restored title now says hands off. Two more runs failed (focus taken by another window; minimize after the battle expired). The final `python tests/windows_campaign_driver.py defense --human-minimize` run passed 65/0, child and driver exit 0, native observations complete, child reaped and reader joined. Captures `defense-damaged`, `small-defense-controls` and `campaign-secured` inspected: readable, no overlap, secured nav disabled. |
+| G2 | **PASSED** (start/controls operator-reported; save loop observed, window-driven) | Operator-reported: 0 gold at start, commander strike by mouse and keyboard, Archer selection, narrow-window scrolling. Restart first reported "nothing changed"; on a deliberate retry mid-battle it reset HP and round and kept gold (as designed). The operator played past the scripted 20-gold path, so observed values differ from the template: file `{"gold":390,"levels":[1,2,1]}` → shield purchase → `{"gold":370,"levels":[2,2,1]}` written immediately; close (WM_CLOSE, the X-button message) at 380/[2,2,1]; closed 15 s; relaunch showed Shield Lv.2 HP x/160, dmg 6, fresh combat, 390 after exactly one +10 victory (no offline gold), status "Progress saved · Autosave on". |
+| G3 | **PASSED (operator-reported controls)** | Same session as G2; physical mouse/keyboard input by the operator. |
+| G4 | **PASSED (window-driven)** | Dynasty 1 secured (gold 370, levels 3/3/3, gate 3). The preview text listed every loss and Inherited Drill. Cancel and Escape each closed the preview; `campaign.json` was byte-identical (cmp) with the preview open and after each. Confirm → file `dynasty 2, gold 0, levels [1,1,1], gate 1, cleared all false, Border`. |
+| G5 | **PASSED (window-driven)** | (a) Closed mid-Archer farm: round 3, shield 78/120, enemy 64/100, 70 gold, then 15 s closed. The first relaunched frame showed exactly those values plus "Resumed saved campaign". (b) Closed at the Stronghold checkpoint (phase 1, 430 gold). After relaunch, defense stayed idle and the file was byte-identical after idling. (c) See G4. (d) Relaunch after Confirm: dynasty 2 with damage 8/16/12, exactly 2× the level-1 values, so the drill is applied once. Border went 72→36→0: won in 2 rounds, +10. (e) Dynasty 2 secured (gate held at 2 HP). The status shows "Slice complete — no further dynasty reset" and Found a Dynasty is disabled. The close save was byte-identical to the secured save, and the relaunch showed the same state and left the file unchanged. The copy's `progress.json` SHA-256 `ad9759e1…a628` was identical from the start of S3 to the end. |
+
+The re-check after the test changes passed on the final tree: import 0 errors, headless 3303/0 · forced 3304/1 · normal 3303/0, native driver focus-only 13/0, campaign 56/0, defense 63/0, dynasty 59/0 (all exits 0, cleanup confirmed), and `scene_smoke` 105/0. One intermediate unattended defense run failed on foreground loss while the operator was using the PC; that failure is retained. Disposable copy: `%LOCALAPPDATA%\Temp\bs-accept-103356`, user data `Border Skirmish Accept 475f440 103356`. It is kept; deleting it needs approval. No art, export, Android or release-readiness claim.
+
 ## Boundaries
 
 Combat rules live only in `src/combat.gd`; `src/economy.gd` owns gold, troop

@@ -98,7 +98,11 @@ All 16 current campaign captures were opened, including the secured checkpoint,
 narrow reset preview and fresh round-zero successor. README records log IDs and
 retains an intermediate early-restoration failure whose external source is unconfirmed.
 **Physical manual acceptance remains PENDING**, including reset preview/cancel/confirm;
-automated passes do not waive it or claim release readiness.
+automated passes do not waive it or claim release readiness. The outstanding human gates
+and their current status are listed in README's "Physical acceptance checklist". As of
+23 Sep 2026 all five gates are recorded there as passed, with each one's evidence type
+(physical, operator-reported or window-driven) stated. Window-driven runs are not human
+operation.
 
 ### Historical verification — 10 September 2026
 
