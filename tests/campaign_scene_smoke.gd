@@ -16,6 +16,13 @@ var failures: int = 0
 var watching_focus: bool = false
 var foreground_broken: bool = false
 var watchdog: SceneTreeTimer
+# Independent proof of watchdog consumption while it counts. The engine drops process time
+# beyond max physics steps per frame, so the watchdog may trail wall time but never exceed it;
+# summed process deltas are the same clock the watchdog uses and must match it.
+var watchdog_counting: bool = false
+var watchdog_engine_seconds: float = 0.0
+var watchdog_mark_usec: int = 0
+var watchdog_measured_usec: int = 0
 var manual: bool = "--manual-focus" in OS.get_cmdline_user_args()
 var native_driver: bool = "--native-window-driver" in OS.get_cmdline_user_args()
 # Physical title-bar minimize with the native driver's restore (never a driver minimize).
@@ -59,6 +66,11 @@ func run() -> void:
 		auto_accept_quit = false
 		root.close_requested.connect(func() -> void: quit_after_cleanup(exit_status))
 	watchdog = create_timer(60.0)
+	process_frame.connect(func() -> void:
+		if watchdog_counting:
+			watchdog_engine_seconds += root.get_process_delta_time())
+	watchdog_counting = true
+	watchdog_mark_usec = Time.get_ticks_usec()
 	watchdog.timeout.connect(func() -> void:
 		check(false, "campaign smoke timeout; SUMMARY: incomplete")
 		end_run(1))
@@ -76,10 +88,13 @@ func run() -> void:
 		start.size = Vector2(672, 160)
 		root.add_child(start)
 		watchdog.time_left = INF
+		watchdog_counting = false
 		await start.pressed
 		root.remove_child(start)
 		start.queue_free()
 		watchdog.time_left = 60.0
+		watchdog_counting = true
+		watchdog_mark_usec = Time.get_ticks_usec()
 	check(DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUTPUT)) == OK,
 		"capture directory available")
 	fixture = ProgressFixture.new("campaign.json")
@@ -450,9 +465,16 @@ func test_native_resume(expected_phase: Campaign.Phase = Campaign.Phase.RUNNING)
 	watching_focus = false
 	if manual or native_driver:
 		var remaining: float = watchdog.time_left
+		var consumed: float = 60.0 - remaining
+		var wall_seconds: float = (watchdog_measured_usec + Time.get_ticks_usec() - watchdog_mark_usec) / 1000000.0
+		check(absf(consumed - watchdog_engine_seconds) < 0.25 and consumed <= wall_seconds + 0.25,
+			"watchdog consumption %.6f matches measured engine time %.6f (wall %.6f) seconds" % [
+				consumed, watchdog_engine_seconds, wall_seconds])
 		var human: bool = manual or human_minimize
 		if human:
 			# Exclude only human readiness, never replenish measured time already spent.
+			watchdog_counting = false
+			watchdog_measured_usec += Time.get_ticks_usec() - watchdog_mark_usec
 			watchdog.time_left = INF
 		if native_driver and not human_minimize:
 			native_driver_request("minimize")
@@ -467,8 +489,10 @@ func test_native_resume(expected_phase: Campaign.Phase = Campaign.Phase.RUNNING)
 		if human:
 			check(watchdog.time_left == INF, "human readiness excluded from measured watchdog")
 			watchdog.time_left = remaining
+			watchdog_counting = true
+			watchdog_mark_usec = Time.get_ticks_usec()
 			# Focus-only reaches this gate before the first timer tick, so a saved 60.0 is legitimate;
-			# equality with the pre-wait remainder is what proves nothing was replenished.
+			# the measured-elapsed check above plus equality here prove nothing was replenished.
 			check(watchdog.time_left == remaining and remaining > 0.0 and remaining <= 60.0,
 				"watchdog restores saved remainder, not a fresh 60 seconds")
 			print("WATCHDOG: saved=%.6f restored=%.6f seconds" % [remaining, watchdog.time_left])
