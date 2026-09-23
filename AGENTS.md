@@ -21,6 +21,8 @@
 | Full campaign | `python tests/windows_campaign_driver.py campaign` | 65 seconds | 75 seconds |
 | Full defense | `python tests/windows_campaign_driver.py defense` | 65 seconds | 75 seconds |
 
+- Supervised physical minimize: add `--human-minimize` (for example `python tests/windows_campaign_driver.py defense --human-minimize`). A person clicks the title-bar minimize button, the driver confirms `IsIconic`, and then it does the native restore. Only the click wait is excluded from the 12/65-second deadline. Don't set a caller timeout on these runs, and prefer this over `--manual-focus --defense`. Pass also requires `native_observations_complete=True`. See README "Physical minimize with native restore". Unattended defaults above are unchanged.
+
 - Require complete summaries with zero failures, child and driver exits 0, and cleanup confirming the child was reaped and output reader joined. Missing summaries, parse errors, timeouts, failed assertions, incomplete scenarios, or nonzero exits are failures; report unreached checks explicitly. Inspect captured screenshots for full scenarios as described in README.md.
 - Preserve PID/window-scoped native actions, all assertions, strict focus/suspension gates, and existing deadlines. Never loop on unchanged failures: retain the failed result and diagnose or report the blocker before another run. Do not rerun unchanged code for a documentation-only handoff.
 - Automated driver evidence does not replace the required physical manual gate. That gate remains **pending**, not waived or passed. Request physical interaction only when this required gate genuinely blocks the requested milestone; do not request it for unattended driver runs.

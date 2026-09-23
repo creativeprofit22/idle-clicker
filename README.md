@@ -947,6 +947,33 @@ observed. Native PNG inspection is complete for these automated runs.
 **The separate physical manual gate remains PENDING.** No human interaction was
 requested, engine modified, assertion weakened, or broader automation framework added.
 
+#### Physical minimize with native restore (`--human-minimize`)
+
+Added 23 September 2026 for supervised runs. Use this rather than the Godot-setter
+`--manual-focus` route whenever a person must do the minimize:
+
+```sh
+python tests/windows_campaign_driver.py <focus-only|campaign|defense|dynasty> --human-minimize
+```
+
+- The driver never minimizes in this mode. When the title reads **MINIMIZE THIS WINDOW NOW**,
+  the person clicks the title-bar minimize button once. Windows must confirm `IsIconic`
+  before the driver does the same verified native restore (`ShowWindowAsync` `SW_RESTORE`)
+  used by unattended runs. After the restore, the title says hands off: don't click again,
+  and keep the window selected until results appear.
+- Only the wait for that click is left out of the 12-second (focus-only) or 65-second
+  (full scenario) driver deadline. The remaining time is paused, never refilled, and every
+  other stage keeps its normal deadline.
+- The human wait has no time limit, so **don't wrap this command in a caller timeout**.
+  The 20/75-second caller bounds apply only to unattended runs.
+- Pass = complete `SUMMARY` with 0 failures, child exit 0 and driver exit 0,
+  `DRIVER SUMMARY: ... native_observations_complete=True`, and cleanup lines confirming
+  the child was reaped and the output reader joined. Minimizing after the battle has
+  expired, focus loss, or a second minimize means the whole scenario must be rerun. None
+  of these count as a pass.
+
+Unattended runs (no flag) are unchanged. This mode can't be combined with `--manual-focus`.
+
 **Historical conquest-only supervised graphical verification PASSED; automatic minimization remains a separate unresolved failure.**
 
 Earlier complete run (2026-09-08, `--manual-focus`): **52 graphical checks,
@@ -1744,7 +1771,7 @@ its user-data folder is new; the real `progress.json`/`campaign.json` are never 
 
 | Gate | Procedure | Pass criteria | Status |
 |---|---|---|---|
-| G1 Campaign supervised minimize | `& $GODOT --path . --script tests/campaign_scene_smoke.gd -- --manual-focus`, then `-- --manual-focus --focus-only`, then `-- --manual-focus --defense`. Click START, minimize promptly at MINIMIZE, keep the restored window selected. | Complete SUMMARY, 0 failures, exit 0 for all three; new captures inspected. Expired battle or focus loss = rerun whole scenario, never a pass. | PASSED (physical minimize) — see Results |
+| G1 Campaign supervised minimize | `& $GODOT --path . --script tests/campaign_scene_smoke.gd -- --manual-focus`, then `-- --manual-focus --focus-only`, then for defense `python tests/windows_campaign_driver.py defense --human-minimize` (not `--manual-focus --defense`, whose Godot-setter restore is the unreliable route; see "Physical minimize with native restore"). Click START where shown, minimize promptly at MINIMIZE (once), keep the restored window selected. No caller timeout on the human-minimize run. | Complete SUMMARY, 0 failures, exit 0 for all three (defense also: driver exit 0, `native_observations_complete=True`, child reaped and reader joined); new captures inspected. Expired battle or focus loss = rerun whole scenario, never a pass. | PASSED (physical minimize) — see Results |
 | G2 Default-game Save-v1 release gate | Main scene in the copy: 0 gold at start; commander strike by mouse and keyboard; Restart; two Border victories → 20 gold; buy shield (0 gold, [2,1,1]); close with **X**; relaunch. Also select Archer, narrow-window scrolling, save status line. | Relaunch shows [2,1,1], shield health 160, fresh combat, no offline gold, exactly +10 from next victory; disposable `progress.json` matches each step. | PASSED (partly operator-reported) — see Results |
 | G3 Main-game human graphical gate | Covered by the G2 session (physical mouse/keyboard, Archer selection, narrow scrolling). | Controls reachable and behave as documented. | PASSED (operator-reported) — see Results |
 | G4 Campaign reset preview | Campaign scene in the copy, dynasty 1 secured: open preview → Cancel; open → Escape; open → Confirm. | Cancel/Escape change nothing and `campaign.json` bytes are identical; Confirm starts dynasty 2 once. | PASSED (window-driven) — see Results |
