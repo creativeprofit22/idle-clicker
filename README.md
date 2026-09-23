@@ -1856,7 +1856,7 @@ the known environment focus flake, not a regression. No test, deadline or focus 
 The screenshots `dynasty-secured` (+10 Legacy, rank 1 bought, settled battle still 1×),
 `dynasty-preview` (keep Legacy/rank, next secure earns 3, "start dynasty 2") and
 `dynasty-fresh-successor` (dynasty 2 at ×2, "earns 3 Legacy") were inspected and are readable,
-with no overlap or clipping. CI hasn't run (nothing committed). The physical manual gate for
+with no overlap or clipping. CI had not run at the time of these runs (nothing was committed yet). The physical manual gate for
 this flow stays **pending**.
 
 ## Boundaries
@@ -1875,8 +1875,8 @@ its random/physics behavior is not used. The local specification and executable
 tests, not that unrelated demo, establish combat correctness.
 
 The default game has no automatic encounter advancement or gate/defense controls.
-The separate autosaved campaign exposes gate upgrades, defense and one confirmed
-dynasty reset through its native UI; final art and Android tooling remain unimplemented.
+The separate autosaved campaign exposes gate upgrades, defense, Legacy/Drill ranks and
+repeatable confirmed dynasty resets through its native UI; final art and Android tooling remain unimplemented.
 The campaign save contract (`docs/campaign-save-contract.md`) is implemented:
 `src/campaign_state.gd` captures, validates and restores full campaign state,
 `src/campaign_save.gd` stores and recovers it on disk, and `src/campaign_prototype.gd` wires
