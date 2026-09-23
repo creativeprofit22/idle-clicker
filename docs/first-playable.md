@@ -2,7 +2,7 @@
 
 **Only the implemented-scope section below describes approved, delivered work.** The later first-playable rules, tables, formulas, and acceptance thresholds remain proposals unless explicitly identified as already implemented. Their presence does not approve another milestone or validate the complete proposed game loop.
 
-The broader vision includes offline single-player play, pre-gunpowder historical armies, attack and defense, level-1 resets retaining selected benefits, and eventual Android support. Playable defense, gate upgrades, one dynasty reset and cross-launch campaign saving (its own file, per `docs/campaign-save-contract.md`) are delivered in the separate campaign. Android delivery remains deferred.
+The broader vision includes offline single-player play, pre-gunpowder historical armies, attack and defense, level-1 resets retaining selected benefits, and eventual Android support. Playable defense, gate upgrades, Legacy with Drill ranks, repeatable dynasty resets and cross-launch campaign saving (its own file, per `docs/campaign-save-contract.md`) are delivered in the separate campaign. Android delivery remains deferred.
 
 ## Approved implemented scope — 10 September 2026
 
@@ -17,10 +17,11 @@ verification evidence, and remaining release gates. Two separate playable scenes
 - **Separate campaign prototype:** `scenes/campaign_prototype.tscn` and
   `src/campaign_prototype.gd` connect the in-memory `src/campaign.gd` model to a native UI.
   Real-time automatic progression, deferred farm/frontier requests, purchases, scrolling,
-  conquest preparation, explicit defense/recovery, secured idle and one confirmed dynasty
-  reset are implemented. The scene autosaves the full campaign, including a live battle and
-  inherited doctrine, to its own `user://campaign.json` and restores it exactly at launch; it
-  neither loads nor writes the default game's save.
+  conquest preparation, explicit defense/recovery, secured idle, Legacy, Drill ranks and
+  repeatable confirmed dynasty resets are implemented. The scene autosaves the full campaign,
+  including a live battle, dynasty, Legacy and Drill rank, to its own `user://campaign.json`
+  (campaign save v2; v1 files migrate on load) and restores it exactly at launch; it neither
+  loads nor writes the default game's save.
 
 The approved campaign prototype and its scene integration are implemented, not deferred.
 It does not replace the default farming game or constitute acceptance of the broader
@@ -45,9 +46,9 @@ and returns to the checkpoint without recreating or repaying Stronghold.
 
 Settlement is synchronous and once-only in memory; the campaign save then writes reward,
 clearance and routing as one snapshot, so a relaunch shows either the old or the new state,
-never a duplicate payment. Main-game Save-v1 does not save campaign, gate, security or doctrine state.
+never a duplicate payment. Main-game Save-v1 does not save campaign, gate, security, Legacy or Drill state.
 
-### Playable Counterattack and single dynasty reset
+### Playable Counterattack, Legacy and repeatable dynasty resets
 
 The native **Start Defense** control explicitly enters Counterattack from
 `CONQUEST_CLEARED`, including farm-return checkpoints; defense never starts automatically.
@@ -64,26 +65,42 @@ farm settlement, return to preparation and explicit Start Defense. Victory overr
 queued farming, retains the winning battle/gate and stops timing/navigation at
 `CAMPAIGN_SECURED`. Affordable purchases remain ownership-only outside the reset preview.
 
-Only first-dynasty **settled defensive victory with a surviving gate**, all clearances
-and an unused reset enables **Found a Dynasty**. The native preview shows actual gold,
-troop and gate levels and all losses. Cancel or Escape changes no gameplay state and
-returns focus; preview-open purchase/navigation handlers are blocked. Confirmation
-requires an open preview, fresh model eligibility and no suspension, and applies once.
+A **settled defensive victory with a surviving gate** plus all clearances secures the
+campaign and pays **Legacy**, a permanent currency: **10** in dynasty 1 and **3** in every
+later dynasty. It is credited once, in the same saved settlement transition. The secured
+status reads **Campaign secured · Counterattack defeated · +X Legacy earned**.
 
-**Confirm reset — start dynasty 2** loses all gold and territory/security, returns all
-troop/gate levels to 1, clears battle progress, queued commands/navigation, farm selection
-and fractional time, then starts fresh round-zero Border in Advance mode. Roster access
-remains. **Inherited Drill** applies exactly **2× squad damage after level additions**;
-health, enemies, gold rewards and one-second rounds are unchanged. The passive opening
-takes two rounds rather than four. Commander snapshot strength derives from damage,
-but the campaign UI has no commander control. Doctrine survives in-session farming,
-purchases, defeat, recovery and defense; duplicates cannot restart or stack it.
+**Train Drill** spends Legacy: ranks 1/2/3 cost **10/20/40** and multiply squad damage by
+**1 + rank** (2×/3×/4×), applied after level additions. Health, enemies, gold rewards and
+one-second rounds are unchanged. Like troop purchases it applies from the next battle, so
+rank 1 bought before a reset makes the passive opening take two rounds rather than four.
+Commander snapshot strength derives from damage, but the campaign UI has no commander
+control. Training is blocked while suspended, with the preview open, when unaffordable or
+at rank 3.
 
-Stronghold pays **30 gold once per run**, including dynasty 2. Securing the successor
-grants no additional bonus/reset and displays **Slice complete — no further dynasty
-reset.** Only one reset/bonus is available per campaign save: the confirmed reset and
-Inherited Drill are saved as one transition and survive relaunch exactly once. Main-game
-saves are never loaded or changed.
+**Found a Dynasty** is available at every secured campaign, without limit. The native
+preview shows actual gold, troop and gate losses, the Legacy and Drill rank that are kept,
+and that the next secured campaign earns 3 Legacy. Cancel or Escape changes no gameplay
+state and returns focus; preview-open purchase/navigation handlers are blocked.
+Confirmation requires an open preview, fresh model eligibility and no suspension, and
+applies once per secured campaign.
+
+**Confirm reset — start dynasty N** (N = current dynasty + 1) loses all gold and
+territory/security, returns all troop/gate levels to 1, clears battle progress, queued
+commands/navigation, farm selection and fractional time, then starts fresh round-zero
+Border in Advance mode. Roster access, Legacy and Drill rank remain. Stronghold pays
+**30 gold once per run** in every dynasty. The reset is saved as one transition; if the app
+stops before it is saved, relaunch shows the secured checkpoint. Campaign save v1 files
+migrate on load (the old free doctrine becomes Drill rank 1). Main-game saves are never
+loaded or changed.
+
+Full rules: README "Legacy, Drill ranks and repeatable dynasty resets"; save format:
+"v2 amendment (Legacy)" in `docs/campaign-save-contract.md`. Automated evidence for this
+flow is recorded in README; its **physical manual gate is pending**.
+
+The verification sections below are historical records of the earlier single-reset flow
+(one reset per save, a free Inherited Drill doctrine and a "Slice complete" status);
+their counts are kept as recorded and do not describe the current Legacy flow.
 
 ### Current verification — 10 September 2026
 
@@ -140,8 +157,9 @@ does not waive that gate. No export, Android or release acceptance is claimed.
 
 Everything below describes the proposed larger loop, not an instruction to implement it.
 Campaign save/resume is now governed by the approved `docs/campaign-save-contract.md`, which supersedes the provisional save/load text below (left unchanged for history).
-Combat, conquest, playable defense/gates, the single reset and campaign save/resume overlap
-delivered work above. Doctrine beyond the one saved reset remains deferred. The save/load,
+Combat, conquest, playable defense/gates, dynasty resets and campaign save/resume overlap
+delivered work above, which now uses Legacy, Drill ranks and repeatable resets instead of the
+single free doctrine proposed below. Other Legacy upgrades remain deferred. The save/load,
 durable reset and atomic-saving promises below are proposals; only the contract describes
 what the delivered campaign save does, and nothing here applies to Save-v1.
 Future work requires separate approval.
@@ -270,4 +288,4 @@ Beyond the implemented scope above, the remaining proposal is documentation only
 
 The design authority is `docs/game-design.md`, especially its core loop, roles, non-destructive failure, reset payoff, first scope, and offline distinction. A corpus search/read inspected `etlegacy/etlegacy`, `src/game/g_combat.c`, lines 1153–1176, revision `631d0c936ee935e3c2ddb1ffc8278c5cdbe94319`: https://github.com/etlegacy/etlegacy/blob/631d0c936ee935e3c2ddb1ffc8278c5cdbe94319/src/game/g_combat.c#L1153-L1176. Its explicit exclusion of zero-health entities is a narrow real-code reference for dead-target eligibility. Its shooter-specific systems are not suitable architecture or balance references and are not imported.
 
-Combat, economy, main-game saving, playable campaign defense/gates, the single dynasty reset and cross-launch campaign saving have executable evidence recorded in the README, with historical verification failures retained and physical acceptance still pending. Future acceptance examples remain expected outcomes, not passed tests. Remaining design risks include uninteresting upgrade allocation, insufficient passive survivability, the defense targeting exception feeling arbitrary, and an overly short campaign failing to establish prestige's emotional payoff. Evaluate those only within separately approved work rather than preemptively adding systems. Direct doctrine granting, no closed-app rewards, and fixed roster access are explicit simplifications relative to the broader brainstorm.
+Combat, economy, main-game saving, playable campaign defense/gates, Legacy/Drill ranks with repeatable dynasty resets and cross-launch campaign saving have executable evidence recorded in the README, with historical verification failures retained; the physical manual gate for the Legacy flow is still pending. Future acceptance examples remain expected outcomes, not passed tests. Remaining design risks include uninteresting upgrade allocation, insufficient passive survivability, the defense targeting exception feeling arbitrary, and an overly short campaign failing to establish prestige's emotional payoff. Evaluate those only within separately approved work rather than preemptively adding systems. Direct doctrine granting, no closed-app rewards, and fixed roster access are explicit simplifications relative to the broader brainstorm.

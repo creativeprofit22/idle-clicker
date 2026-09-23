@@ -1,4 +1,7 @@
-# Campaign save contract — v1
+# Campaign save contract — v1, with v2 amendment (Legacy)
+
+The current file format is **v2**; see "v2 amendment (Legacy)" at the end. The v1 sections
+below are kept as history and still govern every rule the amendment does not change.
 
 **Status: APPROVED 23 September 2026 — implemented.** In-memory state capture, validation
 and restoration exist in `src/campaign_state.gd`; isolated storage and D11 recovery exist in
@@ -31,8 +34,10 @@ authored data; **Transient** = never saved, reinitialised on load.
 | `gold` | Economy | Saved | integer 0..9007199254740991 (Save-v1 bound) |
 | `levels[3]` | Economy | Saved | owned troop levels, each 1..3 |
 | `gate_level` | Campaign | Saved | owned gate level 1..3 |
-| `dynasty` | Campaign | Saved | 1 or 2 |
-| `inherited_drill`, `reset_used` | Campaign | Derived | both must equal `dynasty == 2`; the model keeps three fields, the file keeps one |
+| `dynasty` | Campaign | Saved | v1: 1 or 2. v2: 1..9007199254740991 |
+| `inherited_drill`, `reset_used` | Campaign | Derived (v1 only) | v1: both must equal `dynasty == 2`. Removed in v2 |
+| `legacy`, `drill_rank` | Campaign | Saved (v2) | Legacy balance and Drill rank 0..3; exact ledger (see v2 amendment) |
+| `_battle_drill_rank` | Campaign | Saved (v2, as `battle.snapshot_drill_rank`) | rank captured when the battle was created; 0..`drill_rank` |
 | `border_cleared`, `archer_cleared`, `stronghold_cleared` | Campaign | Saved | prefix-monotone (a later flag implies earlier ones) |
 | `phase` | Campaign | Saved | RUNNING, CONQUEST_CLEARED, DEFENDING, CAMPAIGN_SECURED |
 | `mode` | Campaign | Saved | ADVANCE or FARM |
@@ -72,11 +77,15 @@ has already begun). Queued navigation persists and applies at the next settlemen
 **D4 Checkpoints.** CONQUEST_CLEARED (defense-ready) and CAMPAIGN_SECURED (reset-ready / slice
 complete) restore as checkpoints with their retained settled battle. No timing runs; Start
 Defense stays explicit; nothing auto-starts on load.
+*Superseded in v2 — see 'v2 amendment (Legacy)'.* CAMPAIGN_SECURED is no longer a slice end;
+it credits Legacy and can always found another dynasty.
 
 **D5 Reset preview, cancel, confirm, successor.** The preview is never saved; cancel writes
 nothing. Confirm is one complete transition (dynasty 2, drill, reset used, zeroed run, fresh
 Border) saved as one file. A dynasty-2 secured save restores as "Slice complete" with no further
 reset. Last-result text is not persisted.
+*Superseded in v2 — see 'v2 amendment (Legacy)'.* Resets are repeatable; Legacy and Drill rank
+are kept, and the secured status shows the Legacy earned instead of "Slice complete".
 
 **D6 Save triggers (autosave, no new controls).** Save after every accepted mutation: troop or
 gate purchase, navigation request, Start Defense, each settlement (reward, clearance and routing
@@ -85,6 +94,8 @@ pause, window minimize) and on window close request, capturing mid-round progres
 *Clarified 23 September 2026:* window minimize was added to the suspension list to align this
 text with the delivered suspension behavior (minimize already suspends and saves); it is a
 correction of the text, not a new decision.
+*Superseded in v2 — see 'v2 amendment (Legacy)'.* v2 adds a successful Train Drill purchase to
+the trigger list.
 
 **D7 Acknowledgement and failure feedback.** The in-memory transition applies first, then the
 save. A status label shows "Saved" only after the staged file re-reads identically and is
@@ -120,6 +131,9 @@ hand-edited file was legitimately reached.
 - No "discard save" control is added, so a corrupt save has no in-game fix until one is approved.
 
 ## JSON schema v1
+
+*Superseded in v2 — see 'v2 amendment (Legacy)'.* v2 writes `"version": 2` and adds `legacy`,
+`drill_rank` and `battle.snapshot_drill_rank`; v1 files migrate on load.
 
 Exact key sets at every level; extra or missing keys are corrupt. All numbers are exact integers.
 
@@ -166,6 +180,8 @@ Exact key sets at every level; extra or missing keys are corrupt. All numbers ar
 - CONQUEST_CLEARED ⇒ stronghold cleared, settled battle.
 - CAMPAIGN_SECURED ⇒ settled Counterattack victory, gate health > 0, all cleared.
 - Mode/farm/navigation consistency as in the inventory; dynasty trio agreement; snapshot levels ≤ owned.
+  *Superseded in v2 — see 'v2 amendment (Legacy)'.* v2 uses the Legacy ledger instead of the
+  dynasty trio.
 - `settled` ⇔ result ≠ ONGOING; ONGOING ⇒ at least one enemy squad has health > 0; in
   non-defense battles at least one player squad has health > 0; in defense `gate_health` > 0.
   *Clarified 23 September 2026:* this wording now matches the `Combat.step_round()` terminal
@@ -220,3 +236,94 @@ health; during defense only the shield squad can lose health. Same D10 intent; n
 
 This approval covers the contract only. Implementation, its tests and all existing
 verification gates remain separate work.
+
+## v2 amendment (Legacy)
+
+**Status: user-approved 23 September 2026 and implemented** (`src/campaign.gd`,
+`src/campaign_state.gd`, `src/campaign_prototype.gd`). This amendment replaces the one-time free
+Inherited Drill with Legacy, Drill ranks and repeatable dynasty resets.
+
+**Rules.** Securing a campaign (a settled defense victory) credits Legacy in the same transition,
+so it is one save write and can't be paid twice: **10** in dynasty 1 and **3** in every later
+dynasty. Drill ranks 1/2/3 cost **10/20/40** Legacy. Squad damage is multiplied by **1 + rank**
+after level additions, and nothing else changes. Found a Dynasty is available at every secured
+campaign. It increments `dynasty`, keeps `legacy` and `drill_rank`, and zeroes the run exactly as
+in D5.
+
+**New keys.** Top level: `legacy` (0..MAX_GOLD) and `drill_rank` (0..3). Battle:
+`snapshot_drill_rank` (0..`drill_rank`), the rank captured when the battle was created. Player
+stats are derived from `snapshot_levels` and `snapshot_drill_rank`, so a rank bought mid-battle
+leaves the active battle unchanged and round-trips exactly. `version` is `2`, and the key sets
+remain exact.
+
+**JSON schema v2.** Key order matches `KEYS` / `BATTLE_KEYS` in `src/campaign_state.gd`.
+
+```json
+{
+  "format": "idle-clicker-campaign",
+  "version": 2,
+  "gold": 0,
+  "levels": [1, 1, 1],
+  "gate_level": 1,
+  "dynasty": 1,
+  "legacy": 0,
+  "drill_rank": 0,
+  "cleared": [false, false, false],
+  "phase": 0,
+  "mode": 0,
+  "farm_encounter": -1,
+  "pending_navigation": 0,
+  "pending_farm": -1,
+  "current_encounter": 0,
+  "settled": false,
+  "round_progress_usec": 0,
+  "battle": {
+    "snapshot_levels": [1, 1, 1],
+    "snapshot_drill_rank": 0,
+    "player_health": [0, 0, 0],
+    "enemy_health": [0],
+    "snapshot_gate_level": 0,
+    "gate_health": 0,
+    "rounds": 0,
+    "result": 0,
+    "defeat_reason": 0
+  }
+}
+```
+
+**Ledger (D10 addition).** A file is corrupt unless
+`legacy + spent(drill_rank) == earned(dynasty, phase == CAMPAIGN_SECURED)`, where
+`earned(d, s) = (d > 1 ? 10 + 3·(d − 2) : 0) + (s ? (d == 1 ? 10 : 3) : 0)` and
+`spent(r)` = the sum of the first `r` Drill costs. A hand-edited balance, rank or dynasty is
+therefore rejected. `capture()` refuses (UNSAVABLE) a model that breaks the ledger.
+
+**v1 migration.** A v1 file is parsed under the exact v1 key set and v1 rules (dynasty 1..2),
+then mapped in memory:
+
+- dynasty 1 → rank 0, with Legacy 10 if secured, else 0
+- dynasty 2 → rank 1 (the old free doctrine counts as rank 1 bought with the first 10), with
+  Legacy 3 if secured, else 0
+- `snapshot_drill_rank` = rank
+
+The file isn't rewritten on load; the next ordinary save writes v2. Any version other than 1 or 2
+is UNSUPPORTED.
+
+**D5 change.** Confirm is repeatable, and the successor keeps Legacy and Drill rank. The preview
+discloses what is kept and that the next secured campaign earns 3 Legacy. The secured status
+shows the Legacy earned instead of "Slice complete".
+
+**D6 addition.** A successful **Train Drill** purchase is an accepted mutation and autosaves.
+Rejected training (unaffordable, at max, suspended or preview open) writes nothing.
+
+**v2 acceptance cases** (covered in `tests/run_tests.gd`, `tests/campaign_persistence_smoke.gd`
+and `tests/campaign_scene_smoke.gd`):
+
+1. Legacy is paid 10 then 3, once per secured campaign, and a restore can't pay it again.
+2. Drill costs are 10/20/40, the multipliers are ×2/×3/×4, rank 3 is the maximum, and a
+   rejected purchase changes nothing.
+3. Repeat resets reach dynasty 3 and 4, keeping Legacy and rank.
+4. Mid-battle training: the active battle keeps its snapshot rank across capture/restore, and the
+   next battle uses the new rank.
+5. A tampered Legacy, rank, dynasty or snapshot rank, or missing v2 keys, are corrupt; version 3
+   is unsupported.
+6. v1 dynasty-1/2, running/secured files migrate exactly, and the next save writes v2.

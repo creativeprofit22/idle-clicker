@@ -67,12 +67,12 @@ This isolated native-control prototype owns one Campaign that autosaves to its o
 `user://campaign.json` (with `.tmp`/`.bak` siblings); main-game saves are never loaded or
 changed. Relaunch restores the exact state: gold, owned upgrades, clearances, navigation queue,
 checkpoint, the damaged current battle with its purchase-time snapshot, fractional round time
-and dynasty/doctrine. Closed time and the first frame after launch add no combat or income.
+and dynasty, Legacy and Drill rank. Closed time and the first frame after launch add no combat or income.
 No main-menu link, commander or restart control is included.
 
 Saves happen only after an accepted change: troop or gate purchase, farm/frontier request,
-Start Defense, every battle settlement (reward, clearance and routing written together) and
-confirmed dynasty reset; plus best-effort saves on focus loss/pause/minimize and window close.
+Start Defense, every battle settlement (reward, clearance, routing and any Legacy written
+together), Train Drill and confirmed dynasty reset; plus best-effort saves on focus loss/pause/minimize and window close.
 Opening or cancelling the dynasty preview and ordinary rounds never save. The status line under
 the notice shows **Autosave on**, **Saved**, **Restored from backup**, or
 **Progress not saved — will retry** (the change stays in memory and the next trigger rewrites
@@ -103,31 +103,36 @@ and stops timing/navigation/start. Affordable purchases remain ownership-only op
 even after security. Suspension freezes combat and rejects every purchase/navigation input.
 There is no Fortified frontier, export or release approval.
 
-### One dynasty reset per campaign save
+### Legacy, Drill ranks and repeatable dynasty resets
 
-Only a **settled Counterattack victory with a surviving gate**, all three clearances,
-first dynasty and unused allowance enables **Found a Dynasty**. Stronghold alone is
-not enough. Opening the native preview shows actual gold/troop/gate losses; **Cancel**
-or Escape changes no gameplay state and returns focus to Found a Dynasty. Purchases
-and navigation are blocked while the preview is open; suspension also rejects reset
-inputs. **Confirm reset — start dynasty 2** rechecks eligibility and applies once.
+A **settled Counterattack victory with a surviving gate** plus all three clearances secures
+the campaign and pays **Legacy**, a permanent currency: **10** in dynasty 1 and **3** in
+every later dynasty. Legacy is credited in the same saved transition, so it can't be paid
+twice. The dynasty line shows the dynasty, Legacy, Drill rank and multiplier, and what securing
+the current campaign would earn. Stronghold alone is not enough.
+
+**Train Drill** spends Legacy: ranks 1/2/3 cost **10/20/40** and multiply squad damage by
+**2×/3×/4×**, applied once **after level additions**. Health, enemies, gold rewards and the
+one-second round frequency are unchanged. Like troop purchases it applies from the next
+battle, so buy rank 1 before resetting to start the successor at 2×: the passive opening
+Border then takes two rounds instead of four. Training is blocked while suspended, with the
+preview open, when unaffordable, or at rank 3. Every successful purchase autosaves.
+
+**Found a Dynasty** is available at every secured campaign, without limit. Opening the native
+preview shows actual gold/troop/gate losses, the Legacy and Drill rank that are kept, and that
+the next secured campaign earns 3 Legacy. **Cancel** or Escape changes no gameplay state and
+returns focus to Found a Dynasty. Purchases and navigation are blocked while the preview is
+open; suspension also rejects reset inputs. **Confirm reset — start dynasty N** rechecks
+eligibility and applies once.
 
 Confirmation loses all gold, troop/gate upgrades (levels return to 1), territory and
-security; clears battle progress, queued commands/navigation, farm selection and
-fractional time; and starts fresh full-health Border in Advance mode at round zero.
-All three troop types remain available. **Inherited Drill** doubles squad damage
-exactly once, **after level additions**, without changing health, enemies, rewards
-or one-second round frequency. The passive opening becomes two rounds instead of
-four. The doctrine survives in-session purchases, farming, defeat, recovery and defense.
-
-Stronghold pays **30 gold once per run**, including the successor run, not once forever
-per Campaign object; defense pays **0**. Securing dynasty 2 displays **Slice complete —
-no further dynasty reset.** There is no second reset, stacked multiplier, Legacy or
-extra victory bonus. Secured purchases remain ownership-only outside the preview.
-This is **the only reset in the campaign save**: the confirmed reset is written as one complete
-transition, Inherited Drill survives relaunch exactly once (never stacked), and a relaunched
-dynasty 2 cannot reset again. If the app stops before the reset is saved, relaunch shows the
-secured dynasty-1 checkpoint and the reset can be confirmed once. Main-game saves remain untouched.
+security. It clears battle progress, queued commands/navigation, farm selection and fractional
+time, then starts a fresh full-health Border in Advance mode at round zero. All three troop
+types, Legacy and Drill rank remain. Stronghold pays **30 gold once per run**; defense pays
+**0 gold**. The secured status reads **Campaign secured · Counterattack defeated · +X Legacy
+earned**. If the app stops before a reset is saved, relaunch shows the secured checkpoint and
+the reset can be confirmed once. Campaign save v1 files (from before Legacy) load and migrate:
+the old free doctrine becomes Drill rank 1. Main-game saves remain untouched.
 
 ### Native suspension wall-time repair — 10 September 2026
 
@@ -1766,7 +1771,7 @@ At that point the physical manual gate was still **pending**. It was later recor
 Single list of the human-operated gates. Historical sections above are
 unchanged. Automation (viewport injection, the native Windows driver, scripted quit) never
 substitutes for these. Operator-only statements are recorded as **operator-reported**, not
-independent evidence. Each gameplay session (G2–G5) uses a fresh, uniquely named disposable
+independent evidence. Each gameplay session (G2–G6) uses a fresh, uniquely named disposable
 project copy (scenes/src/project.godot only, no `.godot/`) whose application name differs, so
 its user-data folder is new; the real `progress.json`/`campaign.json` are never used.
 
@@ -1775,8 +1780,9 @@ its user-data folder is new; the real `progress.json`/`campaign.json` are never 
 | G1 Campaign supervised minimize | `& $GODOT --path . --script tests/campaign_scene_smoke.gd -- --manual-focus`, then `-- --manual-focus --focus-only`, then for defense `python tests/windows_campaign_driver.py defense --human-minimize` (not `--manual-focus --defense`, whose Godot-setter restore is the unreliable route; see "Physical minimize with native restore"). Click START where shown, minimize promptly at MINIMIZE (once), keep the restored window selected. No caller timeout on the human-minimize run. | Complete SUMMARY, 0 failures, exit 0 for all three (defense also: driver exit 0, `native_observations_complete=True`, child reaped and reader joined); new captures inspected. Expired battle or focus loss = rerun whole scenario, never a pass. | PASSED (physical minimize) — see Results |
 | G2 Default-game Save-v1 release gate | Main scene in the copy: 0 gold at start; commander strike by mouse and keyboard; Restart; two Border victories → 20 gold; buy shield (0 gold, [2,1,1]); close with **X**; relaunch. Also select Archer, narrow-window scrolling, save status line. | Relaunch shows [2,1,1], shield health 160, fresh combat, no offline gold, exactly +10 from next victory; disposable `progress.json` matches each step. | PASSED (partly operator-reported) — see Results |
 | G3 Main-game human graphical gate | Covered by the G2 session (physical mouse/keyboard, Archer selection, narrow scrolling). | Controls reachable and behave as documented. | PASSED (operator-reported) — see Results |
-| G4 Campaign reset preview | Campaign scene in the copy, dynasty 1 secured: open preview → Cancel; open → Escape; open → Confirm. | Cancel/Escape change nothing and `campaign.json` bytes are identical; Confirm starts dynasty 2 once. | PASSED (window-driven) — see Results |
-| G5 Campaign saved-loop relaunch | Campaign scene in the copy: close with X mid-battle (damaged) → relaunch; close at Stronghold checkpoint → relaunch; after Confirm close → relaunch; secure dynasty 2 → relaunch. | Same health/round/gold, no progress while closed; checkpoint does not auto-start defense; dynasty 2 with drill applied once (Border in 2 passive rounds); dynasty 2 shows "no further dynasty reset"; copy's `progress.json` byte-identical throughout. | PASSED (window-driven) — see Results |
+| G4 Campaign reset preview | Campaign scene in the copy, dynasty 1 secured: open preview → Cancel; open → Escape; open → Confirm. | Cancel/Escape change nothing and `campaign.json` bytes are identical; Confirm starts dynasty 2 once. | PASSED (window-driven) against the pre-Legacy build `475f440` — see Results; Legacy/Drill/repeat-reset behavior is covered by G6 |
+| G5 Campaign saved-loop relaunch | Campaign scene in the copy: close with X mid-battle (damaged) → relaunch; close at Stronghold checkpoint → relaunch; after Confirm close → relaunch; secure dynasty 2 → relaunch. | Same health/round/gold, no progress while closed; checkpoint does not auto-start defense; dynasty 2 with drill applied once (Border in 2 passive rounds); dynasty 2 shows "no further dynasty reset" (pre-Legacy criterion, superseded by G6: current builds pay Legacy and keep Found a Dynasty enabled); copy's `progress.json` byte-identical throughout. | PASSED (window-driven) against the pre-Legacy build `475f440` — see Results; not re-run on the Legacy build |
+| G6 Campaign Legacy and Drill | Campaign scene in a fresh disposable copy (as G4/G5): secure dynasty 1 → click **Train Drill rank 1 — 10 Legacy** → inspect the copy's `campaign.json` → open preview → Cancel → open → Confirm → play dynasty 2's opening Border passively → close with X → relaunch → secure dynasty 2 → open preview → Confirm. | After dynasty 1 secure: status "Campaign secured · Counterattack defeated · +10 Legacy earned" and dynasty line shows "Legacy 10". After Train Drill: `campaign.json` saved immediately with `legacy` 0, `drill_rank` 1. Cancel changes nothing; Confirm starts dynasty 2 once. Dynasty 2 Border at ×2 is won in 2 passive rounds. Relaunch keeps Legacy and Drill rank. After dynasty 2 secure: status shows "+3 Legacy earned" and Found a Dynasty stays enabled; Confirm reaches dynasty 3. Copy's `progress.json` byte-identical throughout. | **PENDING** |
 
 ### Results — 23 Sep 2026 (game code at `475f440`; test-only changes in the recording commit)
 
@@ -1824,6 +1830,34 @@ environment flake, not a regression. No test, deadline or focus gate was changed
 watchdog check passed in all four scenarios (consumption matched measured engine time within
 0.02 s). Screenshots `campaign-secured`, `dynasty-preview` and `defense-damaged` were inspected
 and are readable with no overlap. Native gates for `74f074b` are **green**.
+
+### Legacy, Drill ranks and repeat resets — verified locally 23 Sep 2026 (uncommitted tree on `093bd62`)
+
+This replaces the one-time free Inherited Drill with Legacy (10 first secure, then 3), Drill
+ranks (10/20/40 Legacy for ×2/×3/×4) and unlimited resets. The campaign save is now v2,
+with v1 migrating on load. See the v2 amendment in `docs/campaign-save-contract.md`.
+
+| Check | Result |
+|---|---|
+| Import | exit 0, 0 script/parse errors |
+| Headless normal / forced / normal | 3466/0, exit 0 · 3467/1 (only `FAIL forced runner failure`), exit 1 · 3466/0, exit 0 |
+| `campaign_persistence_smoke.gd` | all 9 process summaries 0 failures, exit 0 |
+| Native `focus-only`, runs 1 and 2 | **FAILED 14/1** each: "native minimized window reports focus lost", `native_observations_complete=False`; child reaped, reader joined (retained) |
+| Native `focus-only`, baseline `093bd62` in a clean worktree | 14/0, exits 0, observations complete, cleanup confirmed |
+| Native `focus-only`, run 3 | 14/0, child/driver exit 0, observations complete, cleanup confirmed |
+| Native `campaign` / `defense` / `dynasty` | 57/0 · 64/0 · 64/0, all child/driver exits 0, observations complete, cleanup confirmed |
+| `scene_smoke` | 105/0, exit 0 |
+
+In both failed focus-only runs the driver's diagnostics show the window was **not foreground
+before minimize** (`foreground_equal=False` at `minimize-requested`), so Windows never took focus
+away and Godot kept `focus=true` while iconic. In the passing runs (baseline and run 3) the window
+was foreground first. The focus-only path runs before any Legacy/Drill UI is reached, so this is
+the known environment focus flake, not a regression. No test, deadline or focus gate was changed.
+The screenshots `dynasty-secured` (+10 Legacy, rank 1 bought, settled battle still 1×),
+`dynasty-preview` (keep Legacy/rank, next secure earns 3, "start dynasty 2") and
+`dynasty-fresh-successor` (dynasty 2 at ×2, "earns 3 Legacy") were inspected and are readable,
+with no overlap or clipping. CI hasn't run (nothing committed). The physical manual gate for
+this flow stays **pending**.
 
 ## Boundaries
 
