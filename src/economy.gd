@@ -44,18 +44,22 @@ func encounter_reward(encounter: int) -> int:
 func _squad_damage_multiplier() -> int:
 	return 1
 
+# Squad stats for the given troop levels, with doctrine applied exactly once.
+func _snapshot_army(snapshot_levels: Array[int]) -> Array[Data.Squad]:
+	var army: Array[Data.Squad] = Data.players()
+	for squad in army:
+		var upgrades: int = snapshot_levels[squad.role] - 1
+		squad.max_health += HEALTH_GAIN[squad.role] * upgrades
+		squad.damage += DAMAGE_GAIN[squad.role] * upgrades
+		squad.damage *= _squad_damage_multiplier()
+	return army
+
 func restart_battle(encounter: int = -1) -> Combat:
 	var requested: int = current_encounter if encounter == -1 else encounter
 	if not is_encounter_unlocked(requested):
 		return null
 	# Abandon the old battle without settling it: restart never awards gold.
-	var army: Array[Data.Squad] = Data.players()
-	for squad in army:
-		var upgrades: int = levels[squad.role] - 1
-		squad.max_health += HEALTH_GAIN[squad.role] * upgrades
-		squad.damage += DAMAGE_GAIN[squad.role] * upgrades
-		squad.damage *= _squad_damage_multiplier()
-	battle = Combat.new(requested, army)
+	battle = Combat.new(requested, _snapshot_army(levels))
 	current_encounter = requested
 	_battle_reward = encounter_reward(requested)
 	_settled = false

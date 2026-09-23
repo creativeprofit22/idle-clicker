@@ -10,6 +10,7 @@ const CampaignScene = preload("res://scenes/campaign_prototype.tscn")
 const CampaignPresentation = preload("res://src/campaign_prototype.gd")
 const ProgressSave = preload("res://src/progress_save.gd")
 const ProgressFixture = preload("res://tests/progress_fixture.gd")
+const CampaignState = preload("res://src/campaign_state.gd")
 
 # Only the OS window-state read is substituted; lifecycle, controls and clock are real.
 class CampaignWindowFixture extends CampaignPresentation:
@@ -147,10 +148,407 @@ func run() -> void:
 	test_campaign_scene_defense_lifecycle()
 	test_campaign_scene_conflicting_suspension()
 	test_campaign_scene_dynasty()
+	test_campaign_state_round_trips()
+	test_campaign_state_duplicates()
+	test_campaign_state_rejection()
 	if "--force-failure" in OS.get_cmdline_user_args():
 		check(false, "forced runner failure")
 	print("SUMMARY: %d checks, %d failures" % [checks, failures])
 	quit(0 if failures == 0 else 1)
+
+func state_json(state: Dictionary) -> Variant:
+	# In-memory JSON round trip only: integers come back as floats, nothing touches disk.
+	return JSON.parse_string(JSON.stringify(state))
+
+func state_scene(campaign: Campaign, elapsed: int = 0) -> CampaignPresentation:
+	var scene := campaign_scene_new()
+	scene.campaign = campaign
+	scene.elapsed_usec = elapsed
+	scene._refresh()
+	return scene
+
+func state_restore(original: CampaignPresentation, title: String) -> CampaignPresentation:
+	var captured := CampaignState.capture(original.campaign, original.elapsed_usec)
+	var restored: Dictionary = {"outcome": CampaignState.Outcome.UNSAVABLE}
+	if captured.outcome == CampaignState.Outcome.VALID:
+		restored = CampaignState.restore(state_json(captured.state))
+	var valid: bool = restored.outcome == CampaignState.Outcome.VALID
+	var again: Dictionary = CampaignState.capture(restored.campaign, restored.round_progress_usec) if valid else {}
+	check(valid and again.get("state") == captured.state
+		and restored.campaign != original.campaign and restored.campaign.battle != original.campaign.battle,
+		"Campaign state: capture/JSON/restore/capture is exact and independent: " + title)
+	# A failed restore yields a fresh scene so later comparisons fail instead of crashing.
+	return state_scene(restored.campaign, restored.round_progress_usec) if valid else campaign_scene_new()
+
+func state_steps(repeats: int) -> Array[int]:
+	var steps: Array[int] = []
+	for i in range(repeats):
+		steps.append_array([250000, 750000, 1500000, 999999, 1, 3000000, 2200000, 800000, 5000000])
+	return steps
+
+func state_continue(original: CampaignPresentation, restored: CampaignPresentation, steps: Array[int], title: String) -> void:
+	var same: bool = campaign_snapshot(original.campaign, false) == campaign_snapshot(restored.campaign, false) \
+		and original.elapsed_usec == restored.elapsed_usec
+	for usec in steps:
+		original.advance_usec(usec)
+		restored.advance_usec(usec)
+		same = same and campaign_snapshot(original.campaign, false) == campaign_snapshot(restored.campaign, false) \
+			and original.elapsed_usec == restored.elapsed_usec
+	same = same and CampaignState.capture(original.campaign, original.elapsed_usec) \
+		== CampaignState.capture(restored.campaign, restored.elapsed_usec)
+	check(same, "Campaign state: restored matches uninterrupted under identical input: " + title)
+	original.set_process(false)
+	restored.set_process(false)
+
+func state_secured() -> Campaign:
+	var campaign := Campaign.new()
+	campaign.gold = 240 # Isolated funds; every owned level uses production purchases.
+	for role in range(3):
+		campaign.purchase(role)
+		campaign.purchase(role)
+	campaign.purchase_gate()
+	campaign.purchase_gate()
+	campaign.restart_battle()
+	for stage in range(3):
+		campaign_finish(campaign)
+	campaign.start_defense()
+	campaign_finish(campaign)
+	check(campaign.phase == Campaign.Phase.CAMPAIGN_SECURED, "Campaign state fixture: real secured campaign")
+	return campaign
+
+func test_campaign_state_round_trips() -> void:
+	check(CampaignState.ROUND_USEC == CampaignPresentation.ROUND_USEC, "Campaign state: round length matches scene")
+	var steps := state_steps(8)
+	var scenes: Array[CampaignPresentation] = []
+	# Conquest: mid-round Border.
+	var border := campaign_scene_new()
+	border.advance_usec(2500000)
+	check(border.campaign.battle.rounds == 2 and border.elapsed_usec == 500000
+		and border.campaign.battle.enemies[0].health < 72, "Campaign state fixture: damaged mid-round Border")
+	var restored := state_restore(border, "Border")
+	state_continue(border, restored, steps, "mid-round Border")
+	scenes.append_array([border, restored])
+	# Conquest: damaged Archer.
+	var archer := campaign_scene_new()
+	campaign_scene_finish(archer)
+	archer.advance_usec(1300000)
+	check(archer.campaign.current_encounter == Data.Encounter.ARCHER_POSITION and archer.campaign.battle.rounds == 1,
+		"Campaign state fixture: damaged Archer")
+	restored = state_restore(archer, "Archer")
+	state_continue(archer, restored, steps, "damaged Archer")
+	scenes.append_array([archer, restored])
+	# Conquest: damaged Stronghold, continued through defeat into farm recovery.
+	var stronghold := campaign_scene_new()
+	campaign_scene_finish(stronghold)
+	campaign_scene_finish(stronghold)
+	stronghold.advance_usec(2400000)
+	check(stronghold.campaign.current_encounter == Data.Encounter.STRONGHOLD and stronghold.campaign.battle.rounds == 2,
+		"Campaign state fixture: damaged Stronghold")
+	restored = state_restore(stronghold, "Stronghold")
+	state_continue(stronghold, restored, steps, "damaged Stronghold through defeat")
+	check(restored.campaign.mode == Campaign.Mode.FARM and not restored.campaign.stronghold_cleared,
+		"Campaign state: restored Stronghold defeat routes to farm recovery")
+	scenes.append_array([stronghold, restored])
+	# Conquest: upgraded Stronghold with the enemy shield dead but other enemies still fighting.
+	var shield_down := campaign_scene_new()
+	shield_down.campaign.gold = 140 # Isolated affordability fixture; conquest uses real rounds.
+	for role in [0, 0, 1, 1, 2]:
+		shield_down.upgrades[role].pressed.emit()
+	campaign_scene_finish(shield_down)
+	campaign_scene_finish(shield_down)
+	var shield_battle := shield_down.campaign.battle
+	for i in range(60):
+		if shield_battle.enemies[0].health == 0 or shield_battle.result != Combat.Result.ONGOING:
+			break
+		shield_down.advance_usec(CampaignPresentation.ROUND_USEC)
+	check(shield_down.campaign.current_encounter == Data.Encounter.STRONGHOLD
+		and shield_down.campaign.battle == shield_battle and shield_battle.result == Combat.Result.ONGOING
+		and shield_battle.enemies[0].role == Data.Role.SHIELD and shield_battle.enemies[0].health == 0
+		and shield_battle.enemies.slice(1).any(func(squad: Data.Squad) -> bool: return squad.health > 0),
+		"Campaign state fixture: ongoing Stronghold with enemy shield down")
+	var shield_captured := CampaignState.capture(shield_down.campaign, shield_down.elapsed_usec)
+	check(shield_captured.outcome == CampaignState.Outcome.VALID
+		and CampaignState.validate(state_json(shield_captured.state)).outcome == CampaignState.Outcome.VALID,
+		"Campaign state: ongoing battle with enemy shield down validates")
+	restored = state_restore(shield_down, "enemy shield down")
+	state_continue(shield_down, restored, state_steps(8), "enemy shield down")
+	scenes.append_array([shield_down, restored])
+	# Farming with queued frontier.
+	var farm := campaign_scene_new()
+	campaign_scene_finish(farm)
+	farm.get_node("%FarmBorder").pressed.emit()
+	campaign_scene_finish(farm)
+	farm.advance_usec(1600000)
+	farm.get_node("%Frontier").pressed.emit()
+	check(farm.campaign.mode == Campaign.Mode.FARM and farm.campaign.farm_encounter == Data.Encounter.BORDER_SKIRMISH
+		and farm.campaign.pending_navigation == Campaign.Navigation.FRONTIER and farm.elapsed_usec == 600000,
+		"Campaign state fixture: farming with queued frontier")
+	restored = state_restore(farm, "farm to frontier")
+	state_continue(farm, restored, steps, "farming with queued frontier")
+	scenes.append_array([farm, restored])
+	# Farming with a queued farm switch after a Stronghold defeat.
+	var switch := campaign_scene_new()
+	campaign_scene_finish(switch)
+	campaign_scene_finish(switch)
+	switch.get_node("%FarmBorder").pressed.emit()
+	campaign_scene_finish(switch)
+	switch.get_node("%FarmArcher").pressed.emit()
+	switch.advance_usec(1200000)
+	check(switch.campaign.mode == Campaign.Mode.FARM and switch.campaign.farm_encounter == Data.Encounter.BORDER_SKIRMISH
+		and switch.campaign.pending_farm == Data.Encounter.ARCHER_POSITION, "Campaign state fixture: queued farm switch")
+	restored = state_restore(switch, "farm switch")
+	state_continue(switch, restored, steps, "farming with queued farm switch")
+	scenes.append_array([switch, restored])
+	# Checkpoint: time does nothing; explicit defense start matches.
+	var defense := campaign_scene_new()
+	defense.campaign.gold = 140 # Isolated affordability fixture; conquest uses real rounds.
+	for role in [0, 0, 1, 1, 2]:
+		defense.upgrades[role].pressed.emit()
+	for i in range(3):
+		campaign_scene_finish(defense)
+	check(defense.campaign.phase == Campaign.Phase.CONQUEST_CLEARED and defense.campaign.levels == [3, 3, 2],
+		"Campaign state fixture: real checkpoint below horse cap")
+	var checkpoint := state_restore(defense, "checkpoint")
+	state_continue(defense, checkpoint, [2000000, 5000000], "checkpoint ignores time")
+	for scene in [defense, checkpoint]:
+		scene.get_node("%StartDefense").pressed.emit()
+		scene.set_process(false)
+	state_continue(defense, checkpoint, steps.slice(0, 3), "explicit defense start from restored checkpoint")
+	scenes.append(checkpoint)
+	# Defense: damaged gate after mid-assault troop and gate purchases, with queued recovery farm.
+	defense.upgrades[2].pressed.emit()
+	defense.get_node("%GateUpgrade").pressed.emit()
+	defense.get_node("%FarmBorder").pressed.emit()
+	var assault := defense.campaign.battle
+	for i in range(60):
+		if assault.gate_health < assault.gate_max_health or assault.result != Combat.Result.ONGOING:
+			break
+		defense.advance_usec(1000000)
+	var leftover: int = defense.elapsed_usec
+	defense.advance_usec(400000)
+	check(defense.campaign.phase == Campaign.Phase.DEFENDING and assault.gate_health < 80 and assault.gate_health > 0
+		and assault.gate_max_health == 80 and defense.campaign.gate_level == 2 and defense.campaign.levels == [3, 3, 3]
+		and defense.campaign.pending_farm == Data.Encounter.BORDER_SKIRMISH and defense.elapsed_usec == (leftover + 400000) % 1000000 and defense.elapsed_usec > 0,
+		"Campaign state fixture: damaged gate after mid-assault purchases")
+	var captured := CampaignState.capture(defense.campaign, defense.elapsed_usec)
+	check(captured.outcome == CampaignState.Outcome.VALID and captured.state.battle.snapshot_levels == [3, 3, 2]
+		and captured.state.battle.snapshot_gate_level == 1 and captured.state.levels == [3, 3, 3]
+		and captured.state.gate_level == 2, "Campaign state: defense snapshot stays below purchased ownership")
+	restored = state_restore(defense, "defense")
+	check(restored.campaign.battle.gate_max_health == 80 and restored.campaign.battle.players[2].max_health == 80
+		and restored.campaign.battle.commander_damage == assault.commander_damage,
+		"Campaign state: restored defense keeps snapshot gate and squad stats")
+	state_continue(defense, restored, steps, "damaged defense")
+	scenes.append_array([defense, restored])
+	# Secured dynasty 1: restored eligibility, identical successor, dynasty-2 Border won in two rounds.
+	var secured := state_scene(state_secured())
+	restored = state_restore(secured, "secured dynasty 1")
+	check(secured.campaign.can_found_dynasty() and restored.campaign.can_found_dynasty(),
+		"Campaign state: restored secured campaign can found the dynasty")
+	secured.campaign.found_dynasty()
+	restored.campaign.found_dynasty()
+	state_continue(secured, restored, [], "dynasty founded from restored security")
+	scenes.append(restored)
+	secured.advance_usec(1500000)
+	restored = state_restore(secured, "dynasty 2 Border")
+	state_continue(secured, restored, [500000], "dynasty 2 mid-Border")
+	check(restored.campaign.border_cleared and restored.campaign.gold == 10
+		and restored.campaign.current_encounter == Data.Encounter.ARCHER_POSITION,
+		"Campaign state: restored dynasty 2 Border won in two rounds")
+	state_continue(secured, restored, steps, "dynasty 2 after Border")
+	scenes.append_array([secured, restored])
+	# Secured dynasty 2: terminal, no further reset.
+	var successor := state_secured()
+	successor.found_dynasty()
+	campaign_finish(successor)
+	dynasty_prepare(successor)
+	successor.start_defense()
+	campaign_finish(successor)
+	var final := state_scene(successor)
+	restored = state_restore(final, "secured dynasty 2")
+	check(final.campaign.phase == Campaign.Phase.CAMPAIGN_SECURED and final.campaign.dynasty == 2
+		and not restored.campaign.can_found_dynasty() and restored.campaign.found_dynasty() == null,
+		"Campaign state: restored dynasty 2 security cannot reset again")
+	state_continue(final, restored, steps.slice(0, 5), "secured dynasty 2")
+	scenes.append_array([final, restored])
+	for scene in scenes:
+		scene.free()
+
+func test_campaign_state_duplicates() -> void:
+	# Settled checkpoint: neither the restored nor the original battle can pay again.
+	var original := state_secured()
+	var restored: Campaign = CampaignState.restore(state_json(CampaignState.capture(original, 0).state)).campaign
+	var gold: int = original.gold
+	check(not restored.settle(restored.battle) and not original.settle(original.battle)
+		and not restored.settle(original.battle) and restored.gold == gold and original.gold == gold,
+		"Campaign state: restored settled checkpoint cannot duplicate its reward")
+	# Ongoing battle: pays exactly once after restoration.
+	var ongoing := Campaign.new()
+	ongoing.restart_battle()
+	ongoing.battle.step_round()
+	ongoing.battle.step_round()
+	restored = CampaignState.restore(state_json(CampaignState.capture(ongoing, 0).state)).campaign
+	var completed := restored.battle
+	while completed.result == Combat.Result.ONGOING:
+		completed.step_round()
+	check(restored.settle(completed) and restored.gold == 10 and not restored.settle(completed)
+		and restored.gold == 10 and ongoing.gold == 0 and ongoing.battle.rounds == 2,
+		"Campaign state: restored ongoing battle pays once and leaves the source untouched")
+	# Dynasty 2: doctrine applies once across repeated capture/restore cycles.
+	var drilled := state_secured()
+	drilled.found_dynasty()
+	var cycled: Campaign = drilled
+	for i in range(3):
+		cycled = CampaignState.restore(state_json(CampaignState.capture(cycled, 0).state)).campaign
+	var damage: Array[int] = []
+	var expected: Array[int] = []
+	for i in range(3):
+		damage.append(cycled.battle.players[i].damage)
+		expected.append(drilled.battle.players[i].damage)
+	check(damage == expected and damage == [8, 16, 12] and cycled.inherited_drill
+		and cycled.battle.commander_damage == drilled.battle.commander_damage,
+		"Campaign state: repeated restoration keeps exactly 2x doctrine damage")
+	# Restored battles are new, unshared objects.
+	var state: Dictionary = CampaignState.capture(ongoing, 0).state
+	var first: Campaign = CampaignState.restore(state).campaign
+	var second: Campaign = CampaignState.restore(state).campaign
+	first.battle.step_round()
+	check(first.battle != second.battle and first.battle != ongoing.battle
+		and not is_same(first.battle.players, second.battle.players)
+		and first.battle.players[0] != second.battle.players[0]
+		and second.battle.rounds == 2 and ongoing.battle.rounds == 2 and first.battle.rounds == 3,
+		"Campaign state: independent restorations share no battle state")
+
+func state_rejects(base: Dictionary, title: String, expected: CampaignState.Outcome, mutate: Callable) -> void:
+	var state: Dictionary = base.duplicate(true)
+	mutate.call(state)
+	var copy: Dictionary = state.duplicate(true)
+	var restored := CampaignState.restore(state)
+	check(restored.outcome == expected and not restored.has("campaign")
+		and CampaignState.validate(state).outcome == expected and state == copy,
+		"Campaign state: rejects without mutation: " + title)
+
+func test_campaign_state_rejection() -> void:
+	var CORRUPT := CampaignState.Outcome.CORRUPT
+	var running := Campaign.new()
+	running.restart_battle()
+	running.battle.step_round()
+	running.battle.step_round()
+	var base: Dictionary = state_json(CampaignState.capture(running, 500000).state)
+	check(CampaignState.validate(base).outcome == CampaignState.Outcome.VALID,
+		"Campaign state: JSON-shaped valid state accepted")
+	check(CampaignState.restore([]).outcome == CORRUPT and CampaignState.restore(null).outcome == CORRUPT
+		and CampaignState.restore("{}").outcome == CORRUPT, "Campaign state: non-object rejected")
+	state_rejects(base, "missing key", CORRUPT, func(s: Dictionary) -> void: s.erase("gold"))
+	state_rejects(base, "extra key", CORRUPT, func(s: Dictionary) -> void: s["extra"] = 1)
+	state_rejects(base, "missing battle key", CORRUPT, func(s: Dictionary) -> void: s.battle.erase("rounds"))
+	state_rejects(base, "extra battle key", CORRUPT, func(s: Dictionary) -> void: s.battle["commander_queued"] = false)
+	state_rejects(base, "battle not object", CORRUPT, func(s: Dictionary) -> void: s.battle = [])
+	state_rejects(base, "wrong format", CORRUPT, func(s: Dictionary) -> void: s.format = "idle-clicker-progress")
+	state_rejects(base, "missing format", CORRUPT, func(s: Dictionary) -> void: s.erase("format"))
+	state_rejects(base, "future version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 2)
+	state_rejects(base, "future version float", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 2.0)
+	state_rejects(base, "negative version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = -1)
+	state_rejects(base, "huge version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 1e20)
+	state_rejects(base, "fractional version", CORRUPT, func(s: Dictionary) -> void: s.version = 1.5)
+	state_rejects(base, "string version", CORRUPT, func(s: Dictionary) -> void: s.version = "1")
+	state_rejects(base, "int as bool", CORRUPT, func(s: Dictionary) -> void: s.settled = 0)
+	state_rejects(base, "int cleared flag", CORRUPT, func(s: Dictionary) -> void: s.cleared[0] = 0)
+	state_rejects(base, "bool as int", CORRUPT, func(s: Dictionary) -> void: s.gold = true)
+	state_rejects(base, "fractional gold", CORRUPT, func(s: Dictionary) -> void: s.gold = 3.5)
+	state_rejects(base, "negative gold", CORRUPT, func(s: Dictionary) -> void: s.gold = -1)
+	state_rejects(base, "gold over max", CORRUPT, func(s: Dictionary) -> void: s.gold = 9007199254740992.0)
+	state_rejects(base, "level over cap", CORRUPT, func(s: Dictionary) -> void: s.levels = [4, 1, 1])
+	state_rejects(base, "short levels", CORRUPT, func(s: Dictionary) -> void: s.levels = [1, 1])
+	state_rejects(base, "gate level zero", CORRUPT, func(s: Dictionary) -> void: s.gate_level = 0)
+	state_rejects(base, "dynasty three", CORRUPT, func(s: Dictionary) -> void: s.dynasty = 3)
+	state_rejects(base, "Fortified encounter", CORRUPT, func(s: Dictionary) -> void: s.current_encounter = 2)
+	state_rejects(base, "enemy length", CORRUPT, func(s: Dictionary) -> void: s.battle.enemy_health.append(10))
+	state_rejects(base, "healed player", CORRUPT, func(s: Dictionary) -> void: s.battle.player_health[0] = 121)
+	state_rejects(base, "healed enemy", CORRUPT, func(s: Dictionary) -> void: s.battle.enemy_health[0] = 73)
+	state_rejects(base, "negative health", CORRUPT, func(s: Dictionary) -> void: s.battle.player_health[1] = -1)
+	state_rejects(base, "snapshot above owned", CORRUPT, func(s: Dictionary) -> void: s.battle.snapshot_levels = [2, 1, 1])
+	state_rejects(base, "gate snapshot outside defense", CORRUPT, func(s: Dictionary) -> void: s.battle.snapshot_gate_level = 1)
+	state_rejects(base, "non-prefix clearance", CORRUPT, func(s: Dictionary) -> void: s.cleared = [false, true, false])
+	state_rejects(base, "running but settled", CORRUPT, func(s: Dictionary) -> void: s.settled = true)
+	state_rejects(base, "early timeout", CORRUPT, func(s: Dictionary) -> void:
+		s.settled = true
+		s.battle.result = Combat.Result.DEFEAT
+		s.battle.defeat_reason = Combat.DefeatReason.TIMEOUT)
+	state_rejects(base, "ongoing at round sixty", CORRUPT, func(s: Dictionary) -> void: s.battle.rounds = 60)
+	state_rejects(base, "victory with living enemy", CORRUPT, func(s: Dictionary) -> void:
+		s.settled = true
+		s.battle.result = Combat.Result.VICTORY)
+	state_rejects(base, "ongoing without enemies", CORRUPT, func(s: Dictionary) -> void: s.battle.enemy_health = [0])
+	state_rejects(base, "damage at round zero", CORRUPT, func(s: Dictionary) -> void: s.battle.rounds = 0)
+	state_rejects(base, "uncleared pending farm", CORRUPT, func(s: Dictionary) -> void:
+		s.pending_navigation = Campaign.Navigation.FARM
+		s.pending_farm = Data.Encounter.BORDER_SKIRMISH)
+	state_rejects(base, "farm mode without target", CORRUPT, func(s: Dictionary) -> void: s.mode = Campaign.Mode.FARM)
+	state_rejects(base, "frontier queued while advancing", CORRUPT, func(s: Dictionary) -> void:
+		s.pending_navigation = Campaign.Navigation.FRONTIER)
+	state_rejects(base, "advance off frontier", CORRUPT, func(s: Dictionary) -> void:
+		s.cleared = [true, false, false])
+	state_rejects(base, "progress at round length", CORRUPT, func(s: Dictionary) -> void:
+		s.round_progress_usec = CampaignState.ROUND_USEC)
+	state_rejects(base, "negative progress", CORRUPT, func(s: Dictionary) -> void: s.round_progress_usec = -1)
+	# Defense and secured states.
+	var assault := Campaign.new()
+	assault.gold = 240 # Isolated funds; every owned level uses production purchases.
+	for role in range(3):
+		assault.purchase(role)
+		assault.purchase(role)
+	assault.restart_battle()
+	for stage in range(3):
+		campaign_finish(assault)
+	assault.start_defense()
+	for i in range(3):
+		assault.battle.step_round()
+	var defense: Dictionary = state_json(CampaignState.capture(assault, 1).state)
+	check(CampaignState.validate(defense).outcome == CampaignState.Outcome.VALID
+		and defense.phase == Campaign.Phase.DEFENDING, "Campaign state: valid ongoing defense accepted")
+	state_rejects(defense, "healed gate", CORRUPT, func(s: Dictionary) -> void: s.battle.gate_health = 81)
+	state_rejects(defense, "gate snapshot above owned", CORRUPT, func(s: Dictionary) -> void: s.battle.snapshot_gate_level = 2)
+	state_rejects(defense, "missing gate snapshot", CORRUPT, func(s: Dictionary) -> void: s.battle.snapshot_gate_level = 0)
+	state_rejects(defense, "defense damages non-shield squad", CORRUPT, func(s: Dictionary) -> void: s.battle.player_health[1] = 1)
+	state_rejects(defense, "defense in farm mode", CORRUPT, func(s: Dictionary) -> void:
+		s.mode = Campaign.Mode.FARM
+		s.farm_encounter = Data.Encounter.BORDER_SKIRMISH)
+	state_rejects(defense, "defense before Stronghold", CORRUPT, func(s: Dictionary) -> void: s.cleared = [true, true, false])
+	state_rejects(defense, "army defeat in defense", CORRUPT, func(s: Dictionary) -> void:
+		s.settled = true
+		s.battle.result = Combat.Result.DEFEAT
+		s.battle.defeat_reason = Combat.DefeatReason.ARMY_DEFEAT)
+	var secured: Dictionary = state_json(CampaignState.capture(state_secured(), 0).state)
+	state_rejects(secured, "secured with destroyed gate", CORRUPT, func(s: Dictionary) -> void: s.battle.gate_health = 0)
+	state_rejects(secured, "progress at checkpoint", CORRUPT, func(s: Dictionary) -> void: s.round_progress_usec = 1)
+	state_rejects(secured, "secured with queued farm", CORRUPT, func(s: Dictionary) -> void:
+		s.pending_navigation = Campaign.Navigation.FARM
+		s.pending_farm = Data.Encounter.BORDER_SKIRMISH)
+	state_rejects(secured, "secured but unsettled", CORRUPT, func(s: Dictionary) -> void: s.settled = false)
+	state_rejects(secured, "secured phase running", CORRUPT, func(s: Dictionary) -> void: s.phase = Campaign.Phase.RUNNING)
+	# Capture refuses states a file cannot reproduce and never mutates the source.
+	var queued := Campaign.new()
+	queued.restart_battle()
+	queued.battle.queue_commander()
+	var before := campaign_snapshot(queued)
+	check(CampaignState.capture(queued, 0).outcome == CampaignState.Outcome.UNSAVABLE and campaign_snapshot(queued) == before,
+		"Campaign state: capture refuses queued commander strike unchanged")
+	var altered := Campaign.new()
+	altered.restart_battle()
+	altered.battle.players[0].damage = 5
+	before = campaign_snapshot(altered)
+	check(CampaignState.capture(altered, 0).outcome == CampaignState.Outcome.UNSAVABLE and campaign_snapshot(altered) == before,
+		"Campaign state: capture refuses non-level squad stats unchanged")
+	var orphan := Campaign.new()
+	orphan.restart_battle()
+	orphan.reset_used = true
+	before = campaign_snapshot(orphan)
+	check(CampaignState.capture(orphan, 0).outcome == CampaignState.Outcome.UNSAVABLE and campaign_snapshot(orphan) == before
+		and CampaignState.capture(Campaign.new(), 0).outcome == CampaignState.Outcome.UNSAVABLE
+		and CampaignState.capture(running, CampaignState.ROUND_USEC).outcome == CampaignState.Outcome.UNSAVABLE,
+		"Campaign state: capture refuses inconsistent doctrine, missing battle and whole-round progress")
+	check(not FileAccess.file_exists("user://campaign.json"), "Campaign state: no campaign file written")
 
 func campaign_scene_new(script: GDScript = CampaignPresentation) -> CampaignPresentation:
 	var scene: CampaignPresentation = CampaignScene.instantiate()
