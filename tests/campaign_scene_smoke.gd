@@ -211,8 +211,9 @@ func run() -> void:
 
 func test_dynasty() -> bool:
 	var campaign := scene.campaign
-	check(campaign.dynasty == 1 and not campaign.inherited_drill and not campaign.reset_used
-		and campaign.gold == 0 and campaign.levels == [1, 1, 1], "dynasty starts without doctrine or purchases")
+	check(campaign.dynasty == 1 and campaign.drill_rank == 0 and campaign.legacy == 0
+		and campaign.gold == 0 and campaign.levels == [1, 1, 1]
+		and scene.get_node("%TrainDrill").disabled, "dynasty starts without Legacy, Drill or purchases")
 	if not await observe_passive_border(false):
 		return false
 	# Established affordability fixture only; every clearance and outcome uses real elapsed combat.
@@ -236,9 +237,19 @@ func test_dynasty() -> bool:
 		return false
 	await next_battle()
 	check(campaign.can_found_dynasty() and campaign.battle == defense and defense.gate_health > 0
-		and campaign.gold == 10 and not scene.is_processing(), "settled real defense enables optional reset without payment")
+		and campaign.gold == 10 and campaign.legacy == 10 and not scene.is_processing()
+		and scene.get_node("%CampaignStatus").text == "Campaign secured · Counterattack defeated · +10 Legacy earned",
+		"settled real defense enables optional reset and pays 10 Legacy, no gold")
 	if not campaign.can_found_dynasty():
 		return false
+	var drill_button: Button = scene.get_node("%TrainDrill")
+	await click(drill_button)
+	await process_frame
+	await capture("dynasty-secured")
+	check(campaign.drill_rank == 1 and campaign.legacy == 0 and campaign.battle == defense
+		and drill_button.disabled and drill_button.text == "Train Drill rank 2 — 20 Legacy"
+		and scene.get_node("%DynastyStatus").text == "Dynasty 1 · Legacy 0 · Drill rank 1 (×2 squad damage)",
+		"native Train Drill click spends 10 Legacy for rank 1 without touching the settled battle")
 	var checkpoint := dynasty_checkpoint()
 	root.size = Vector2i(540, 480)
 	root.content_scale_size = Vector2i(540, 480)
@@ -252,10 +263,13 @@ func test_dynasty() -> bool:
 	var losses: String = scene.get_node("%DynastyLosses").text
 	check(losses.contains("10 gold") and losses.count("Lv.3") == 4
 		and losses.contains("all return to level 1") and losses.contains("territory and security")
-		and losses.contains("fractional round time") and losses.contains("2× squad damage after level additions")
+		and losses.contains("fractional round time")
+		and losses.contains("Keep Legacy 0 and Drill rank 1 (×2 squad damage after level additions)")
 		and losses.contains("health, gold rewards and round frequency are unchanged")
-		and losses.contains("only dynasty reset") and losses.contains("Inherited Drill is kept in the campaign save")
-		and losses.contains("main-game saves are untouched"),
+		and losses.contains("Next secured campaign earns 3 Legacy") and not losses.contains("only dynasty reset")
+		and losses.contains("Legacy and Drill rank are kept in the campaign save")
+		and losses.contains("main-game saves are untouched")
+		and scene.get_node("%ConfirmDynasty").text == "Confirm reset — start dynasty 2",
 		"native preview discloses actual losses, exact benefit and save limits")
 	# Opening already focused Cancel; use actual focus transitions, not a no-op grab.
 	for name in ["ConfirmDynasty", "CancelDynasty", "ConfirmDynasty"]:
@@ -287,7 +301,7 @@ func test_dynasty() -> bool:
 			"confirmation press clears fractional clock before subsequent input"), CONNECT_ONE_SHOT)
 	await keyboard(scene.get_node("%ConfirmDynasty"))
 	var successor := campaign.battle
-	check(successor != defense and campaign.dynasty == 2 and campaign.inherited_drill and campaign.reset_used
+	check(successor != defense and campaign.dynasty == 2 and campaign.drill_rank == 1 and campaign.legacy == 0
 		and campaign.gold == 0 and campaign.levels == [1, 1, 1] and campaign.gate_level == 1
 		and not campaign.border_cleared and not campaign.archer_cleared and not campaign.stronghold_cleared
 		and campaign.mode == Campaign.Mode.ADVANCE and campaign.farm_encounter == -1
@@ -295,7 +309,8 @@ func test_dynasty() -> bool:
 		and successor.rounds == 0 and not successor.commander_queued and not successor.is_defense
 		and scene.is_processing() and not scene.dynasty_preview_open
 		and scene.get_node("%LastResult").text == "No completed battle"
-		and scene.get_node("%DynastyStatus").text.contains("Inherited Drill: 2×"),
+		and scene.get_node("%DynastyStatus").text == "Dynasty 2 · Legacy 0 · Drill rank 1 (×2 squad damage) · Securing this campaign earns 3 Legacy"
+		and scene.get_node("%FoundDynasty").disabled,
 		"keyboard confirmation creates clean round-zero successor and clears ownership, progress and clock")
 	root.size = Vector2i(720, 960)
 	root.content_scale_size = Vector2i(720, 960)
@@ -313,7 +328,7 @@ func dynasty_checkpoint() -> Array:
 		campaign.levels.duplicate(), campaign.gate_level, campaign.phase, campaign.mode,
 		campaign.border_cleared, campaign.archer_cleared, campaign.stronghold_cleared,
 		campaign.pending_navigation, campaign.pending_farm, campaign.farm_encounter,
-		campaign.dynasty, campaign.inherited_drill, campaign.reset_used, scene.elapsed_usec,
+		campaign.dynasty, campaign.legacy, campaign.drill_rank, scene.elapsed_usec,
 		scene.get_node("%LastResult").text, scene.is_processing()]
 
 func observe_passive_border(inherited: bool) -> bool:

@@ -44,7 +44,7 @@ func encounter_reward(encounter: int) -> int:
 func _squad_damage_multiplier() -> int:
 	return 1
 
-# Squad stats for the given troop levels, with doctrine applied exactly once.
+# Squad stats for the given troop levels, with the Drill multiplier applied exactly once.
 func _snapshot_army(snapshot_levels: Array[int]) -> Array[Data.Squad]:
 	var army: Array[Data.Squad] = Data.players()
 	for squad in army:

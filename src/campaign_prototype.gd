@@ -33,6 +33,7 @@ func _ready() -> void:
 	%Frontier.pressed.connect(_request_frontier)
 	%StartDefense.pressed.connect(_start_defense)
 	%GateUpgrade.pressed.connect(_purchase_gate)
+	%TrainDrill.pressed.connect(_train_drill)
 	%FoundDynasty.pressed.connect(_open_dynasty_preview)
 	%CancelDynasty.pressed.connect(_cancel_dynasty_preview)
 	%ConfirmDynasty.pressed.connect(_confirm_dynasty)
@@ -246,6 +247,15 @@ func _purchase_gate() -> void:
 		_save_campaign()
 	_refresh()
 
+# Legacy purchase; like troop upgrades it applies from the next created battle (D2/D6).
+func _train_drill() -> void:
+	_sync_suspension()
+	if suspended or dynasty_preview_open:
+		return
+	if campaign.train_drill():
+		_save_campaign()
+	_refresh()
+
 func _purchase(role: int) -> void:
 	_sync_suspension()
 	if suspended or dynasty_preview_open:
@@ -256,21 +266,29 @@ func _purchase(role: int) -> void:
 
 func _refresh() -> void:
 	var blocked: bool = suspended or dynasty_preview_open
-	%DynastyStatus.text = "Dynasty %d · %s" % [campaign.dynasty,
-		"Inherited Drill: 2× squad damage" if campaign.inherited_drill else "No inherited doctrine"]
+	var secured: bool = campaign.phase == Campaign.Phase.CAMPAIGN_SECURED
+	%DynastyStatus.text = "Dynasty %d · Legacy %d · Drill rank %d (×%d squad damage)" % [
+		campaign.dynasty, campaign.legacy, campaign.drill_rank, 1 + campaign.drill_rank]
+	if not secured:
+		%DynastyStatus.text += " · Securing this campaign earns %d Legacy" % campaign.secure_legacy()
+	var drill_cost: int = campaign.drill_cost()
+	%TrainDrill.text = "Drill at maximum rank" if drill_cost == 0 else "Train Drill rank %d — %d Legacy" % [
+		campaign.drill_rank + 1, drill_cost]
+	%TrainDrill.disabled = blocked or drill_cost == 0 or campaign.legacy < drill_cost
 	%DynastyPreview.visible = dynasty_preview_open
 	%FoundDynasty.disabled = blocked or not campaign.can_found_dynasty()
 	%CancelDynasty.disabled = suspended
 	%ConfirmDynasty.disabled = suspended or not dynasty_preview_open or not campaign.can_found_dynasty()
+	%ConfirmDynasty.text = "Confirm reset — start dynasty %d" % (campaign.dynasty + 1)
 	%DynastyLosses.text = ("Lose all current gold: %d gold. Shield infantry Lv.%d, Foot archers Lv.%d, Horse archers Lv.%d and Gate Lv.%d all return to level 1.\n"
 		+ "Lose all conquered territory and security; restart Border Skirmish in Advance mode with fresh full-health troops.\n"
 		+ "Clear battle progress, pending commands, farming/navigation choices and fractional round time.\n"
-		+ "Keep access to the same three troop types. Gain Inherited Drill: exactly 2× squad damage after level additions; health, gold rewards and round frequency are unchanged.\n"
-		+ "This is the only dynasty reset. Inherited Drill is kept in the campaign save; main-game saves are untouched.") % [
-		campaign.gold, campaign.levels[0], campaign.levels[1], campaign.levels[2], campaign.gate_level]
+		+ "Keep access to the same three troop types. Keep Legacy %d and Drill rank %d (×%d squad damage after level additions); health, gold rewards and round frequency are unchanged.\n"
+		+ "Next secured campaign earns %d Legacy. Legacy and Drill rank are kept in the campaign save; main-game saves are untouched.") % [
+		campaign.gold, campaign.levels[0], campaign.levels[1], campaign.levels[2], campaign.gate_level,
+		campaign.legacy, campaign.drill_rank, 1 + campaign.drill_rank, Campaign.REPEAT_SECURE_LEGACY]
 	var checkpoint: bool = campaign.phase == Campaign.Phase.CONQUEST_CLEARED
 	var defending: bool = campaign.phase == Campaign.Phase.DEFENDING
-	var secured: bool = campaign.phase == Campaign.Phase.CAMPAIGN_SECURED
 	match campaign.phase:
 		Campaign.Phase.RUNNING:
 			%CampaignStatus.text = "%s · %s · Running" % [ENCOUNTER_TITLES[campaign.current_encounter],
@@ -280,9 +298,7 @@ func _refresh() -> void:
 		Campaign.Phase.DEFENDING:
 			%CampaignStatus.text = "Counterattack · Defending the Stronghold"
 		Campaign.Phase.CAMPAIGN_SECURED:
-			%CampaignStatus.text = "Campaign secured · Counterattack defeated"
-			if campaign.reset_used:
-				%CampaignStatus.text += " · Slice complete — no further dynasty reset."
+			%CampaignStatus.text = "Campaign secured · Counterattack defeated · +%d Legacy earned" % campaign.secure_legacy()
 	if suspended:
 		%CampaignStatus.text += " · Paused"
 	match campaign.pending_navigation:

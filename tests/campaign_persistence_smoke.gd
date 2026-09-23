@@ -127,9 +127,10 @@ func script_phase(scene: Presentation, phase: String) -> bool:
 		"reset-interrupt", "successor-complete":
 			return true # The interrupted confirmation is undone by relaunch; completion adds nothing.
 		"reset":
+			press(scene, "TrainDrill")
 			press(scene, "FoundDynasty")
 			press(scene, "ConfirmDynasty")
-			return campaign.dynasty == 2
+			return campaign.dynasty == 2 and campaign.drill_rank == 1 and campaign.legacy == 0
 	return false
 
 # --- Child process ---
@@ -203,14 +204,16 @@ func child(phase: String, path: String) -> void:
 			finish(phase)
 			return # Process ends with no further save trigger.
 		"reset":
-			check(campaign.dynasty == 1 and campaign.phase == Campaign.Phase.CAMPAIGN_SECURED and campaign.can_found_dynasty(),
-				"reset: unacknowledged confirmation undone; still dynasty 1 with one reset available")
+			check(campaign.dynasty == 1 and campaign.phase == Campaign.Phase.CAMPAIGN_SECURED and campaign.can_found_dynasty()
+				and campaign.legacy == 10 and campaign.drill_rank == 0,
+				"reset: unacknowledged confirmation undone; still dynasty 1 with 10 Legacy and reset available")
 		"successor":
 			var damage: Array[int] = []
 			for squad in campaign.battle.players:
 				damage.append(squad.damage)
-			check(campaign.dynasty == 2 and campaign.inherited_drill and not campaign.can_found_dynasty()
-				and damage == [8, 16, 12], "successor: exactly 2x doctrine survives relaunch, no reset")
+			check(campaign.dynasty == 2 and campaign.drill_rank == 1 and campaign.legacy == 0
+				and not campaign.can_found_dynasty() and damage == [8, 16, 12],
+				"successor: Legacy and exactly 2x Drill rank survive relaunch, no reset before security")
 			var border := campaign.battle
 			scene.advance_usec(Presentation.ROUND_USEC)
 			check(border.result == Combat.Result.ONGOING, "successor: passive Border not won in one round")
@@ -220,14 +223,19 @@ func child(phase: String, path: String) -> void:
 			# Keep the reference aligned with these two rounds.
 			reference.advance_usec(2 * Presentation.ROUND_USEC)
 		"successor-complete":
-			check(scene.get_node("%CampaignStatus").text.contains("Slice complete — no further dynasty reset.")
-				and scene.get_node("%FoundDynasty").disabled and not processing,
-				"successor-complete: terminal status, reset disabled, idle")
+			check(scene.get_node("%CampaignStatus").text == "Campaign secured · Counterattack defeated · +3 Legacy earned"
+				and campaign.legacy == 3 and campaign.drill_rank == 1 and campaign.can_found_dynasty()
+				and not scene.get_node("%FoundDynasty").disabled and not processing,
+				"successor-complete: +3 Legacy kept across relaunch, another reset offered, idle")
 			press(scene, "FoundDynasty")
-			press(scene, "ConfirmDynasty")
+			check(scene.dynasty_preview_open
+				and scene.get_node("%ConfirmDynasty").text == "Confirm reset — start dynasty 3"
+				and scene.get_node("%DynastyLosses").text.contains("Keep Legacy 3 and Drill rank 1"),
+				"successor-complete: repeat preview offers dynasty 3 keeping Legacy and rank")
+			press(scene, "CancelDynasty")
 			scene.advance_usec(60000000)
 			check(state_of(scene) == expected and not scene.dynasty_preview_open,
-				"successor-complete: no further reset, gold unchanged by relaunch")
+				"successor-complete: cancelled repeat preview and relaunch time change nothing")
 	var scripted := script_phase(scene, phase)
 	check(scripted, "%s: scripted inputs applied" % phase)
 	script_phase(reference, phase)

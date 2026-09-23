@@ -1,6 +1,6 @@
 extends RefCounted
 
-# In-memory campaign state capture, validation and restoration (contract v1). No I/O.
+# In-memory campaign state capture, validation and restoration (contract v2; v1 migrates on load). No I/O.
 const Campaign = preload("res://src/campaign.gd")
 const Combat = preload("res://src/combat.gd")
 const Data = preload("res://src/encounter_data.gd")
@@ -8,23 +8,43 @@ const ProgressSave = preload("res://src/progress_save.gd")
 
 enum Outcome { VALID, CORRUPT, UNSUPPORTED, UNSAVABLE }
 const FORMAT: String = "idle-clicker-campaign"
-const VERSION: int = 1
+const VERSION: int = 2
 const ROUND_USEC: int = roundi(Data.ROUND_SECONDS * 1000000)
-const KEYS: Array[String] = ["format", "version", "gold", "levels", "gate_level", "dynasty",
+const KEYS_V1: Array[String] = ["format", "version", "gold", "levels", "gate_level", "dynasty",
 	"cleared", "phase", "mode", "farm_encounter", "pending_navigation", "pending_farm",
 	"current_encounter", "settled", "round_progress_usec", "battle"]
-const BATTLE_KEYS: Array[String] = ["snapshot_levels", "player_health", "enemy_health",
+const BATTLE_KEYS_V1: Array[String] = ["snapshot_levels", "player_health", "enemy_health",
 	"snapshot_gate_level", "gate_health", "rounds", "result", "defeat_reason"]
+const KEYS: Array[String] = ["format", "version", "gold", "levels", "gate_level", "dynasty",
+	"legacy", "drill_rank", "cleared", "phase", "mode", "farm_encounter", "pending_navigation",
+	"pending_farm", "current_encounter", "settled", "round_progress_usec", "battle"]
+const BATTLE_KEYS: Array[String] = ["snapshot_levels", "snapshot_drill_rank", "player_health",
+	"enemy_health", "snapshot_gate_level", "gate_health", "rounds", "result", "defeat_reason"]
 const ENCOUNTERS: Array[int] = [Data.Encounter.BORDER_SKIRMISH, Data.Encounter.ARCHER_POSITION,
 	Data.Encounter.STRONGHOLD, Data.Encounter.COUNTERATTACK]
 
 static func _gate_max(gate: int) -> int:
 	return 80 + 60 * (gate - 1)
 
-static func _army(levels: Array[int], drill: bool) -> Array[Data.Squad]:
+static func _army(levels: Array[int], rank: int) -> Array[Data.Squad]:
 	var model := Campaign.new()
-	model.inherited_drill = drill
+	model.drill_rank = rank
 	return model._snapshot_army(levels)
+
+# Total Legacy ever paid out for reaching this dynasty (and securing it, if secured).
+static func _legacy_earned(dynasty: int, secured: bool) -> int:
+	var earned: int = 0
+	if dynasty > 1:
+		earned = Campaign.FIRST_SECURE_LEGACY + Campaign.REPEAT_SECURE_LEGACY * (dynasty - 2)
+	if secured:
+		earned += Campaign.FIRST_SECURE_LEGACY if dynasty == 1 else Campaign.REPEAT_SECURE_LEGACY
+	return earned
+
+static func _legacy_spent(rank: int) -> int:
+	var spent: int = 0
+	for i in range(rank):
+		spent += Campaign.DRILL_COSTS[i]
+	return spent
 
 # Everything restore() rebuilds; capture compares it to prove the round trip is exact.
 static func _fingerprint(campaign: Campaign) -> Array:
@@ -34,7 +54,7 @@ static func _fingerprint(campaign: Campaign) -> Array:
 		for squad: Data.Squad in army:
 			rows.append([squad.role, squad.title, squad.health, squad.max_health, squad.damage])
 	return [campaign.gold, Array(campaign.levels), campaign.gate_level, campaign.dynasty,
-		campaign.inherited_drill, campaign.reset_used, campaign.border_cleared,
+		campaign.legacy, campaign.drill_rank, campaign._battle_drill_rank, campaign.border_cleared,
 		campaign.archer_cleared, campaign.stronghold_cleared, campaign.phase, campaign.mode,
 		campaign.farm_encounter, campaign.pending_navigation, campaign.pending_farm,
 		campaign.current_encounter, campaign._settled, campaign._battle_reward, rows,
@@ -53,7 +73,7 @@ static func capture(campaign: Campaign, round_progress_usec: int) -> Dictionary:
 		var found: int = 0
 		for level in range(1, 4):
 			var uniform: Array[int] = [level, level, level]
-			var derived: Data.Squad = _army(uniform, campaign.inherited_drill)[role]
+			var derived: Data.Squad = _army(uniform, campaign._battle_drill_rank)[role]
 			if combat.players[role].max_health == derived.max_health and combat.players[role].damage == derived.damage:
 				found = level
 		if found == 0:
@@ -79,6 +99,8 @@ static func capture(campaign: Campaign, round_progress_usec: int) -> Dictionary:
 		"levels": Array(campaign.levels),
 		"gate_level": campaign.gate_level,
 		"dynasty": campaign.dynasty,
+		"legacy": campaign.legacy,
+		"drill_rank": campaign.drill_rank,
 		"cleared": [campaign.border_cleared, campaign.archer_cleared, campaign.stronghold_cleared],
 		"phase": int(campaign.phase),
 		"mode": int(campaign.mode),
@@ -90,6 +112,7 @@ static func capture(campaign: Campaign, round_progress_usec: int) -> Dictionary:
 		"round_progress_usec": round_progress_usec,
 		"battle": {
 			"snapshot_levels": snapshot_levels,
+			"snapshot_drill_rank": campaign._battle_drill_rank,
 			"player_health": player_health,
 			"enemy_health": enemy_health,
 			"snapshot_gate_level": snapshot_gate,
@@ -99,7 +122,7 @@ static func capture(campaign: Campaign, round_progress_usec: int) -> Dictionary:
 			"defeat_reason": int(combat.defeat_reason),
 		},
 	}
-	# Refuse anything the file cannot reproduce exactly (dynasty trio, altered stats, etc.).
+	# Refuse anything the file cannot reproduce exactly (Legacy ledger, altered stats, etc.).
 	var restored := restore(state)
 	if restored.outcome != Outcome.VALID or _fingerprint(restored.campaign) != _fingerprint(campaign):
 		return {"outcome": Outcome.UNSAVABLE}
@@ -146,12 +169,14 @@ static func _parse(state: Variant) -> Dictionary:
 	# D10: any finite whole-number version is a version; only its value decides support.
 	if not data.has("version") or not _whole_number(data.version):
 		return corrupt
-	if data.version != VERSION:
+	# v1 files are parsed under their own exact key set and migrated in memory (no separate write).
+	var v1: bool = data.version == 1
+	if not v1 and data.version != VERSION:
 		return {"outcome": Outcome.UNSUPPORTED}
-	if not _keys_exact(data, KEYS) or typeof(data.battle) != TYPE_DICTIONARY:
+	if not _keys_exact(data, KEYS_V1 if v1 else KEYS) or typeof(data.battle) != TYPE_DICTIONARY:
 		return corrupt
 	var battle: Dictionary = data.battle
-	if not _keys_exact(battle, BATTLE_KEYS):
+	if not _keys_exact(battle, BATTLE_KEYS_V1 if v1 else BATTLE_KEYS):
 		return corrupt
 	if typeof(data.settled) != TYPE_BOOL or typeof(data.cleared) != TYPE_ARRAY or data.cleared.size() != 3:
 		return corrupt
@@ -182,7 +207,30 @@ static func _parse(state: Variant) -> Dictionary:
 	var rounds: int = int(battle.rounds)
 	var result: int = int(battle.result)
 	var reason: int = int(battle.defeat_reason)
-	if gold < 0 or gate_level < 1 or gate_level > 3 or dynasty < 1 or dynasty > 2 \
+	if dynasty < 1 or (v1 and dynasty > 2):
+		return corrupt
+	var legacy: int = 0
+	var rank: int = 0
+	var snapshot_rank: int = 0
+	if v1:
+		# The old free doctrine counts as Drill rank 1 bought with the first 10 Legacy.
+		rank = dynasty - 1
+		snapshot_rank = rank
+		if phase == Campaign.Phase.CAMPAIGN_SECURED:
+			legacy = _legacy_earned(dynasty, true) - _legacy_earned(dynasty, false)
+	else:
+		if not ProgressSave._integer(data.legacy, 0, ProgressSave.MAX_GOLD) \
+				or not ProgressSave._integer(data.drill_rank, 0, Campaign.DRILL_MAX):
+			return corrupt
+		legacy = int(data.legacy)
+		rank = int(data.drill_rank)
+		if not ProgressSave._integer(battle.snapshot_drill_rank, 0, rank):
+			return corrupt
+		snapshot_rank = int(battle.snapshot_drill_rank)
+	# Exact ledger: a hand-edited balance or rank is corrupt.
+	if legacy + _legacy_spent(rank) != _legacy_earned(dynasty, phase == Campaign.Phase.CAMPAIGN_SECURED):
+		return corrupt
+	if gold < 0 or gate_level < 1 or gate_level > 3 \
 			or phase > Campaign.Phase.CAMPAIGN_SECURED or phase < 0 or mode < 0 or mode > Campaign.Mode.FARM \
 			or navigation < 0 or navigation > Campaign.Navigation.FRONTIER or encounter not in ENCOUNTERS \
 			or progress < 0 or progress >= ROUND_USEC or rounds > 60 \
@@ -209,8 +257,7 @@ static func _parse(state: Variant) -> Dictionary:
 			or (pending_farm != -1 and not farmable.call(pending_farm)):
 		return corrupt
 	# Battle health against snapshot-derived maxima: restoration can never heal.
-	var drill: bool = dynasty == 2
-	var army := _army(snapshot_levels, drill)
+	var army := _army(snapshot_levels, snapshot_rank)
 	var enemies := Data.enemies(encounter)
 	var player_health: Variant = _ints(battle.player_health, 3, 0, ProgressSave.MAX_GOLD)
 	var enemy_health: Variant = _ints(battle.enemy_health, enemies.size(), 0, ProgressSave.MAX_GOLD)
@@ -297,7 +344,8 @@ static func _parse(state: Variant) -> Dictionary:
 	if progress != 0 and phase not in [Campaign.Phase.RUNNING, Campaign.Phase.DEFENDING]:
 		return corrupt
 	return {"outcome": Outcome.VALID, "gold": gold, "levels": levels, "gate_level": gate_level,
-		"dynasty": dynasty, "cleared": cleared, "phase": phase, "mode": mode, "farm": farm,
+		"dynasty": dynasty, "legacy": legacy, "rank": rank, "snapshot_rank": snapshot_rank,
+		"cleared": cleared, "phase": phase, "mode": mode, "farm": farm,
 		"navigation": navigation, "pending_farm": pending_farm, "encounter": encounter,
 		"settled": settled, "progress": progress, "snapshot_levels": snapshot_levels,
 		"player_health": player_health, "enemy_health": enemy_health,
@@ -314,8 +362,9 @@ static func restore(state: Variant) -> Dictionary:
 	campaign.levels.assign(parsed.levels)
 	campaign.gate_level = parsed.gate_level
 	campaign.dynasty = parsed.dynasty
-	campaign.inherited_drill = parsed.dynasty == 2
-	campaign.reset_used = parsed.dynasty == 2
+	campaign.legacy = parsed.legacy
+	campaign.drill_rank = parsed.rank
+	campaign._battle_drill_rank = parsed.snapshot_rank
 	campaign.border_cleared = parsed.cleared[0]
 	campaign.archer_cleared = parsed.cleared[1]
 	campaign.stronghold_cleared = parsed.cleared[2]
@@ -325,8 +374,8 @@ static func restore(state: Variant) -> Dictionary:
 	campaign.pending_navigation = parsed.navigation as Campaign.Navigation
 	campaign.pending_farm = parsed.pending_farm
 	campaign.current_encounter = parsed.encounter
-	# Snapshot stats and commander damage are re-derived; doctrine applies exactly once.
-	var combat := Combat.new(parsed.encounter as Data.Encounter, campaign._snapshot_army(parsed.snapshot_levels))
+	# Snapshot stats and commander damage are re-derived; the snapshot Drill rank applies exactly once.
+	var combat := Combat.new(parsed.encounter as Data.Encounter, _army(parsed.snapshot_levels, parsed.snapshot_rank))
 	if combat.is_defense:
 		combat.gate_max_health = _gate_max(parsed.snapshot_gate)
 		combat.gate_health = parsed.gate_health

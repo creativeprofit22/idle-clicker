@@ -59,6 +59,13 @@ unique_name_in_owner = true
 layout_mode = 2
 autowrap_mode = 2
 
+[node name="TrainDrill" type="Button" parent="Margin/Scroll/Column"]
+unique_name_in_owner = true
+layout_mode = 2
+action_mode = 0
+text = "Train Drill rank 1 — 10 Legacy"
+autowrap_mode = 2
+
 [node name="FoundDynasty" type="Button" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 layout_mode = 2

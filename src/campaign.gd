@@ -17,15 +17,38 @@ var pending_navigation: Navigation = Navigation.NONE
 var pending_farm: int = -1
 var gate_level: int = 1
 var dynasty: int = 1
-var inherited_drill: bool = false
-var reset_used: bool = false
+# Permanent across dynasty resets: Legacy balance and purchased Drill rank.
+var drill_rank: int = 0
+var legacy: int = 0
+# Drill rank captured when the current battle was created (purchases apply next battle).
+var _battle_drill_rank: int = 0
+
+const FIRST_SECURE_LEGACY: int = 10
+const REPEAT_SECURE_LEGACY: int = 3
+const DRILL_COSTS: Array[int] = [10, 20, 40]
+const DRILL_MAX: int = 3
+
+# Legacy paid when the current dynasty's campaign is secured.
+func secure_legacy() -> int:
+	return FIRST_SECURE_LEGACY if dynasty == 1 else REPEAT_SECURE_LEGACY
+
+func drill_cost() -> int:
+	return 0 if drill_rank >= DRILL_MAX else DRILL_COSTS[drill_rank]
+
+# Allowed in any phase; the multiplier applies from the next created battle.
+func train_drill() -> bool:
+	var cost: int = drill_cost()
+	if cost == 0 or legacy < cost:
+		return false
+	legacy -= cost
+	drill_rank += 1
+	return true
 
 func _squad_damage_multiplier() -> int:
-	return 2 if inherited_drill else 1
+	return 1 + drill_rank
 
 func can_found_dynasty() -> bool:
-	return dynasty == 1 and not inherited_drill and not reset_used \
-		and phase == Phase.CAMPAIGN_SECURED \
+	return phase == Phase.CAMPAIGN_SECURED \
 		and border_cleared and archer_cleared and stronghold_cleared \
 		and current_encounter == Data.Encounter.COUNTERATTACK \
 		and battle != null and battle.is_defense and _settled \
@@ -34,9 +57,7 @@ func can_found_dynasty() -> bool:
 func found_dynasty() -> Combat:
 	if not can_found_dynasty():
 		return null
-	dynasty = 2
-	inherited_drill = true
-	reset_used = true
+	dynasty += 1
 	gold = 0
 	levels = [1, 1, 1]
 	gate_level = 1
@@ -96,6 +117,8 @@ func _frontier_encounter() -> int:
 
 func _begin_encounter(encounter: int) -> Combat:
 	var created := super.restart_battle(encounter)
+	if created != null:
+		_battle_drill_rank = drill_rank
 	if created != null and created.is_defense:
 		created.gate_max_health = 80 + 60 * (gate_level - 1)
 		created.gate_health = created.gate_max_health
@@ -151,7 +174,9 @@ func settle(completed: Combat) -> bool:
 	# Outcome and clearance precede routing; a terminal objective overrides navigation.
 	if phase == Phase.DEFENDING:
 		if victory:
+			# Legacy is credited in the same transition (one save write, D8).
 			phase = Phase.CAMPAIGN_SECURED
+			legacy += secure_legacy()
 			return true
 		phase = Phase.RUNNING
 	if victory and current_encounter == Data.Encounter.STRONGHOLD:

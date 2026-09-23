@@ -404,11 +404,20 @@ func test_campaign_state_round_trips() -> void:
 		"Campaign state: restored defense keeps snapshot gate and squad stats")
 	state_continue(defense, restored, steps, "damaged defense")
 	scenes.append_array([defense, restored])
-	# Secured dynasty 1: restored eligibility, identical successor, dynasty-2 Border won in two rounds.
+	# Secured dynasty 1: restored eligibility and Legacy, rank bought after the secured battle's
+	# snapshot round-trips exactly, identical successor, dynasty-2 Border won in two rounds.
 	var secured := state_scene(state_secured())
 	restored = state_restore(secured, "secured dynasty 1")
-	check(secured.campaign.can_found_dynasty() and restored.campaign.can_found_dynasty(),
-		"Campaign state: restored secured campaign can found the dynasty")
+	check(secured.campaign.can_found_dynasty() and restored.campaign.can_found_dynasty()
+		and restored.campaign.legacy == 10 and restored.campaign.drill_rank == 0,
+		"Campaign state: restored secured campaign can found the dynasty with 10 Legacy")
+	scenes.append(restored)
+	check(secured.campaign.train_drill() and secured.campaign.legacy == 0 and secured.campaign.drill_rank == 1
+		and secured.campaign._battle_drill_rank == 0, "Campaign state: Drill rank 1 bought after the secured battle")
+	restored = state_restore(secured, "secured dynasty 1 with rank bought after the battle snapshot")
+	check(restored.campaign.drill_rank == 1 and restored.campaign._battle_drill_rank == 0
+		and restored.campaign.battle.players[0].damage == secured.campaign.battle.players[0].damage,
+		"Campaign state: settled battle keeps its pre-purchase snapshot rank")
 	secured.campaign.found_dynasty()
 	restored.campaign.found_dynasty()
 	state_continue(secured, restored, [], "dynasty founded from restored security")
@@ -421,8 +430,9 @@ func test_campaign_state_round_trips() -> void:
 		"Campaign state: restored dynasty 2 Border won in two rounds")
 	state_continue(secured, restored, steps, "dynasty 2 after Border")
 	scenes.append_array([secured, restored])
-	# Secured dynasty 2: terminal, no further reset.
+	# Secured dynasty 2: +3 Legacy, and resets repeat into dynasty 3 from a restored checkpoint.
 	var successor := state_secured()
+	successor.train_drill()
 	successor.found_dynasty()
 	campaign_finish(successor)
 	dynasty_prepare(successor)
@@ -431,10 +441,30 @@ func test_campaign_state_round_trips() -> void:
 	var final := state_scene(successor)
 	restored = state_restore(final, "secured dynasty 2")
 	check(final.campaign.phase == Campaign.Phase.CAMPAIGN_SECURED and final.campaign.dynasty == 2
-		and not restored.campaign.can_found_dynasty() and restored.campaign.found_dynasty() == null,
-		"Campaign state: restored dynasty 2 security cannot reset again")
-	state_continue(final, restored, steps.slice(0, 5), "secured dynasty 2")
+		and restored.campaign.legacy == 3 and restored.campaign.drill_rank == 1
+		and restored.campaign.can_found_dynasty() and restored.campaign.found_dynasty() != null
+		and final.campaign.found_dynasty() != null and restored.campaign.dynasty == 3
+		and restored.campaign.legacy == 3 and restored.campaign.drill_rank == 1,
+		"Campaign state: restored dynasty 2 security resets again into dynasty 3 keeping Legacy and rank")
+	state_continue(final, restored, steps.slice(0, 5), "dynasty 3 from restored dynasty 2 security")
 	scenes.append_array([final, restored])
+	# Mid-battle training: the ongoing battle keeps its snapshot rank; the next battle uses the new rank.
+	var unspent := Campaign.new()
+	unspent.dynasty = 2
+	unspent.legacy = 10 # Ledger-valid: dynasty 1 secured (+10), reset without training.
+	unspent.restart_battle()
+	var training := state_scene(unspent)
+	training.advance_usec(1500000)
+	check(unspent.train_drill() and unspent.drill_rank == 1 and unspent._battle_drill_rank == 0
+		and unspent.battle.players[0].damage == 4 and unspent.battle.rounds == 1,
+		"Campaign state fixture: Drill rank bought mid-battle leaves the active battle at 1x")
+	restored = state_restore(training, "mid-battle Drill training")
+	check(restored.campaign._battle_drill_rank == 0 and restored.campaign.battle.players[0].damage == 4,
+		"Campaign state: restored mid-battle training keeps the 1x snapshot")
+	state_continue(training, restored, steps.slice(0, 5), "mid-battle Drill training")
+	check(restored.campaign.border_cleared and restored.campaign.battle.players[0].damage == 8
+		and restored.campaign._battle_drill_rank == 1, "Campaign state: next battle after training uses 2x")
+	scenes.append_array([training, restored])
 	for scene in scenes:
 		scene.free()
 
@@ -458,8 +488,9 @@ func test_campaign_state_duplicates() -> void:
 	check(restored.settle(completed) and restored.gold == 10 and not restored.settle(completed)
 		and restored.gold == 10 and ongoing.gold == 0 and ongoing.battle.rounds == 2,
 		"Campaign state: restored ongoing battle pays once and leaves the source untouched")
-	# Dynasty 2: doctrine applies once across repeated capture/restore cycles.
+	# Dynasty 2: Drill rank 1 applies once across repeated capture/restore cycles.
 	var drilled := state_secured()
+	drilled.train_drill()
 	drilled.found_dynasty()
 	var cycled: Campaign = drilled
 	for i in range(3):
@@ -469,9 +500,14 @@ func test_campaign_state_duplicates() -> void:
 	for i in range(3):
 		damage.append(cycled.battle.players[i].damage)
 		expected.append(drilled.battle.players[i].damage)
-	check(damage == expected and damage == [8, 16, 12] and cycled.inherited_drill
+	check(damage == expected and damage == [8, 16, 12] and cycled.drill_rank == 1 and cycled.legacy == 0
 		and cycled.battle.commander_damage == drilled.battle.commander_damage,
-		"Campaign state: repeated restoration keeps exactly 2x doctrine damage")
+		"Campaign state: repeated restoration keeps exactly 2x Drill damage")
+	# Secured Legacy is credited once; restoring the checkpoint cannot pay it again.
+	var paid := state_secured()
+	var again: Campaign = CampaignState.restore(state_json(CampaignState.capture(paid, 0).state)).campaign
+	check(paid.legacy == 10 and again.legacy == 10 and not again.settle(again.battle) and again.legacy == 10,
+		"Campaign state: secured Legacy paid once and never duplicated by restore")
 	# Restored battles are new, unshared objects.
 	var state: Dictionary = CampaignState.capture(ongoing, 0).state
 	var first: Campaign = CampaignState.restore(state).campaign
@@ -510,8 +546,9 @@ func test_campaign_state_rejection() -> void:
 	state_rejects(base, "battle not object", CORRUPT, func(s: Dictionary) -> void: s.battle = [])
 	state_rejects(base, "wrong format", CORRUPT, func(s: Dictionary) -> void: s.format = "idle-clicker-progress")
 	state_rejects(base, "missing format", CORRUPT, func(s: Dictionary) -> void: s.erase("format"))
-	state_rejects(base, "future version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 2)
-	state_rejects(base, "future version float", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 2.0)
+	state_rejects(base, "future version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 3)
+	state_rejects(base, "future version float", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 3.0)
+	state_rejects(base, "version zero", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 0)
 	state_rejects(base, "negative version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = -1)
 	state_rejects(base, "huge version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 1e20)
 	state_rejects(base, "fractional version", CORRUPT, func(s: Dictionary) -> void: s.version = 1.5)
@@ -525,7 +562,30 @@ func test_campaign_state_rejection() -> void:
 	state_rejects(base, "level over cap", CORRUPT, func(s: Dictionary) -> void: s.levels = [4, 1, 1])
 	state_rejects(base, "short levels", CORRUPT, func(s: Dictionary) -> void: s.levels = [1, 1])
 	state_rejects(base, "gate level zero", CORRUPT, func(s: Dictionary) -> void: s.gate_level = 0)
-	state_rejects(base, "dynasty three", CORRUPT, func(s: Dictionary) -> void: s.dynasty = 3)
+	state_rejects(base, "dynasty zero", CORRUPT, func(s: Dictionary) -> void: s.dynasty = 0)
+	state_rejects(base, "dynasty without its Legacy", CORRUPT, func(s: Dictionary) -> void: s.dynasty = 3)
+	state_rejects(base, "hand-edited Legacy", CORRUPT, func(s: Dictionary) -> void: s.legacy = 1)
+	state_rejects(base, "negative Legacy", CORRUPT, func(s: Dictionary) -> void: s.legacy = -1)
+	state_rejects(base, "fractional Legacy", CORRUPT, func(s: Dictionary) -> void: s.legacy = 0.5)
+	state_rejects(base, "unpaid Drill rank", CORRUPT, func(s: Dictionary) -> void: s.drill_rank = 1)
+	state_rejects(base, "Drill rank over max", CORRUPT, func(s: Dictionary) -> void: s.drill_rank = 4)
+	state_rejects(base, "missing Legacy", CORRUPT, func(s: Dictionary) -> void: s.erase("legacy"))
+	state_rejects(base, "missing snapshot rank", CORRUPT, func(s: Dictionary) -> void: s.battle.erase("snapshot_drill_rank"))
+	state_rejects(base, "snapshot rank above owned", CORRUPT, func(s: Dictionary) -> void: s.battle.snapshot_drill_rank = 1)
+	# Ledger-valid rank 1 at dynasty 2: a snapshot rank that disagrees with the stats is corrupt.
+	var ledger: Dictionary = base.duplicate(true)
+	ledger.dynasty = 2
+	ledger.drill_rank = 1
+	check(CampaignState.validate(ledger).outcome == CampaignState.Outcome.VALID
+		and CampaignState.restore(ledger).campaign.battle.players[0].damage == 4,
+		"Campaign state: dynasty 2 rank 1 with rank-0 snapshot is valid and keeps 1x battle stats")
+	# Stats are derived, never stored: the snapshot rank alone decides battle damage.
+	ledger.battle.snapshot_drill_rank = 1
+	check(CampaignState.restore(ledger).campaign.battle.players[0].damage == 8,
+		"Campaign state: snapshot rank 1 derives 2x battle stats")
+	ledger.battle.snapshot_drill_rank = 0
+	state_rejects(ledger, "rank ledger off by one", CORRUPT, func(s: Dictionary) -> void: s.legacy = 1)
+	test_campaign_state_migration()
 	state_rejects(base, "Fortified encounter", CORRUPT, func(s: Dictionary) -> void: s.current_encounter = 2)
 	state_rejects(base, "enemy length", CORRUPT, func(s: Dictionary) -> void: s.battle.enemy_health.append(10))
 	state_rejects(base, "healed player", CORRUPT, func(s: Dictionary) -> void: s.battle.player_health[0] = 121)
@@ -606,13 +666,90 @@ func test_campaign_state_rejection() -> void:
 		"Campaign state: capture refuses non-level squad stats unchanged")
 	var orphan := Campaign.new()
 	orphan.restart_battle()
-	orphan.reset_used = true
+	orphan.legacy = 5
 	before = campaign_snapshot(orphan)
 	check(CampaignState.capture(orphan, 0).outcome == CampaignState.Outcome.UNSAVABLE and campaign_snapshot(orphan) == before
 		and CampaignState.capture(Campaign.new(), 0).outcome == CampaignState.Outcome.UNSAVABLE
 		and CampaignState.capture(running, CampaignState.ROUND_USEC).outcome == CampaignState.Outcome.UNSAVABLE,
-		"Campaign state: capture refuses inconsistent doctrine, missing battle and whole-round progress")
+		"Campaign state: capture refuses unearned Legacy, missing battle and whole-round progress")
+	var unpaid := Campaign.new()
+	unpaid.restart_battle()
+	unpaid.drill_rank = 1
+	unpaid._battle_drill_rank = 1
+	before = campaign_snapshot(unpaid)
+	check(CampaignState.capture(unpaid, 0).outcome == CampaignState.Outcome.UNSAVABLE and campaign_snapshot(unpaid) == before,
+		"Campaign state: capture refuses an unpaid Drill rank unchanged")
 	check(player_campaign_snapshot() == player_campaign_files, "Campaign state: player campaign save files unchanged")
+
+# Build a contract-v1 state from a v2 capture (drop the Legacy keys) as older builds wrote it.
+func state_as_v1(state: Dictionary) -> Dictionary:
+	var old: Dictionary = state.duplicate(true)
+	old.version = 1
+	old.erase("legacy")
+	old.erase("drill_rank")
+	old.battle.erase("snapshot_drill_rank")
+	return old
+
+func test_campaign_state_migration() -> void:
+	var CORRUPT := CampaignState.Outcome.CORRUPT
+	# Dynasty 1 running: rank 0, no Legacy.
+	var running := campaign_running(2)
+	var v1: Dictionary = state_as_v1(state_json(CampaignState.capture(running, 250000).state))
+	var migrated := CampaignState.restore(v1)
+	check(migrated.outcome == CampaignState.Outcome.VALID and migrated.campaign.dynasty == 1
+		and migrated.campaign.legacy == 0 and migrated.campaign.drill_rank == 0
+		and CampaignState.capture(migrated.campaign, 250000).state == CampaignState.capture(running, 250000).state,
+		"Campaign migration: v1 dynasty 1 running maps to rank 0, Legacy 0, exact state")
+	# Dynasty 1 secured: the first-secure 10 Legacy is credited.
+	var secured := state_secured()
+	v1 = state_as_v1(state_json(CampaignState.capture(secured, 0).state))
+	migrated = CampaignState.restore(v1)
+	check(migrated.outcome == CampaignState.Outcome.VALID and migrated.campaign.legacy == 10
+		and migrated.campaign.drill_rank == 0 and migrated.campaign.can_found_dynasty(),
+		"Campaign migration: v1 secured dynasty 1 gains 10 Legacy and can reset")
+	# Dynasty 2 running: the old free doctrine becomes Drill rank 1 (2x battle stats kept).
+	secured.train_drill()
+	secured.found_dynasty()
+	secured.battle.step_round()
+	v1 = state_as_v1(state_json(CampaignState.capture(secured, 0).state))
+	migrated = CampaignState.restore(v1)
+	check(migrated.outcome == CampaignState.Outcome.VALID and migrated.campaign.dynasty == 2
+		and migrated.campaign.legacy == 0 and migrated.campaign.drill_rank == 1
+		and migrated.campaign._battle_drill_rank == 1 and migrated.campaign.battle.players[0].damage == 8
+		and CampaignState.capture(migrated.campaign, 0).state == CampaignState.capture(secured, 0).state,
+		"Campaign migration: v1 dynasty 2 maps to Drill rank 1 with exact 2x battle")
+	# Dynasty 2 secured: repeat payout of 3 Legacy.
+	campaign_finish(secured)
+	dynasty_prepare(secured)
+	secured.start_defense()
+	campaign_finish(secured)
+	v1 = state_as_v1(state_json(CampaignState.capture(secured, 0).state))
+	migrated = CampaignState.restore(v1)
+	check(migrated.outcome == CampaignState.Outcome.VALID and migrated.campaign.legacy == 3
+		and migrated.campaign.drill_rank == 1 and migrated.campaign.can_found_dynasty(),
+		"Campaign migration: v1 secured dynasty 2 gains 3 Legacy and can reset again")
+	# v1 keeps its own exact rules.
+	state_rejects(v1, "v1 dynasty three", CORRUPT, func(s: Dictionary) -> void: s.dynasty = 3)
+	state_rejects(v1, "v1 with v2 Legacy key", CORRUPT, func(s: Dictionary) -> void: s["legacy"] = 3)
+	state_rejects(v1, "v1 with v2 snapshot rank", CORRUPT, func(s: Dictionary) -> void: s.battle["snapshot_drill_rank"] = 1)
+	state_rejects(v1, "v2 without Legacy keys", CORRUPT, func(s: Dictionary) -> void: s.version = 2)
+	# On disk: a v1 file loads through the real store, and the next ordinary save writes v2.
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Campaign migration: isolated directory owned")
+	if not fixture.owned:
+		return
+	check(fixture.put(JSON.stringify(v1)) == OK, "Campaign migration: v1 file written")
+	var store := CampaignSave.new(fixture.path)
+	var loaded := store.load_campaign()
+	check(loaded.outcome == CampaignSave.Outcome.LOADED and not loaded.has("recovered")
+		and loaded.campaign.legacy == 3 and loaded.campaign.drill_rank == 1
+		and FileAccess.get_file_as_string(fixture.path) == JSON.stringify(v1),
+		"Campaign migration: v1 file loads through the store without being rewritten")
+	check(store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 2
+		and CampaignSave.new(fixture.path).load_campaign().campaign.legacy == 3,
+		"Campaign migration: next save writes v2 that reloads exactly")
+	check(fixture.cleanup() == OK, "Campaign migration: directory cleaned")
 
 func campaign_running(rounds: int = 2, gold: int = 7) -> Campaign:
 	var campaign := Campaign.new()
@@ -669,7 +806,7 @@ func test_campaign_save_format() -> void:
 		return
 	var base: Dictionary = CampaignState.capture(campaign_running(), 250000).state
 	var valid: String = JSON.stringify(base)
-	check(valid.contains('"gold":7') and valid.ends_with('"version":1}'), "Campaign save format: canonical integer text")
+	check(valid.contains('"gold":7') and valid.ends_with('"version":2}'), "Campaign save format: canonical integer text")
 	var backup: String = JSON.stringify(CampaignState.capture(campaign_running(1), 0).state)
 	check(fixture.put(backup, ".bak") == OK, "Campaign save format: valid backup beside every primary")
 	var mutated := func(mutate: Callable) -> String:
@@ -692,7 +829,7 @@ func test_campaign_save_format() -> void:
 		mutated.call(func(s: Dictionary) -> void: s.battle.player_health[0] = 121),
 		mutated.call(func(s: Dictionary) -> void: s.settled = true)]
 	check(corrupt[7].length() == 4097, "Campaign save format: oversize fixture is 4097 bytes")
-	var unsupported: Array[String] = [mutated.call(func(s: Dictionary) -> void: s.version = 2),
+	var unsupported: Array[String] = [mutated.call(func(s: Dictionary) -> void: s.version = 3),
 		'{"format":"idle-clicker-campaign","version":99,"gold":"future payload"}']
 	var replacement := campaign_running(3)
 	for expected in [CampaignSave.Outcome.CORRUPT, CampaignSave.Outcome.UNSUPPORTED]:
@@ -790,12 +927,13 @@ func test_campaign_save_failures() -> void:
 	check(fixture.put(committed.get_string_from_utf8()) == OK and session.save_campaign(next, 500000) == ERR_UNAUTHORIZED
 		and FileAccess.get_file_as_bytes(path) == committed, "Campaign save failures: saving stays disabled for the launch")
 	check(fixture.cleanup() == OK, "Campaign save failures: directory cleaned")
-	# Crash before an acknowledged dynasty confirmation: pre-confirm security, doctrine exactly once.
+	# Crash before an acknowledged dynasty confirmation: pre-confirm security, Drill applied exactly once.
 	var dynasty := ProgressFixture.new("campaign.json")
 	check(dynasty.owned, "Campaign save dynasty: isolated directory owned")
 	if not dynasty.owned:
 		return
 	var secured := state_secured()
+	secured.train_drill()
 	var secured_state: Dictionary = CampaignState.capture(secured, 0).state
 	var founder := FailingCampaignSave.new(dynasty.path)
 	check(founder.save_campaign(secured, 0) == OK, "Campaign save dynasty: secured dynasty 1 saved")
@@ -804,7 +942,7 @@ func test_campaign_save_failures() -> void:
 	check(secured.dynasty == 2 and founder.save_campaign(secured, 0) != OK, "Campaign save dynasty: confirmation save failed")
 	var relaunch := CampaignSave.new(dynasty.path).load_campaign()
 	check(relaunch.outcome == CampaignSave.Outcome.LOADED and CampaignSave._state_of(relaunch) == secured_state
-		and relaunch.campaign.dynasty == 1 and relaunch.campaign.can_found_dynasty(),
+		and relaunch.campaign.dynasty == 1 and relaunch.campaign.can_found_dynasty() and relaunch.campaign.drill_rank == 1,
 		"Campaign save dynasty: unacknowledged confirm reloads pre-confirm security")
 	var successor: Campaign = relaunch.campaign
 	var founded := successor.found_dynasty() != null
@@ -812,7 +950,7 @@ func test_campaign_save_failures() -> void:
 	for squad in successor.battle.players:
 		damage.append(squad.damage)
 	check(founded and successor.dynasty == 2 and damage == [8, 16, 12] and successor.found_dynasty() == null,
-		"Campaign save dynasty: single confirm gives exactly 2x doctrine, no second reset")
+		"Campaign save dynasty: single confirm gives exactly 2x Drill, no reset before security")
 	founder.fail_move_to = ""
 	var again := CampaignSave.new(dynasty.path)
 	check(again.load_campaign().get("recovered", false) and again.save_campaign(successor, 0) == OK, "Campaign save dynasty: successor saved")
@@ -820,8 +958,9 @@ func test_campaign_save_failures() -> void:
 	damage.clear()
 	for squad in reloaded.campaign.battle.players:
 		damage.append(squad.damage)
-	check(reloaded.campaign.dynasty == 2 and damage == [8, 16, 12] and not reloaded.campaign.can_found_dynasty(),
-		"Campaign save dynasty: relaunched successor keeps doctrine once, no reset")
+	check(reloaded.campaign.dynasty == 2 and damage == [8, 16, 12] and not reloaded.campaign.can_found_dynasty()
+		and reloaded.campaign.drill_rank == 1 and reloaded.campaign.legacy == 0,
+		"Campaign save dynasty: relaunched successor keeps Drill once, no reset before security")
 	# No absence progress: a real delay changes nothing about the loaded battle.
 	var paused := campaign_running(2)
 	var paused_state: Dictionary = CampaignState.capture(paused, 750000).state
@@ -942,7 +1081,7 @@ func test_campaign_scene_saves() -> void:
 	recovered.free()
 	# Unusable primaries: fresh session, saving disabled, file preserved.
 	var unsupported_state: Dictionary = (expected as Dictionary).duplicate(true)
-	unsupported_state.version = 2
+	unsupported_state.version = 3
 	var backup_bytes := FileAccess.get_file_as_bytes(path + ".bak")
 	for case in [["{", "damaged"], [JSON.stringify(unsupported_state), "from an unsupported version"], ["", "unreadable"]]:
 		if case[1] == "unreadable":
@@ -1000,6 +1139,14 @@ func test_campaign_scene_saves() -> void:
 	check(opened and not secured.dynasty_preview_open and secured.campaign.dynasty == 1
 		and FileAccess.get_file_as_bytes(path) == bytes and secured.get_node("%SaveStatus").text == "Autosave on",
 		"Campaign scene saves: preview open, cancel and Escape leave file bytes identical")
+	secured.get_node("%TrainDrill").pressed.emit()
+	check(secured.campaign.drill_rank == 1 and secured.campaign.legacy == 0
+		and secured.get_node("%SaveStatus").text == "Saved" and scene_saved_exactly(secured, path),
+		"Campaign scene saves: Train Drill autosaves the Legacy purchase")
+	bytes = FileAccess.get_file_as_bytes(path)
+	secured.get_node("%TrainDrill").pressed.emit()
+	check(secured.campaign.drill_rank == 1 and FileAccess.get_file_as_bytes(path) == bytes,
+		"Campaign scene saves: unaffordable Train Drill never writes")
 	secured.get_node("%FoundDynasty").pressed.emit()
 	secured.get_node("%ConfirmDynasty").pressed.emit()
 	check(secured.campaign.dynasty == 2 and secured.get_node("%SaveStatus").text == "Saved" and scene_saved_exactly(secured, path),
@@ -1007,9 +1154,10 @@ func test_campaign_scene_saves() -> void:
 	secured.free()
 	var successor := campaign_scene_new(CampaignPresentation, CampaignSave.new(path))
 	successor.get_node("%FoundDynasty").pressed.emit()
-	check(successor.campaign.dynasty == 2 and successor.campaign.inherited_drill and not successor.dynasty_preview_open
-		and successor.get_node("%FoundDynasty").disabled and successor.get_node("%DynastyStatus").text == "Dynasty 2 · Inherited Drill: 2× squad damage",
-		"Campaign scene saves: relaunched successor keeps doctrine, no further reset")
+	check(successor.campaign.dynasty == 2 and successor.campaign.drill_rank == 1 and successor.campaign.legacy == 0
+		and not successor.dynasty_preview_open and successor.get_node("%FoundDynasty").disabled
+		and successor.get_node("%DynastyStatus").text == "Dynasty 2 · Legacy 0 · Drill rank 1 (×2 squad damage) · Securing this campaign earns 3 Legacy",
+		"Campaign scene saves: relaunched successor keeps Legacy and Drill rank, reset waits for security")
 	successor.free()
 	check(FileAccess.get_file_as_bytes(progress_path) == v1_bytes and not FileAccess.file_exists(progress_path + ".tmp")
 		and not FileAccess.file_exists(progress_path + ".bak"), "Campaign scene saves: sibling Save-v1 bytes untouched")
@@ -1040,6 +1188,8 @@ func campaign_interruption(action: String, boundary: String) -> void:
 	var path: String = fixture.path
 	var base: Campaign = state_secured() if action == "dynasty" else campaign_running(3 if action == "settlement" else 1, 7 if action == "settlement" else 100)
 	var base_usec: int = 0 if action == "dynasty" else 400000
+	if action == "dynasty":
+		check(base.train_drill(), title + "earned Drill rank 1 before reset")
 	check(CampaignSave.new(path).save_campaign(base, base_usec) == OK, title + "base saved")
 	var base_state: Variant = CampaignState.capture(base, base_usec).state
 	var base_bytes := FileAccess.get_file_as_bytes(path)
@@ -1084,9 +1234,10 @@ func campaign_interruption(action: String, boundary: String) -> void:
 			for squad in campaign.battle.players:
 				damage.append(squad.damage)
 			final.get_node("%FoundDynasty").pressed.emit()
-			check(campaign.dynasty == 2 and campaign.reset_used and campaign.gold == 0 and campaign.levels == [1, 1, 1]
-				and damage == [8, 16, 12] and not campaign.can_found_dynasty() and not final.dynasty_preview_open,
-				title + "single reset with exactly 2x doctrine, no second reset")
+			check(campaign.dynasty == 2 and campaign.drill_rank == 1 and campaign.legacy == 0 and campaign.gold == 0
+				and campaign.levels == [1, 1, 1] and damage == [8, 16, 12] and not campaign.can_found_dynasty()
+				and not final.dynasty_preview_open,
+				title + "single reset with exactly 2x Drill, no reset before security")
 	check(scene_state(final) == applied, title + "final relaunch matches the single applied transition")
 	final.free()
 	check(fixture.cleanup() == OK, title + "directory cleaned")
@@ -1117,10 +1268,12 @@ func test_campaign_scene_dynasty() -> void:
 	var scene := campaign_scene_new(CampaignWindowFixture) as CampaignWindowFixture
 	var campaign := scene.campaign
 	var before := campaign_snapshot(campaign)
-	for name in ["FoundDynasty", "ConfirmDynasty", "CancelDynasty"]:
+	for name in ["FoundDynasty", "ConfirmDynasty", "CancelDynasty", "TrainDrill"]:
 		scene.get_node("%" + name).pressed.emit()
-	check(campaign_snapshot(campaign) == before and not scene.dynasty_preview_open,
-		"Dynasty scene: premature emitted reset actions reject")
+	check(campaign_snapshot(campaign) == before and not scene.dynasty_preview_open
+		and scene.get_node("%TrainDrill").disabled and scene.get_node("%TrainDrill").text == "Train Drill rank 1 — 10 Legacy"
+		and scene.get_node("%DynastyStatus").text == "Dynasty 1 · Legacy 0 · Drill rank 0 (×1 squad damage) · Securing this campaign earns 10 Legacy",
+		"Dynasty scene: premature emitted reset and training actions reject")
 	# Earn funds through real scene rounds; leave a gate upgrade affordable at security.
 	campaign_scene_finish(scene)
 	scene.get_node("%FarmBorder").pressed.emit()
@@ -1142,8 +1295,17 @@ func test_campaign_scene_dynasty() -> void:
 		campaign_scene_finish(scene)
 	scene.get_node("%StartDefense").pressed.emit()
 	var defense := campaign_scene_finish(scene)
-	check(campaign.can_found_dynasty() and defense.result == Combat.Result.VICTORY,
-		"Dynasty scene: real earned conquest and defense enable reset")
+	check(campaign.can_found_dynasty() and defense.result == Combat.Result.VICTORY and campaign.legacy == 10
+		and not scene.get_node("%TrainDrill").disabled
+		and scene.get_node("%CampaignStatus").text == "Campaign secured · Counterattack defeated · +10 Legacy earned"
+		and scene.get_node("%DynastyStatus").text == "Dynasty 1 · Legacy 10 · Drill rank 0 (×1 squad damage)",
+		"Dynasty scene: real earned conquest and defense enable reset and pay 10 Legacy")
+	scene.get_node("%TrainDrill").pressed.emit()
+	check(campaign.drill_rank == 1 and campaign.legacy == 0 and scene.get_node("%TrainDrill").disabled
+		and scene.get_node("%TrainDrill").text == "Train Drill rank 2 — 20 Legacy"
+		and scene.get_node("%DynastyStatus").text == "Dynasty 1 · Legacy 0 · Drill rank 1 (×2 squad damage)"
+		and defense.players[0].damage == campaign.battle.players[0].damage,
+		"Dynasty scene: Train Drill buys rank 1 without touching the settled battle")
 	scene.elapsed_usec = 345678
 	scene.last_frame_usec = 1
 	before = campaign_snapshot(campaign)
@@ -1159,11 +1321,14 @@ func test_campaign_scene_dynasty() -> void:
 	for text in ["%d gold" % campaign.gold, "Shield infantry Lv.3", "Foot archers Lv.3", "Horse archers Lv.3",
 		"Gate Lv.2", "return to level 1", "territory and security", "Border Skirmish in Advance",
 		"fresh full-health troops", "pending commands", "farming/navigation", "fractional round time",
-		"same three troop types", "exactly 2× squad damage after level additions",
-		"health, gold rewards and round frequency are unchanged", "only dynasty reset",
-		"Inherited Drill is kept in the campaign save", "main-game saves are untouched"]:
+		"same three troop types", "Keep Legacy 0 and Drill rank 1 (×2 squad damage after level additions)",
+		"health, gold rewards and round frequency are unchanged", "Next secured campaign earns 3 Legacy",
+		"Legacy and Drill rank are kept in the campaign save", "main-game saves are untouched"]:
 		check(copy.contains(text), "Dynasty scene: preview discloses " + text)
-	for name in ["GateUpgrade", "ShieldUpgrade", "FootUpgrade", "HorseUpgrade", "FarmBorder", "FarmArcher", "Frontier", "StartDefense", "FoundDynasty"]:
+	check(not copy.contains("only dynasty reset")
+		and scene.get_node("%ConfirmDynasty").text == "Confirm reset — start dynasty 2",
+		"Dynasty scene: preview is repeatable and names the next dynasty")
+	for name in ["GateUpgrade", "ShieldUpgrade", "FootUpgrade", "HorseUpgrade", "FarmBorder", "FarmArcher", "Frontier", "StartDefense", "FoundDynasty", "TrainDrill"]:
 		check(scene.get_node("%" + name).disabled, "Dynasty scene: preview disables " + name)
 		scene.get_node("%" + name).pressed.emit()
 	check(campaign_snapshot(campaign) == before, "Dynasty scene: emitted blocked signals preserve preview losses")
@@ -1210,7 +1375,7 @@ func test_campaign_scene_dynasty() -> void:
 		and scene.elapsed_usec == 0 and scene.last_frame_usec >= now and successor.rounds == 0
 		and scene.is_processing() and scene.skip_resume_frame and not scene.dynasty_preview_open
 		and scene.get_node("%LastResult").text == "No completed battle"
-		and scene.get_node("%DynastyStatus").text == "Dynasty 2 · Inherited Drill: 2× squad damage",
+		and scene.get_node("%DynastyStatus").text == "Dynasty 2 · Legacy 0 · Drill rank 1 (×2 squad damage) · Securing this campaign earns 3 Legacy",
 		"Dynasty scene: single clean-clock successor preserves resume gate and clears old presentation")
 	before = campaign_snapshot(campaign)
 	for name in ["ConfirmDynasty", "FoundDynasty", "CancelDynasty", "ConfirmDynasty"]:
@@ -1229,17 +1394,25 @@ func test_campaign_scene_dynasty() -> void:
 	check(successor.rounds == 2 and successor.result == Combat.Result.VICTORY and campaign.gold == 10,
 		"Dynasty scene: passive successor victory pays ordinary reward after two rounds")
 	var fresh := campaign_scene_new()
-	check(fresh.campaign.dynasty == 1 and not fresh.campaign.inherited_drill
+	check(fresh.campaign.dynasty == 1 and fresh.campaign.drill_rank == 0 and fresh.campaign.legacy == 0
 		and fresh.campaign.battle.players[0].damage == 4 and not fresh.dynasty_preview_open,
-		"Dynasty scene: concurrent fresh instance has no doctrine")
+		"Dynasty scene: concurrent fresh instance has no Legacy or Drill")
 	fresh.free()
 	dynasty_prepare(campaign)
 	scene._refresh()
 	scene.get_node("%StartDefense").pressed.emit()
 	campaign_scene_finish(scene)
-	check(scene.get_node("%CampaignStatus").text.contains("Slice complete — no further dynasty reset.")
-		and scene.get_node("%FoundDynasty").disabled and not scene.is_processing(),
-		"Dynasty scene: real successor completion is terminal with exact status")
+	check(scene.get_node("%CampaignStatus").text == "Campaign secured · Counterattack defeated · +3 Legacy earned"
+		and campaign.legacy == 3 and not scene.get_node("%FoundDynasty").disabled
+		and scene.get_node("%TrainDrill").disabled and not scene.is_processing()
+		and scene.get_node("%DynastyStatus").text == "Dynasty 2 · Legacy 3 · Drill rank 1 (×2 squad damage)",
+		"Dynasty scene: real successor security pays 3 Legacy and offers another reset")
+	scene.get_node("%FoundDynasty").pressed.emit()
+	check(scene.dynasty_preview_open and scene.get_node("%ConfirmDynasty").text == "Confirm reset — start dynasty 3",
+		"Dynasty scene: repeat preview offers dynasty 3")
+	scene.get_node("%ConfirmDynasty").pressed.emit()
+	check(campaign.dynasty == 3 and campaign.legacy == 3 and campaign.drill_rank == 1 and not scene.dynasty_preview_open,
+		"Dynasty scene: repeat reset starts dynasty 3 keeping Legacy and rank")
 	scene.free()
 
 func test_campaign_scene_fresh() -> void:
@@ -1590,7 +1763,7 @@ func test_campaign_scene_defense() -> void:
 		check(campaign.phase == Campaign.Phase.CAMPAIGN_SECURED and campaign.battle == assault
 			and assault.result == Combat.Result.VICTORY and assault.gate_health > 0
 			and campaign.gold == gold and campaign.pending_navigation == Campaign.Navigation.NONE
-			and scene.get_node("%CampaignStatus").text == "Campaign secured · Counterattack defeated"
+			and scene.get_node("%CampaignStatus").text == "Campaign secured · Counterattack defeated · +10 Legacy earned"
 			and scene.get_node("%LastResult").text == "Counterattack: Victory · +0 gold"
 			and scene.get_node("%GateHealth").visible and not scene.is_processing(),
 			"Defense scene: real victory retains winning gate and overrides queued farm without reward")
@@ -2034,7 +2207,8 @@ func dynasty_prepare(campaign: Campaign) -> void:
 
 func test_dynasty() -> void:
 	var campaign := Campaign.new()
-	check(campaign.dynasty == 1 and not campaign.inherited_drill and not campaign.reset_used
+	check(campaign.dynasty == 1 and campaign.drill_rank == 0 and campaign.legacy == 0
+		and campaign.secure_legacy() == 10 and campaign.drill_cost() == 10 and not campaign.train_drill()
 		and not campaign.can_found_dynasty() and campaign.found_dynasty() == null
 		and campaign.battle == null and campaign.gold == 0 and campaign.levels == [1, 1, 1],
 		"Dynasty: fresh session rejects without creating battle")
@@ -2062,23 +2236,31 @@ func test_dynasty() -> void:
 		"Dynasty: real victorious surviving defense")
 	dynasty_rejected(campaign, "actual unconsumed defensive victory")
 	var wallet: int = campaign.gold
-	check(campaign.settle(defense) and campaign.gold == wallet and campaign.can_found_dynasty(),
-		"Dynasty: only settled defense enables reset, no reward")
+	check(campaign.legacy == 0 and campaign.settle(defense) and campaign.gold == wallet
+		and campaign.legacy == 10 and campaign.can_found_dynasty(),
+		"Dynasty: only settled defense enables reset, pays 10 Legacy and no gold")
+	check(not campaign.settle(defense) and campaign.legacy == 10, "Dynasty: secured Legacy paid once")
 	# Each eligibility conjunct independently protects an otherwise secured model.
-	for field in ["dynasty", "inherited_drill", "reset_used", "border_cleared", "archer_cleared",
-		"stronghold_cleared", "_settled", "current_encounter"]:
+	for field in ["border_cleared", "archer_cleared", "stronghold_cleared", "_settled", "current_encounter"]:
 		var original: Variant = campaign.get(field)
-		campaign.set(field, 2 if field == "dynasty" else (0 if field == "current_encounter" else not original))
+		campaign.set(field, 0 if field == "current_encounter" else not original)
 		dynasty_rejected(campaign, "guard " + field)
 		campaign.set(field, original)
 	var surviving_gate: int = defense.gate_health
 	defense.gate_health = 0
 	dynasty_rejected(campaign, "no surviving gate")
 	defense.gate_health = surviving_gate
+	# Training is a pure Legacy purchase: it never touches the settled battle or gold.
+	var pre_train := campaign_snapshot(campaign)
+	check(campaign.train_drill() and campaign.legacy == 0 and campaign.drill_rank == 1
+		and campaign._battle_drill_rank == 0 and campaign.drill_cost() == 20 and not campaign.train_drill()
+		and campaign_snapshot(campaign).slice(0, 23) == pre_train.slice(0, 23),
+		"Dynasty: rank 1 costs 10 Legacy, rank 2 unaffordable, battle untouched")
 	var old_state := campaign_snapshot(campaign)
 	var successor := campaign.found_dynasty()
-	check(successor != null and campaign.dynasty == 2 and campaign.inherited_drill and campaign.reset_used,
-		"Dynasty: one synchronous successor and consumed allowance")
+	check(successor != null and campaign.dynasty == 2 and campaign.drill_rank == 1 and campaign.legacy == 0
+		and campaign._battle_drill_rank == 1 and campaign.secure_legacy() == 3,
+		"Dynasty: one synchronous successor keeps Legacy and Drill rank")
 	campaign_fresh(campaign, defense, Data.Encounter.BORDER_SKIRMISH)
 	check(campaign.gold == 0 and campaign.levels == [1, 1, 1] and campaign.gate_level == 1
 		and campaign.phase == Campaign.Phase.RUNNING and campaign.mode == Campaign.Mode.ADVANCE
@@ -2096,7 +2278,7 @@ func test_dynasty() -> void:
 		and retained.slice(19, 23) == old_state.slice(19, 23), "Dynasty: prior winning battle unchanged")
 	check(not campaign.settle(defense) and campaign_snapshot(campaign) == saved_successor,
 		"Dynasty: prior defense cannot settle again")
-	dynasty_rejected(campaign, "duplicate reset")
+	dynasty_rejected(campaign, "successor before security")
 	for role in range(3):
 		check(successor.players[role].health == [120, 40, 60][role]
 			and successor.players[role].damage == [8, 16, 12][role], "Dynasty: base health and doubled damage")
@@ -2111,22 +2293,35 @@ func test_dynasty() -> void:
 			"Dynasty: successor exact passive round %d" % (i + 1))
 	check(campaign.gold == 0 and campaign.settle(successor) and campaign.gold == 10
 		and not campaign.settle(successor) and campaign.gold == 10, "Dynasty: ordinary Border reward once")
-	var formula := Campaign.new()
-	formula.inherited_drill = true
-	formula.levels = [2, 2, 2]
-	var upgraded := formula.restart_battle()
 	var ordinary := Economy.new()
 	ordinary.levels = [2, 2, 2]
 	var normal := ordinary.restart_battle()
-	for role in range(3):
-		check(upgraded.players[role].damage == [12, 24, 18][role]
-			and normal.players[role].damage == [6, 12, 9][role]
-			and upgraded.players[role].max_health == normal.players[role].max_health,
-			"Dynasty: level additions before isolated multiplier, unchanged health")
-	check(upgraded.commander_damage == 18 and normal.commander_damage == 9,
-		"Dynasty: commander derives upgraded snapshot")
+	for rank in range(4):
+		var formula := Campaign.new()
+		formula.drill_rank = rank
+		formula.levels = [2, 2, 2]
+		var upgraded := formula.restart_battle()
+		for role in range(3):
+			check(upgraded.players[role].damage == [6, 12, 9][role] * (1 + rank)
+				and normal.players[role].damage == [6, 12, 9][role]
+				and upgraded.players[role].max_health == normal.players[role].max_health,
+				"Dynasty: rank %d level additions before x%d multiplier, unchanged health" % [rank, 1 + rank])
+		check(upgraded.commander_damage == 9 * (1 + rank) and normal.commander_damage == 9
+			and formula._battle_drill_rank == rank, "Dynasty: commander derives rank %d snapshot" % rank)
+	# Rank costs 10/20/40 in Legacy, capped at rank 3.
+	var ranks := Campaign.new()
+	ranks.legacy = 69
+	check(ranks.train_drill() and ranks.legacy == 59 and ranks.train_drill() and ranks.legacy == 39
+		and not ranks.train_drill() and ranks.legacy == 39 and ranks.drill_rank == 2 and ranks.drill_cost() == 40,
+		"Dynasty: rank 2 costs 20, rank 3 at 40 rejected with 39 unchanged")
+	ranks.legacy += 1
+	check(ranks.train_drill() and ranks.legacy == 0 and ranks.drill_rank == 3 and ranks.drill_cost() == 0,
+		"Dynasty: rank 3 costs 40")
+	ranks.legacy = 1000
+	check(not ranks.train_drill() and ranks.drill_rank == 3 and ranks.legacy == 1000,
+		"Dynasty: rank 3 is the maximum")
 	var fresh := Campaign.new()
-	check(not fresh.inherited_drill and fresh.dynasty == 1 and not fresh.reset_used
+	check(fresh.drill_rank == 0 and fresh.dynasty == 1 and fresh.legacy == 0
 		and fresh.restart_battle().players[0].damage == 4
 		and Economy.new().restart_battle().players[0].damage == 4, "Dynasty: fresh model and Economy isolation")
 	dynasty_prepare(campaign)
@@ -2134,13 +2329,24 @@ func test_dynasty() -> void:
 	wallet = campaign.gold
 	var final_defense := campaign_finish(campaign)
 	check(final_defense.result == Combat.Result.VICTORY and campaign.phase == Campaign.Phase.CAMPAIGN_SECURED
-		and campaign.gold == wallet and campaign.inherited_drill and campaign.dynasty == 2
-		and final_defense.players[0].damage == 16, "Dynasty: successor secured, zero bonus, no stacking")
-	dynasty_rejected(campaign, "second secured campaign")
+		and campaign.gold == wallet and campaign.drill_rank == 1 and campaign.dynasty == 2 and campaign.legacy == 3
+		and final_defense.players[0].damage == 16, "Dynasty: successor secured, +3 Legacy, no gold, no stacking")
 	var terminal := campaign_snapshot(campaign)
 	check(not campaign.settle(final_defense) and campaign.restart_battle() == null
 		and not campaign.request_frontier() and not campaign.request_farm(0)
-		and campaign_snapshot(campaign) == terminal, "Dynasty: successor checkpoint stays inert")
+		and campaign_snapshot(campaign) == terminal and campaign.legacy == 3, "Dynasty: successor checkpoint stays inert")
+	# Resets repeat: dynasty 3 keeps rank and Legacy, and its security pays 3 more.
+	check(campaign.can_found_dynasty() and campaign.found_dynasty() != null and campaign.dynasty == 3
+		and campaign.legacy == 3 and campaign.drill_rank == 1 and campaign.battle.players[0].damage == 8
+		and campaign.gold == 0 and campaign.levels == [1, 1, 1], "Dynasty: repeat reset into dynasty 3")
+	dynasty_rejected(campaign, "dynasty 3 before security")
+	campaign_finish(campaign)
+	dynasty_prepare(campaign)
+	campaign.start_defense()
+	campaign_finish(campaign)
+	check(campaign.phase == Campaign.Phase.CAMPAIGN_SECURED and campaign.legacy == 6 and campaign.can_found_dynasty()
+		and campaign.found_dynasty() != null and campaign.dynasty == 4 and campaign.legacy == 6,
+		"Dynasty: dynasty 3 security pays 3 more and resets again")
 	# Real unupgraded defensive defeat and recovery also cannot authorize a reset.
 	var loss := Campaign.new()
 	loss.border_cleared = true
@@ -2156,20 +2362,19 @@ func test_dynasty() -> void:
 	dynasty_rejected(loss, "unsettled defensive defeat")
 	check(loss.settle(lost), "Dynasty: settle defeat for recovery")
 	dynasty_rejected(loss, "defensive recovery")
-	# Isolate doctrine retention through a gate-destruction/recovery boundary.
+	# Isolate Drill retention through a gate-destruction/recovery boundary.
 	loss.dynasty = 2
-	loss.inherited_drill = true
-	loss.reset_used = true
+	loss.drill_rank = 1
 	check(loss.request_frontier(), "Dynasty: recovery frontier queued")
 	campaign_finish(loss)
 	var retry := loss.start_defense()
 	retry.players[0].health = 0
 	retry.gate_health = 1
 	campaign_finish(loss)
-	check(retry.result == Combat.Result.DEFEAT and loss.inherited_drill and loss.reset_used
+	check(retry.result == Combat.Result.DEFEAT and loss.drill_rank == 1 and loss.legacy == 0
 		and loss.dynasty == 2 and loss.mode == Campaign.Mode.FARM
 		and loss.battle.players[0].damage == 8 and loss.battle.commander_damage == 12,
-		"Dynasty: defeat and recovery preserve doctrine without stacking")
+		"Dynasty: defeat and recovery preserve Drill rank without stacking or Legacy")
 	dynasty_rejected(loss, "successor defensive recovery")
 
 func campaign_finish(campaign: Campaign) -> Combat:
@@ -2197,7 +2402,7 @@ func campaign_snapshot(campaign: Campaign, identity: bool = true) -> Array:
 		combat if identity else null, balance_snapshot(combat), combat.commander_queued,
 		combat.commander_damage, squads, campaign.gate_level, combat.is_defense,
 		combat.gate_max_health, combat.gate_health, combat.defeat_reason,
-		campaign.dynasty, campaign.inherited_drill, campaign.reset_used]
+		campaign.dynasty, campaign.legacy, campaign.drill_rank, campaign._battle_drill_rank]
 
 func campaign_fresh(campaign: Campaign, previous: Combat, encounter: int) -> void:
 	var combat := campaign.battle
