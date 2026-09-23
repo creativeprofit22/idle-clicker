@@ -4,7 +4,9 @@
 and restoration exist in `src/campaign_state.gd`; isolated storage and D11 recovery exist in
 `src/campaign_save.gd`; `src/campaign_prototype.gd` loads `user://campaign.json` at launch and
 wires the D6 triggers and D7/D11 status feedback. Evidence lives in the README verification
-sections and tests, not in this document; the physical manual gate remains pending.
+sections and tests, not in this document. Saved-loop acceptance (README checklist G4/G5) was
+recorded as passed on 23 September 2026 using window-driven input, which the user accepted;
+no person clicked those two gates.
 
 ## Delivered versus candidate
 

@@ -1,6 +1,12 @@
 # Technology recommendation
 
-**Recommendation pending approval — researched 7 September 2026.**
+**Status (23 September 2026): adopted.** The recommended stack below was approved and is
+implemented: Godot 4.7.2 Standard, typed GDScript, the Compatibility renderer and the
+engine-native headless runner in `tests/run_tests.gd`, with CI on `main`. The "pending approval"
+and "blocked" wording further down is the original 7 September research record, kept unchanged.
+Krita/PNG art, Android packaging and performance budgets are still unstarted.
+
+*Original heading:* **Recommendation pending approval — researched 7 September 2026.**
 
 Use **Godot 4.7.2 Standard, typed GDScript, the Compatibility renderer, and a small engine-native headless test runner**. Start with engine-native scenes and animation; do not add Rive, Blender, a database, or a third-party test framework to the opening-battle prototype. For later original artwork, use **Krita → PNG layers/frame sequences → Godot** as the minimal production pipeline.
 

@@ -106,7 +106,7 @@ The mentor suggests portrait play, with battle and campaign progress above the c
 
 The discussion also suggests conveying an army through a few representative squads rather than individually simulating every owned recruit. Clear motion and silhouettes could preserve readability as troop counts become enormous, without relying on tiny labels over dozens of soldiers. This records the intended readability and scale tradeoff, not a rendering technology or approved art workflow.
 
-Engine and framework selection, Unity, Blender, AI asset workflows, and detailed visuals are explicitly deferred. No technology recommendation has been verified or selected. Android export, packaging, and platform-specific implementation decisions should be evaluated when choosing tools, not asserted as already solved by this brainstorm.
+*Update 23 September 2026:* Godot 4.7.2 Standard with GDScript was since adopted and a playable prototype exists (see `technology-recommendation.md`, `first-playable.md` and the README). Unity, Blender, AI asset workflows and detailed visuals remain deferred. The original wording follows: engine and framework selection were explicitly deferred, and no technology recommendation had been verified or selected. Android export, packaging, and platform-specific implementation decisions should be evaluated when choosing tools, not asserted as already solved by this brainstorm.
 
 ## Proposed first playable scope
 
@@ -138,4 +138,4 @@ Several apparent conflicts have an explicit later direction. Use the same army f
 
 The phrase “your army dies, your military tradition survives” describes the proposed campaign-scale fantasy; it is not a literal instruction to delete purchased troops after an ordinary defeat. The detailed non-destructive failure proposal takes precedence. Retirement and dynasty succession can carry the theme without contradicting the intended idle-game safety of routine battles.
 
-Finally, the intended camp growth and portrait presentation are retained as experience references while visuals remain deferred. Tools, framework, Unity, Blender, AI asset workflows, and Android packaging are unchosen. There is no unresolved direct contradiction in the confirmed requirements; the remaining work is to approve a bounded slice and settle the explicitly open mechanics without treating the full brainstorm as committed scope.
+Finally, the intended camp growth and portrait presentation are retained as experience references while visuals remain deferred. Godot/GDScript is now the chosen engine (23 September 2026 update); art tools, Unity, Blender, AI asset workflows and Android packaging remain unchosen. There is no unresolved direct contradiction in the confirmed requirements; the remaining work is to approve a bounded slice and settle the explicitly open mechanics without treating the full brainstorm as committed scope.

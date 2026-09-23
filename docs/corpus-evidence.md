@@ -1,5 +1,9 @@
 # Engine and production-pipeline evidence handoff
 
+**Status (23 September 2026): historical research record.** Godot 4.7.2 Standard + GDScript
+was later adopted (see `technology-recommendation.md`) and the project now contains a playable
+prototype; statements below that the project is documentation-only describe 7 September.
+
 Research date: 2026-09-07. No engine or production pipeline selected. Repository indexing was approved for five candidates; four succeeded. No game code, engine, or dependency was installed or executed.
 
 ## Confirmed brief

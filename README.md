@@ -1758,7 +1758,8 @@ Run with `Godot_v4.7.2-stable_win64.exe`:
   proven). A timestamped diagnostic rerun passed 63/0 in 46.0 s, matching earlier 45.6–46.1 s runs.
   Screenshots show the autosave notice, Saved status, updated preview copy and dynasty 2 at 2×.
 
-The physical manual gate remains **pending**.
+At that point the physical manual gate was still **pending**. It was later recorded as passed; see
+"Results — 23 Sep 2026" below.
 
 ## Physical acceptance checklist
 
@@ -1794,6 +1795,35 @@ remaining sessions to be automated.
 | G5 | **PASSED (window-driven)** | (a) Closed mid-Archer farm: round 3, shield 78/120, enemy 64/100, 70 gold, then 15 s closed. The first relaunched frame showed exactly those values plus "Resumed saved campaign". (b) Closed at the Stronghold checkpoint (phase 1, 430 gold). After relaunch, defense stayed idle and the file was byte-identical after idling. (c) See G4. (d) Relaunch after Confirm: dynasty 2 with damage 8/16/12, exactly 2× the level-1 values, so the drill is applied once. Border went 72→36→0: won in 2 rounds, +10. (e) Dynasty 2 secured (gate held at 2 HP). The status shows "Slice complete — no further dynasty reset" and Found a Dynasty is disabled. The close save was byte-identical to the secured save, and the relaunch showed the same state and left the file unchanged. The copy's `progress.json` SHA-256 `ad9759e1…a628` was identical from the start of S3 to the end. |
 
 The re-check after the test changes passed on the final tree: import 0 errors, headless 3303/0 · forced 3304/1 · normal 3303/0, native driver focus-only 13/0, campaign 56/0, defense 63/0, dynasty 59/0 (all exits 0, cleanup confirmed), and `scene_smoke` 105/0. One intermediate unattended defense run failed on foreground loss while the operator was using the PC; that failure is retained. Disposable copy: `%LOCALAPPDATA%\Temp\bs-accept-103356`, user data `Border Skirmish Accept 475f440 103356`. It is kept; deleting it needs approval. No art, export, Android or release-readiness claim.
+
+### Post-acceptance re-check — 23 Sep 2026 (tree `74f074b`)
+
+Commit `a7e716e` added a check to the campaign smoke: while the watchdog counts, its time used
+must match the engine's measured process time. The final-tree numbers above predate that commit.
+Re-run on `74f074b`:
+
+| Check | Result |
+|---|---|
+| Import | exit 0, 0 script/parse errors |
+| Headless normal | 3303/0, exit 0 |
+| Native `focus-only`, first run | **FAILED 14/1**, child exit 1, `native_observations_complete=False`; child reaped, reader joined (retained) |
+| Native `focus-only`, diagnostic rerun (full output kept) | 14/0, child/driver exit 0, observations complete, cleanup confirmed |
+| Headless forced / normal | 3304/1 (only `FAIL forced runner failure`), exit 1 / 3303/0, exit 0 |
+| Native `campaign` / `defense` / `dynasty` | 57/0 · 64/0 · 60/0, all child/driver exits 0, observations complete, cleanup confirmed |
+| `scene_smoke` | 105/0, exit 0 |
+
+The first failure was "native minimized window reports focus lost". The minimized window still
+reported focus, so the freeze/restore checks were not reached. The new watchdog check passed in
+that run. That commit only changes watchdog timing bookkeeping and doesn't touch minimize, focus
+or restore handling. The symptom matches the Windows/Godot focus disagreement recorded on
+10 Sep, where Windows reported the window as minimized and not foreground but Godot still
+reported focus. The filtered first-run log dropped the `NATIVE_DIAG` lines, so the disagreement
+wasn't captured directly. In the diagnostic rerun, Godot and Windows agreed at every stage
+(`focus=false`, iconic and not foreground while minimized). Conclusion: an intermittent
+environment flake, not a regression. No test, deadline or focus gate was changed. The new
+watchdog check passed in all four scenarios (consumption matched measured engine time within
+0.02 s). Screenshots `campaign-secured`, `dynasty-preview` and `defense-damaged` were inspected
+and are readable with no overlap. Native gates for `74f074b` are **green**.
 
 ## Boundaries
 

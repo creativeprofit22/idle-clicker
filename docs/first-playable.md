@@ -97,12 +97,21 @@ exits **0/1/0**, exactly one intentional failure. Default graphical smoke passed
 All 16 current campaign captures were opened, including the secured checkpoint,
 narrow reset preview and fresh round-zero successor. README records log IDs and
 retains an intermediate early-restoration failure whose external source is unconfirmed.
-**Physical manual acceptance remains PENDING**, including reset preview/cancel/confirm;
-automated passes do not waive it or claim release readiness. The outstanding human gates
-and their current status are listed in README's "Physical acceptance checklist". As of
-23 Sep 2026 all five gates are recorded there as passed, with each one's evidence type
-(physical, operator-reported or window-driven) stated. Window-driven runs are not human
-operation.
+At that date physical manual acceptance was still pending.
+
+### Acceptance status — 23 September 2026
+
+All five gates in README's "Physical acceptance checklist" (G1–G5) are recorded as passed,
+each with its evidence type: G1 physical minimize, G2/G3 operator-reported, G4/G5
+window-driven (posted input, not human clicks; accepted by the user). Final-tree evidence:
+import 0 errors, headless 3303/0 · forced 3304/1 · 3303/0, native focus-only 13/0, campaign
+56/0, defense 63/0, dynasty 59/0, `scene_smoke` 105/0, CI green on `a7a79fc` and `74f074b`.
+
+After commit `a7e716e` (a watchdog engine-time check), the full gate set was re-run on
+`74f074b`. Import had 0 errors; headless was 3303/0, forced 3304/1 and rerun 3303/0. Native runs
+gave focus-only 14/0, campaign 57/0, defense 64/0 and dynasty 60/0, and `scene_smoke` 105/0.
+One earlier focus-only run failed 14/1 because of the known intermittent Windows/Godot focus
+disagreement; it is retained in README. No art, export, Android or release-readiness claim.
 
 ### Historical verification — 10 September 2026
 
