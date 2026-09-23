@@ -126,6 +126,7 @@ does not waive that gate. No export, Android or release acceptance is claimed.
 ## Future first-playable proposal — NOT APPROVED
 
 Everything below describes the proposed larger loop, not an instruction to implement it.
+Campaign save/resume is now governed by the approved `docs/campaign-save-contract.md`, which supersedes the provisional save/load text below (left unchanged for history).
 Combat, conquest, playable defense/gates and the session-local reset overlap delivered
 work above. **Permanent** doctrine, cross-launch reset retention and full-state campaign
 persistence remain deferred. The save/load, durable reset and atomic-saving promises below

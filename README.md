@@ -1629,6 +1629,26 @@ DEFERRED — not passed.** The retained human-attempt evidence above is unchange
 Comparable external GDScript combat usage remains unverified; the inspected
 PokéClicker guard-first upgrade sample informs purchase validation only.
 
+## Campaign state restoration — verified 23 September 2026
+
+In-memory capture/validate/restore (`src/campaign_state.gd`); `Economy._snapshot_army()` was
+extracted from `restart_battle()` without behavior change. Three new headless tests compare
+restored and uninterrupted campaigns (JSON round-tripped in memory) under identical round input
+across conquest, farming, defeat recovery, checkpoint, defense, secured and dynasty-2 states;
+check no duplicate rewards or stacked doctrine; and reject corrupt, unsupported and unreachable
+states with no campaign returned and the input unmodified. No campaign file is written.
+
+Run with Godot `4.7.2.stable.official.ed1daf0bf` Standard (`Godot_v4.7.2-stable_win64.exe`;
+the `_console.exe` wrapper failed to launch in this shell with CreateProcess error 193):
+- Import check: exit 0, no `ERROR:` lines.
+- Headless tests: `SUMMARY: 2938 checks, 0 failures`, exit 0.
+- Forced failure: `SUMMARY: 2939 checks, 1 failures`, only `FAIL forced runner failure`, exit 1.
+- Immediate normal rerun: `SUMMARY: 2938 checks, 0 failures`, exit 0.
+- Mutation sanity: skipping restored enemy health made the new tests fail (26 failures); reverted.
+
+No presentation change, so graphical and Windows-driver runs were not repeated; the physical
+manual gate remains **pending**. CI workflow unchanged.
+
 ## Boundaries
 
 Combat rules live only in `src/combat.gd`; `src/economy.gd` owns gold, troop
@@ -1645,7 +1665,10 @@ tests, not that unrelated demo, establish combat correctness.
 The default game has no automatic encounter advancement or gate/defense controls.
 The separate session-local campaign exposes gate upgrades, defense and one confirmed
 dynasty reset through its native UI; campaign persistence, final art and Android tooling
-remain unimplemented. Border Skirmish, Archer Position and
+remain unimplemented. The campaign save contract (`docs/campaign-save-contract.md`) is
+approved, but campaign persistence is not yet implemented. `src/campaign_state.gd` captures,
+validates and restores full campaign state in memory only (no file I/O, not wired to the scene).
+Border Skirmish, Archer Position and
 Fortified Position repeat by manual selection; both older fixtures are unchanged.
 Viewport-injected input is **not physical mouse/touch verification**. Suspension tests exercise lifecycle notifications,
 not a physical Android device or OS sleep. No mobile export, sustained device
