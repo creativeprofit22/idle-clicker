@@ -2,7 +2,7 @@
 
 **Only the implemented-scope section below describes approved, delivered work.** The later first-playable rules, tables, formulas, and acceptance thresholds remain proposals unless explicitly identified as already implemented. Their presence does not approve another milestone or validate the complete proposed game loop.
 
-The broader vision includes offline single-player play, pre-gunpowder historical armies, attack and defense, level-1 resets retaining selected benefits, and eventual Android support. Playable defense, gate upgrades and one session-only dynasty reset are delivered in the separate campaign. Full campaign saving, permanent doctrine and Android delivery remain deferred.
+The broader vision includes offline single-player play, pre-gunpowder historical armies, attack and defense, level-1 resets retaining selected benefits, and eventual Android support. Playable defense, gate upgrades, one dynasty reset and cross-launch campaign saving (its own file, per `docs/campaign-save-contract.md`) are delivered in the separate campaign. Android delivery remains deferred.
 
 ## Approved implemented scope — 10 September 2026
 
@@ -18,8 +18,9 @@ verification evidence, and remaining release gates. Two separate playable scenes
   `src/campaign_prototype.gd` connect the in-memory `src/campaign.gd` model to a native UI.
   Real-time automatic progression, deferred farm/frontier requests, purchases, scrolling,
   conquest preparation, explicit defense/recovery, secured idle and one confirmed dynasty
-  reset are implemented. This session-only scene neither loads nor writes the default
-  game's save. Closing/recreating it discards campaign progress and inherited doctrine.
+  reset are implemented. The scene autosaves the full campaign, including a live battle and
+  inherited doctrine, to its own `user://campaign.json` and restores it exactly at launch; it
+  neither loads nor writes the default game's save.
 
 The approved campaign prototype and its scene integration are implemented, not deferred.
 It does not replace the default farming game or constitute acceptance of the broader
@@ -42,11 +43,11 @@ and clears navigation without paying; it cannot switch destinations or restart a
 Farming after conquest clearance preserves it; retry frontier finishes that farm battle
 and returns to the checkpoint without recreating or repaying Stronghold.
 
-Settlement is synchronous and once-only in memory, not a durable transaction.
-Campaign saving, live battle resume and crash/reload duplicate protection remain
-deferred. Main-game Save-v1 does not save campaign, gate, security or doctrine state.
+Settlement is synchronous and once-only in memory; the campaign save then writes reward,
+clearance and routing as one snapshot, so a relaunch shows either the old or the new state,
+never a duplicate payment. Main-game Save-v1 does not save campaign, gate, security or doctrine state.
 
-### Playable Counterattack and session-only dynasty
+### Playable Counterattack and single dynasty reset
 
 The native **Start Defense** control explicitly enters Counterattack from
 `CONQUEST_CLEARED`, including farm-return checkpoints; defense never starts automatically.
@@ -80,10 +81,9 @@ purchases, defeat, recovery and defense; duplicates cannot restart or stack it.
 
 Stronghold pays **30 gold once per run**, including dynasty 2. Securing the successor
 grants no additional bonus/reset and displays **Slice complete — no further dynasty
-reset.** Only one reset/bonus is available per session. Closing or recreating the
-campaign discards the doctrine too; main-game saves are never loaded or changed.
-Permanent doctrine, cross-launch retention, reset saving and full campaign persistence
-are explicitly deferred, not delivered by this slice.
+reset.** Only one reset/bonus is available per campaign save: the confirmed reset and
+Inherited Drill are saved as one transition and survive relaunch exactly once. Main-game
+saves are never loaded or changed.
 
 ### Current verification — 10 September 2026
 
@@ -127,10 +127,10 @@ does not waive that gate. No export, Android or release acceptance is claimed.
 
 Everything below describes the proposed larger loop, not an instruction to implement it.
 Campaign save/resume is now governed by the approved `docs/campaign-save-contract.md`, which supersedes the provisional save/load text below (left unchanged for history).
-Combat, conquest, playable defense/gates and the session-local reset overlap delivered
-work above. **Permanent** doctrine, cross-launch reset retention and full-state campaign
-persistence remain deferred. The save/load, durable reset and atomic-saving promises below
-are proposals only and must not be attributed to Save-v1 or the session-only campaign.
+Combat, conquest, playable defense/gates, the single reset and campaign save/resume overlap
+delivered work above. Doctrine beyond the one saved reset remains deferred. The save/load,
+durable reset and atomic-saving promises below are proposals; only the contract describes
+what the delivered campaign save does, and nothing here applies to Save-v1.
 Future work requires separate approval.
 
 ## The player's first run — provisional experience
@@ -253,8 +253,8 @@ These are future checks, not tests claimed to have passed. Unless stated otherwi
 
 ## Development constraints, evidence, and risks
 
-Beyond the implemented scope above, the remaining proposal is documentation only and requires separate approval. Later work should retain the existing separation of rules/state from UI/rendering and keep future prestige and campaign persistence independently testable. Implement and behavior-test one approved slice before adding another. Existing modules, Godot tooling, and main-game Save-v1 are already selected; new campaign-storage and future-feature interfaces remain undecided.
+Beyond the implemented scope above, the remaining proposal is documentation only and requires separate approval. Later work should retain the existing separation of rules/state from UI/rendering and keep future prestige and campaign persistence independently testable. Implement and behavior-test one approved slice before adding another. Existing modules, Godot tooling, and main-game Save-v1 are already selected. The campaign-storage interface is decided by `docs/campaign-save-contract.md` (D9 storage, D11 recovery) and implemented and headless-tested in `src/campaign_save.gd`, and wired to the campaign scene for launch restoration and autosave. Other future-feature interfaces remain undecided.
 
 The design authority is `docs/game-design.md`, especially its core loop, roles, non-destructive failure, reset payoff, first scope, and offline distinction. A corpus search/read inspected `etlegacy/etlegacy`, `src/game/g_combat.c`, lines 1153–1176, revision `631d0c936ee935e3c2ddb1ffc8278c5cdbe94319`: https://github.com/etlegacy/etlegacy/blob/631d0c936ee935e3c2ddb1ffc8278c5cdbe94319/src/game/g_combat.c#L1153-L1176. Its explicit exclusion of zero-health entities is a narrow real-code reference for dead-target eligibility. Its shooter-specific systems are not suitable architecture or balance references and are not imported.
 
-Combat, economy, main-game saving, playable campaign defense/gates and the session-only dynasty reset have executable evidence recorded above, with historical verification failures retained and physical acceptance still pending. The proposed cross-launch doctrine/full-state-save loop is not implemented or validated. Future acceptance examples remain expected outcomes, not passed tests. Remaining design risks include uninteresting upgrade allocation, insufficient passive survivability, the defense targeting exception feeling arbitrary, and an overly short campaign failing to establish prestige's emotional payoff. Evaluate those only within separately approved work rather than preemptively adding systems. Direct doctrine granting, no closed-app rewards, and fixed roster access are explicit simplifications relative to the broader brainstorm.
+Combat, economy, main-game saving, playable campaign defense/gates, the single dynasty reset and cross-launch campaign saving have executable evidence recorded in the README, with historical verification failures retained and physical acceptance still pending. Future acceptance examples remain expected outcomes, not passed tests. Remaining design risks include uninteresting upgrade allocation, insufficient passive survivability, the defense targeting exception feeling arbitrary, and an overly short campaign failing to establish prestige's emotional payoff. Evaluate those only within separately approved work rather than preemptively adding systems. Direct doctrine granting, no closed-app rewards, and fixed roster access are explicit simplifications relative to the broader brainstorm.

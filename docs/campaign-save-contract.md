@@ -1,15 +1,15 @@
 # Campaign save contract — v1
 
-**Status: APPROVED 23 September 2026 — partly implemented.** In-memory state capture, validation
-and restoration exist in `src/campaign_state.gd` (headless-tested). Storage, save triggers and scene
-integration are not implemented; nothing reads or writes a campaign file.
-It defines what a later implementation must do; it is not evidence that anything works.
+**Status: APPROVED 23 September 2026 — implemented.** In-memory state capture, validation
+and restoration exist in `src/campaign_state.gd`; isolated storage and D11 recovery exist in
+`src/campaign_save.gd`; `src/campaign_prototype.gd` loads `user://campaign.json` at launch and
+wires the D6 triggers and D7/D11 status feedback. Evidence lives in the README verification
+sections and tests, not in this document; the physical manual gate remains pending.
 
 ## Delivered versus candidate
 
-**Delivered (README "Separate session-only campaign prototype", `docs/first-playable.md` implemented scope):**
-the campaign scene is session-only. Closing it loses all campaign state, including dynasty 2
-and Inherited Drill. Main-game Save-v1 (`user://progress.json`, `{version:1, gold, levels}`,
+**Before this contract (historical):** the campaign scene was session-only; closing it lost all
+campaign state, including dynasty 2 and Inherited Drill. It now autosaves as decided below. Main-game Save-v1 (`user://progress.json`, `{version:1, gold, levels}`,
 owned by `src/progress_save.gd`) is never read or written by the campaign scene.
 
 **Candidate (this document):** cross-launch campaign persistence. The provisional save/load and

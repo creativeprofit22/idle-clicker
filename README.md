@@ -51,7 +51,7 @@ or seven with either archer upgrade. Combat stats and costs are unchanged.
 Native scrolling and focus-follow keep controls reachable when content exceeds
 the viewport; the existing canvas scaling remains unchanged.
 
-## Separate session-only campaign prototype
+## Separate autosaved campaign prototype
 
 Launch separately using the pinned Standard executable above:
 
@@ -63,9 +63,22 @@ With `godot` on PATH, the equivalent is
 `godot --path . --scene res://scenes/campaign_prototype.tscn`.
 The normal main scene and its launch instructions are unchanged.
 
-This isolated native-control prototype owns one in-memory Campaign. Closing or
-recreating it resets gold, upgrades, clearances and dynasty/doctrine state; main-game saves are never
-loaded or changed. No main-menu link, commander or restart control is included.
+This isolated native-control prototype owns one Campaign that autosaves to its own file,
+`user://campaign.json` (with `.tmp`/`.bak` siblings); main-game saves are never loaded or
+changed. Relaunch restores the exact state: gold, owned upgrades, clearances, navigation queue,
+checkpoint, the damaged current battle with its purchase-time snapshot, fractional round time
+and dynasty/doctrine. Closed time and the first frame after launch add no combat or income.
+No main-menu link, commander or restart control is included.
+
+Saves happen only after an accepted change: troop or gate purchase, farm/frontier request,
+Start Defense, every battle settlement (reward, clearance and routing written together) and
+confirmed dynasty reset; plus best-effort saves on focus loss/pause/minimize and window close.
+Opening or cancelling the dynasty preview and ordinary rounds never save. The status line under
+the notice shows **Autosave on**, **Saved**, **Restored from backup**, or
+**Progress not saved — will retry** (the change stays in memory and the next trigger rewrites
+the full state). A damaged, unsupported-version or unreadable save is left untouched: the
+campaign starts fresh with **Saving disabled: campaign save … preserved. This session will not
+be kept.** There is no discard or retry button.
 Border → Archer → Stronghold transitions settle immediately, with the last
 result retained onscreen rather than a replay delay. Farm requests require that
 encounter's clearance; the latest valid farm/frontier request applies after the
@@ -88,9 +101,9 @@ explicitly retrying with fresh troops and gate. Victory instead overrides farmin
 displays **Campaign secured**, retains the winning battle and gate HP, pays **0 gold**,
 and stops timing/navigation/start. Affordable purchases remain ownership-only operations,
 even after security. Suspension freezes combat and rejects every purchase/navigation input.
-There is no Fortified frontier, campaign persistence, export or release approval.
+There is no Fortified frontier, export or release approval.
 
-### One session-only dynasty reset
+### One dynasty reset per campaign save
 
 Only a **settled Counterattack victory with a surviving gate**, all three clearances,
 first dynasty and unused allowance enables **Found a Dynasty**. Stronghold alone is
@@ -111,9 +124,10 @@ Stronghold pays **30 gold once per run**, including the successor run, not once 
 per Campaign object; defense pays **0**. Securing dynasty 2 displays **Slice complete —
 no further dynasty reset.** There is no second reset, stacked multiplier, Legacy or
 extra victory bonus. Secured purchases remain ownership-only outside the preview.
-This is **one reset/bonus for this session only**: closing or recreating the campaign
-also discards Inherited Drill. Main-game saves remain untouched. Cross-launch doctrine,
-campaign save/load, durable outcome protection and reset saving are explicitly deferred.
+This is **the only reset in the campaign save**: the confirmed reset is written as one complete
+transition, Inherited Drill survives relaunch exactly once (never stacked), and a relaunched
+dynasty 2 cannot reset again. If the app stops before the reset is saved, relaunch shows the
+secured dynasty-1 checkpoint and the reset can be confirmed once. Main-game saves remain untouched.
 
 ### Native suspension wall-time repair — 10 September 2026
 
@@ -1649,11 +1663,83 @@ the `_console.exe` wrapper failed to launch in this shell with CreateProcess err
 No presentation change, so graphical and Windows-driver runs were not repeated; the physical
 manual gate remains **pending**. CI workflow unchanged.
 
+## Campaign storage and recovery — verified 23 September 2026
+
+`src/campaign_save.gd` stores one `campaign.json` snapshot using the Save-v1 algorithm in its own
+module: bounded read (≤4096 bytes), strict JSON and exact numbers, stage to `.tmp`, re-read and
+verify, rotate the last valid primary to `.bak`, move the stage to primary, and restore from `.bak`
+if the commit fails. `OK` is returned only after the commit. A missing primary recovers from a
+valid backup; a corrupt, unsupported or unreadable primary is reported, never bypassed or
+overwritten, and disables saving for that launch. The store refuses any path not named
+`campaign.json`, so it cannot touch Save-v1. No fsync; single instance only.
+
+Four new headless tests use real files in disposable `user://progress-test-*` directories:
+every state-restoration and duplicate scenario re-run through disk; corrupt, oversize, fractional,
+wrong-format, Save-v1-payload, inconsistent and future-version files preserved byte-for-byte;
+write/flush, stage-open, verify-mismatch, rotation and commit failures with backup recovery and
+retry; mid-session read failure and corruption; crash-before-confirm keeping doctrine once; no
+absence progress; a sibling `progress.json` left byte-identical. Nothing is wired to the scene:
+**campaign autosave stays disabled** and no `user://campaign.json` is written.
+
+Run with `Godot_v4.7.2-stable_win64.exe`:
+- Import check: exit 0, no `ERROR:` lines.
+- Headless tests: `SUMMARY: 3174 checks, 0 failures`, exit 0 (236 new checks).
+- Forced failure: `SUMMARY: 3175 checks, 1 failures`, only `FAIL forced runner failure`, exit 1.
+- Immediate normal rerun: `SUMMARY: 3174 checks, 0 failures`, exit 0.
+- `tests/persistence_smoke.gd`: earn 13, reload 10, two-process 4 checks, 0 failures each.
+- Mutation sanity: skipping stage verification (6 failures) or backup rotation (10 failures)
+  failed the new tests; reverted byte-identical and rerun green.
+
+`src/progress_save.gd` and the campaign scene are unchanged. No presentation change, so graphical
+and Windows-driver runs were not repeated; the physical manual gate remains **pending**. CI was
+not run (no push); its local steps were replicated above.
+
+## Campaign save integration and exact resume — verified locally 23 September 2026
+
+The campaign scene now loads `user://campaign.json` at launch and autosaves after accepted
+transitions (see "Separate autosaved campaign prototype"). Tests never touch the player's file:
+headless scenes use no store or a disposable `user://progress-test-*` fixture, and the runner
+asserts the real `campaign.json`/`.tmp`/`.bak` are byte-identical before and after the run.
+
+New coverage:
+- Headless scene tests: missing/loaded/backup/damaged/unsupported/unreadable launch, every save
+  trigger equal to the captured state, no save on rounds or preview open/cancel, failed-save
+  retry, mid-session corruption, close-request and suspension saves, and purchase/settlement/
+  dynasty interruptions before write, between rotate and commit, and after commit.
+- `tests/campaign_persistence_smoke.gd`: eight fresh engine processes with a 1.2 s absence
+  between launches: damaged mid-round battle, fractional time, snapshot vs owned upgrade, queued
+  navigation, checkpoint and damaged gate restore exactly; an interrupted dynasty confirm restores
+  from backup and can be confirmed once; drill stays exactly 2×; dynasty 2 cannot reset again;
+  a sibling Save-v1 file stays byte-identical. CI runs it as its own step.
+
+Run with `Godot_v4.7.2-stable_win64.exe`:
+- Import check: exit 0, no `ERROR:` lines.
+- Headless tests: `SUMMARY: 3303 checks, 0 failures`, exit 0.
+- Forced failure: `SUMMARY: 3304 checks, 1 failures`, only `FAIL forced runner failure`, exit 1.
+- Immediate normal rerun: `SUMMARY: 3303 checks, 0 failures`, exit 0.
+- `tests/persistence_smoke.gd`: earn 13, reload 10, two-process 4 checks, 0 failures each.
+- Campaign cross-process smoke: all eight phases and two-process (12 checks), 0 failures.
+- Mutation sanity: removing the settlement save first went **undetected** because the close
+  request saved the same state; the smoke now stops after terminal settlements without a close
+  save, and the mutation fails it (`resume-conquest: settlement saved before any close request`).
+  Reverted byte-identical and rerun green.
+- `tests/scene_smoke.gd`: 105 graphical checks, 0 failures.
+- Windows driver: focus-only 13/0, campaign 56/0, dynasty 59/0, each with child exit 0, reaped
+  and reader joined, and "native suspension autosaved the exact frozen campaign".
+  Defense: the first run passed every gameplay check through campaign-secured, then stalled
+  inside the final screenshot write until the 65 s driver deadline (retained failure, cause not
+  proven). A timestamped diagnostic rerun passed 63/0 in 46.0 s, matching earlier 45.6–46.1 s runs.
+  Screenshots show the autosave notice, Saved status, updated preview copy and dynasty 2 at 2×.
+
+The physical manual gate remains **pending**.
+
 ## Boundaries
 
 Combat rules live only in `src/combat.gd`; `src/economy.gd` owns gold, troop
 levels, purchase validation, snapshot creation and once-only outcome settlement.
-`src/progress_save.gd` alone owns persistence I/O. The scene adapter loads before
+`src/progress_save.gd` owns Save-v1 persistence I/O and `src/campaign_save.gd` owns the
+separate campaign file, which the campaign scene loads at launch and autosaves after accepted
+transitions. The main scene adapter loads before
 combat creation and saves only accepted economy mutations; it also owns timing,
 the one-second result/replay timer and presentation. Fresh encounter data never
 shares mutable squads. The playable scene presents all three authored encounters,
@@ -1663,11 +1749,12 @@ its random/physics behavior is not used. The local specification and executable
 tests, not that unrelated demo, establish combat correctness.
 
 The default game has no automatic encounter advancement or gate/defense controls.
-The separate session-local campaign exposes gate upgrades, defense and one confirmed
-dynasty reset through its native UI; campaign persistence, final art and Android tooling
-remain unimplemented. The campaign save contract (`docs/campaign-save-contract.md`) is
-approved, but campaign persistence is not yet implemented. `src/campaign_state.gd` captures,
-validates and restores full campaign state in memory only (no file I/O, not wired to the scene).
+The separate autosaved campaign exposes gate upgrades, defense and one confirmed
+dynasty reset through its native UI; final art and Android tooling remain unimplemented.
+The campaign save contract (`docs/campaign-save-contract.md`) is implemented:
+`src/campaign_state.gd` captures, validates and restores full campaign state,
+`src/campaign_save.gd` stores and recovers it on disk, and `src/campaign_prototype.gd` wires
+launch restoration, save triggers and status feedback.
 Border Skirmish, Archer Position and
 Fortified Position repeat by manual selection; both older fixtures are unchanged.
 Viewport-injected input is **not physical mouse/touch verification**. Suspension tests exercise lifecycle notifications,
