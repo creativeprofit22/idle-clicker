@@ -4,8 +4,13 @@ const CampaignScene = preload("res://scenes/campaign_prototype.tscn")
 const Presentation = preload("res://src/campaign_prototype.gd")
 const Campaign = preload("res://src/campaign.gd")
 const Data = preload("res://src/encounter_data.gd")
+const CampaignSave = preload("res://src/campaign_save.gd")
+const CampaignState = preload("res://src/campaign_state.gd")
+const ProgressFixture = preload("res://tests/progress_fixture.gd")
 const OUTPUT: String = "res://.gg/screenshots/campaign/"
 var scene: Presentation
+# Isolated campaign save; the player's real campaign file is never touched.
+var fixture: ProgressFixture
 var checks: int = 0
 var failures: int = 0
 var watching_focus: bool = false
@@ -34,7 +39,7 @@ func audit_foreground() -> void:
 		check(false, "foreground interrupted (mode=%d focus=%s suspended=%s)" % [root.mode, root.has_focus(), scene.suspended])
 		print("SUMMARY: campaign: incomplete — foreground interrupted; %d checks, %d failures" % [checks, failures])
 		if not manual:
-			quit(1)
+			quit_after_cleanup(1)
 		else:
 			root.title = "Focus was interrupted — test will report failure, window stays open"
 
@@ -45,7 +50,7 @@ func run() -> void:
 		return
 	if native_driver:
 		auto_accept_quit = false
-		root.close_requested.connect(func() -> void: quit(exit_status))
+		root.close_requested.connect(func() -> void: quit_after_cleanup(exit_status))
 	watchdog = create_timer(60.0)
 	watchdog.timeout.connect(func() -> void:
 		check(false, "campaign smoke timeout; SUMMARY: incomplete")
@@ -56,7 +61,7 @@ func run() -> void:
 		return
 	if manual:
 		auto_accept_quit = false
-		root.close_requested.connect(func() -> void: quit(exit_status))
+		root.close_requested.connect(func() -> void: quit_after_cleanup(exit_status))
 		root.title = "Campaign check — click Start when YOU are ready"
 		var start := Button.new()
 		start.text = "START WHEN READY\nThen keep this window selected until the MINIMIZE prompt.\nThere is no countdown. The window stays open afterward."
@@ -70,7 +75,10 @@ func run() -> void:
 		watchdog.time_left = 60.0
 	check(DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUTPUT)) == OK,
 		"capture directory available")
+	fixture = ProgressFixture.new("campaign.json")
+	check(fixture.owned, "isolated campaign save directory owned")
 	scene = CampaignScene.instantiate()
+	scene.campaign_save = CampaignSave.new(fixture.path) if fixture.owned else null
 	root.add_child(scene)
 	current_scene = scene
 	root.grab_focus()
@@ -224,8 +232,9 @@ func test_dynasty() -> bool:
 		and losses.contains("all return to level 1") and losses.contains("territory and security")
 		and losses.contains("fractional round time") and losses.contains("2× squad damage after level additions")
 		and losses.contains("health, gold rewards and round frequency are unchanged")
-		and losses.contains("only reset/bonus for this session") and losses.contains("main-game saves are untouched"),
-		"native preview discloses actual losses, exact benefit and session limits")
+		and losses.contains("only dynasty reset") and losses.contains("Inherited Drill is kept in the campaign save")
+		and losses.contains("main-game saves are untouched"),
+		"native preview discloses actual losses, exact benefit and save limits")
 	# Opening already focused Cancel; use actual focus transitions, not a no-op grab.
 	for name in ["ConfirmDynasty", "CancelDynasty", "ConfirmDynasty"]:
 		var button: Button = scene.get_node("%" + name)
@@ -493,6 +502,10 @@ func test_native_resume(expected_phase: Campaign.Phase = Campaign.Phase.RUNNING)
 	check(Time.get_ticks_usec() - frozen_start >= 1200000,
 		"native frozen interval covers at least 1.2s of monotonic time")
 	check(true, "native minimized interval freezes same active battle, rounds, accumulated time and gate")
+	var captured := CampaignState.capture(scene.campaign, scene.elapsed_usec)
+	check(scene.get_node("%SaveStatus").text == "Saved" and captured.outcome == CampaignState.Outcome.VALID
+		and CampaignSave._state_of(CampaignSave.new(fixture.path).load_campaign()) == captured.state,
+		"native suspension autosaved the exact frozen campaign to the isolated file")
 	if native_driver:
 		native_driver_request("restore")
 	else:
@@ -583,7 +596,28 @@ func finish() -> void:
 	print("SUMMARY: campaign: %d graphical checks, %d failures" % [checks, failures])
 	end_run(0 if failures == 0 else 1)
 
+func cleanup_fixture() -> void:
+	if scene != null:
+		# Later close requests must not recreate the removed fixture.
+		scene.saving_enabled = false
+	if fixture != null and fixture.owned:
+		var error := fixture.cleanup()
+		print("CLEANUP: campaign save fixture %s" % ("removed" if error == OK else "NOT removed (%d)" % error))
+		if error != OK:
+			failures += 1
+
+# Every early exit must remove the isolated fixture, not only the normal finish.
+func quit_after_cleanup(code: int) -> void:
+	cleanup_fixture()
+	quit(code if failures == 0 else maxi(code, 1))
+
+func _finalize() -> void:
+	cleanup_fixture()
+
 func end_run(code: int) -> void:
+	cleanup_fixture()
+	if code == 0 and failures > 0:
+		code = 1
 	exit_status = code
 	if not manual and not native_driver:
 		quit(code)

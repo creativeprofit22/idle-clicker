@@ -11,6 +11,7 @@ const CampaignPresentation = preload("res://src/campaign_prototype.gd")
 const ProgressSave = preload("res://src/progress_save.gd")
 const ProgressFixture = preload("res://tests/progress_fixture.gd")
 const CampaignState = preload("res://src/campaign_state.gd")
+const CampaignSave = preload("res://src/campaign_save.gd")
 
 # Only the OS window-state read is substituted; lifecycle, controls and clock are real.
 class CampaignWindowFixture extends CampaignPresentation:
@@ -47,8 +48,38 @@ class PreflightFailingSave extends ProgressSave:
 				return {"outcome": Outcome.IO_FAILURE}
 		return super._read(source)
 
+class FailingCampaignSave extends CampaignSave:
+	var fail_write: bool = false
+	var alter_stage: bool = false
+	var fail_move_to: String = ""
+	var move_failures_left: int = -1 # -1: every move to fail_move_to fails.
+	func _write_stage(destination: String, text: String) -> Error:
+		# alter_stage writes a valid but different snapshot, so only verification can catch it.
+		var error := super._write_stage(destination, text.replace('"gold":', '"gold":1') if alter_stage else text)
+		return ERR_FILE_CANT_WRITE if fail_write else error
+	func _move(source: String, destination: String) -> Error:
+		if destination == fail_move_to and move_failures_left != 0:
+			if move_failures_left > 0:
+				move_failures_left -= 1
+			return ERR_FILE_CANT_WRITE
+		return super._move(source, destination)
+
+class PreflightFailingCampaignSave extends CampaignSave:
+	var fail_primary_read: bool = false
+	var primary_reads: int = 0
+	func _read(source: String) -> Dictionary:
+		if source == path:
+			primary_reads += 1
+			if fail_primary_read:
+				return {"outcome": Outcome.IO_FAILURE}
+		return super._read(source)
+
 var checks: int = 0
 var failures: int = 0
+# When set, state round trips go through real files in an isolated fixture directory.
+var state_store: CampaignSave = null
+# The player's real campaign save (if any) must be byte-identical before and after the run.
+var player_campaign_files: Dictionary = {}
 
 func check(condition: bool, title: String) -> void:
 	checks += 1
@@ -59,7 +90,15 @@ func check(condition: bool, title: String) -> void:
 func _initialize() -> void:
 	run.call_deferred()
 
+func player_campaign_snapshot() -> Dictionary:
+	var files: Dictionary = {}
+	for suffix in ["", ".tmp", ".bak"]:
+		var entry: String = "user://campaign.json" + suffix
+		files[suffix] = FileAccess.get_file_as_bytes(entry) if FileAccess.file_exists(entry) else null
+	return files
+
 func run() -> void:
+	player_campaign_files = player_campaign_snapshot()
 	var passive := Combat.new()
 	check(passive.rounds == 0 and passive.enemies[0].health == 72, "initial: no damage")
 	for i in range(4):
@@ -151,12 +190,29 @@ func run() -> void:
 	test_campaign_state_round_trips()
 	test_campaign_state_duplicates()
 	test_campaign_state_rejection()
+	test_campaign_save_round_trips()
+	test_campaign_save_format()
+	test_campaign_save_failures()
+	test_campaign_save_isolation()
+	test_campaign_scene_saves()
+	test_campaign_scene_interruptions()
+	check(player_campaign_snapshot() == player_campaign_files,
+		"Campaign save isolation: player campaign save files unchanged by the whole run")
 	if "--force-failure" in OS.get_cmdline_user_args():
 		check(false, "forced runner failure")
 	print("SUMMARY: %d checks, %d failures" % [checks, failures])
 	quit(0 if failures == 0 else 1)
 
 func state_json(state: Dictionary) -> Variant:
+	if state_store != null:
+		# Disk mode: save through the store, then return the parsed bytes actually on disk.
+		var source := CampaignState.restore(state)
+		var saved: bool = source.outcome == CampaignState.Outcome.VALID \
+			and state_store.save_campaign(source.campaign, source.round_progress_usec) == OK
+		var loaded := CampaignSave.new(state_store.path).load_campaign()
+		check(saved and loaded.outcome == CampaignSave.Outcome.LOADED and CampaignSave._state_of(loaded) == state,
+			"Campaign save: state saved and reloaded exactly from disk")
+		return JSON.parse_string(FileAccess.get_file_as_string(state_store.path))
 	# In-memory JSON round trip only: integers come back as floats, nothing touches disk.
 	return JSON.parse_string(JSON.stringify(state))
 
@@ -170,13 +226,21 @@ func state_scene(campaign: Campaign, elapsed: int = 0) -> CampaignPresentation:
 func state_restore(original: CampaignPresentation, title: String) -> CampaignPresentation:
 	var captured := CampaignState.capture(original.campaign, original.elapsed_usec)
 	var restored: Dictionary = {"outcome": CampaignState.Outcome.UNSAVABLE}
-	if captured.outcome == CampaignState.Outcome.VALID:
+	if captured.outcome == CampaignState.Outcome.VALID and state_store != null:
+		# Disk mode: a fresh store loads what this store saved.
+		var saved := state_store.save_campaign(original.campaign, original.elapsed_usec)
+		var loaded := CampaignSave.new(state_store.path).load_campaign()
+		if saved == OK and loaded.outcome == CampaignSave.Outcome.LOADED and not loaded.has("recovered"):
+			restored = {"outcome": CampaignState.Outcome.VALID, "campaign": loaded.campaign,
+				"round_progress_usec": loaded.round_progress_usec}
+	elif captured.outcome == CampaignState.Outcome.VALID:
 		restored = CampaignState.restore(state_json(captured.state))
 	var valid: bool = restored.outcome == CampaignState.Outcome.VALID
 	var again: Dictionary = CampaignState.capture(restored.campaign, restored.round_progress_usec) if valid else {}
 	check(valid and again.get("state") == captured.state
 		and restored.campaign != original.campaign and restored.campaign.battle != original.campaign.battle,
-		"Campaign state: capture/JSON/restore/capture is exact and independent: " + title)
+		("Campaign save: save/load through real file is exact and independent: " if state_store != null
+			else "Campaign state: capture/JSON/restore/capture is exact and independent: ") + title)
 	# A failed restore yields a fresh scene so later comparisons fail instead of crashing.
 	return state_scene(restored.campaign, restored.round_progress_usec) if valid else campaign_scene_new()
 
@@ -548,12 +612,491 @@ func test_campaign_state_rejection() -> void:
 		and CampaignState.capture(Campaign.new(), 0).outcome == CampaignState.Outcome.UNSAVABLE
 		and CampaignState.capture(running, CampaignState.ROUND_USEC).outcome == CampaignState.Outcome.UNSAVABLE,
 		"Campaign state: capture refuses inconsistent doctrine, missing battle and whole-round progress")
-	check(not FileAccess.file_exists("user://campaign.json"), "Campaign state: no campaign file written")
+	check(player_campaign_snapshot() == player_campaign_files, "Campaign state: player campaign save files unchanged")
 
-func campaign_scene_new(script: GDScript = CampaignPresentation) -> CampaignPresentation:
+func campaign_running(rounds: int = 2, gold: int = 7) -> Campaign:
+	var campaign := Campaign.new()
+	campaign.gold = gold # Isolated storage fixture value; combat uses real rounds.
+	campaign.restart_battle()
+	for i in range(rounds):
+		campaign.battle.step_round()
+	return campaign
+
+func campaign_state_of(path: String) -> Variant:
+	return CampaignSave._state_of(CampaignSave.new(path).load_campaign())
+
+func test_campaign_save_round_trips() -> void:
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Campaign save: isolated directory owned")
+	if not fixture.owned:
+		return
+	var store := CampaignSave.new(fixture.path)
+	check(store.load_campaign().outcome == CampaignSave.Outcome.MISSING and not FileAccess.file_exists(fixture.path),
+		"Campaign save: missing file loads as missing and writes nothing")
+	var queued := campaign_running(0)
+	queued.battle.queue_commander()
+	check(store.save_campaign(queued, 0) == ERR_INVALID_DATA and not FileAccess.file_exists(fixture.path)
+		and not FileAccess.file_exists(fixture.path + ".tmp"), "Campaign save: unsavable queued strike refused before any I/O")
+	check(fixture.put("abandoned", ".tmp") == OK and CampaignSave.new(fixture.path).load_campaign().outcome == CampaignSave.Outcome.MISSING,
+		"Campaign save: abandoned stage ignored")
+	# Every restoration and duplicate scenario, re-run through real files.
+	state_store = store
+	test_campaign_state_round_trips()
+	test_campaign_state_duplicates()
+	state_store = null
+	# Largest values stay within the bounded read.
+	var rich := state_secured()
+	rich.gold = ProgressSave.MAX_GOLD
+	var big := campaign_running(1, ProgressSave.MAX_GOLD)
+	for campaign in [rich, big]:
+		var size_ok: bool = store.save_campaign(campaign, 999999 if campaign == big else 0) == OK
+		var length := FileAccess.get_file_as_bytes(fixture.path).size()
+		var loaded := CampaignSave.new(fixture.path).load_campaign()
+		check(size_ok and length > 0 and length <= ProgressSave.MAX_BYTES and loaded.outcome == CampaignSave.Outcome.LOADED
+			and loaded.campaign.gold == ProgressSave.MAX_GOLD, "Campaign save: max-gold snapshot fits %d bytes and loads" % length)
+	var first := CampaignSave.new(fixture.path).load_campaign()
+	first.campaign.gold = 1
+	first.campaign.battle.step_round()
+	var second := CampaignSave.new(fixture.path).load_campaign()
+	check(second.campaign.gold == ProgressSave.MAX_GOLD and second.campaign.battle.rounds == 1
+		and second.campaign != first.campaign, "Campaign save: returned campaigns are independent")
+	check(fixture.cleanup() == OK, "Campaign save: round-trip directory cleaned")
+
+func test_campaign_save_format() -> void:
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Campaign save format: isolated directory owned")
+	if not fixture.owned:
+		return
+	var base: Dictionary = CampaignState.capture(campaign_running(), 250000).state
+	var valid: String = JSON.stringify(base)
+	check(valid.contains('"gold":7') and valid.ends_with('"version":1}'), "Campaign save format: canonical integer text")
+	var backup: String = JSON.stringify(CampaignState.capture(campaign_running(1), 0).state)
+	check(fixture.put(backup, ".bak") == OK, "Campaign save format: valid backup beside every primary")
+	var mutated := func(mutate: Callable) -> String:
+		var state: Dictionary = base.duplicate(true)
+		mutate.call(state)
+		return JSON.stringify(state)
+	var corrupt: Array[String] = ["", "{", "not json", "[]", "null", "{}", " ".repeat(4097),
+		valid + " ".repeat(4097 - valid.length()),
+		valid.replace('"gold":7', '"gold":0.5'),
+		valid.replace('"gold":7', '"gold":1.00000000000000001'),
+		valid.replace('"gold":7', '"gold":9007199254740992'),
+		valid.replace('"gold":7', '"gold":1e999'),
+		valid.replace('"gold":7', '"gold":"7"'),
+		'{"version":1,"gold":0,"levels":[1,1,1]}',
+		mutated.call(func(s: Dictionary) -> void: s["extra"] = 0),
+		mutated.call(func(s: Dictionary) -> void: s.erase("gold")),
+		mutated.call(func(s: Dictionary) -> void: s.erase("format")),
+		mutated.call(func(s: Dictionary) -> void: s.format = "idle-clicker-progress"),
+		mutated.call(func(s: Dictionary) -> void: s.cleared = [false, true, false]),
+		mutated.call(func(s: Dictionary) -> void: s.battle.player_health[0] = 121),
+		mutated.call(func(s: Dictionary) -> void: s.settled = true)]
+	check(corrupt[7].length() == 4097, "Campaign save format: oversize fixture is 4097 bytes")
+	var unsupported: Array[String] = [mutated.call(func(s: Dictionary) -> void: s.version = 2),
+		'{"format":"idle-clicker-campaign","version":99,"gold":"future payload"}']
+	var replacement := campaign_running(3)
+	for expected in [CampaignSave.Outcome.CORRUPT, CampaignSave.Outcome.UNSUPPORTED]:
+		for text: String in (corrupt if expected == CampaignSave.Outcome.CORRUPT else unsupported):
+			check(fixture.put(text) == OK, "Campaign save format: invalid fixture written")
+			var rejected := CampaignSave.new(fixture.path)
+			var loaded := rejected.load_campaign()
+			check(loaded.outcome == expected and not loaded.has("campaign") and not loaded.has("recovered")
+				and rejected.save_campaign(replacement, 0) == ERR_UNAUTHORIZED
+				and FileAccess.get_file_as_bytes(fixture.path) == text.to_utf8_buffer()
+				and FileAccess.get_file_as_string(fixture.path + ".bak") == backup
+				and not FileAccess.file_exists(fixture.path + ".tmp"),
+				"Campaign save format: %s preserved, never overwritten, no backup bypass"
+				% ("corrupt" if expected == CampaignSave.Outcome.CORRUPT else "unsupported"))
+	for text in [valid.replace('"gold":7', '"gold":70e-1').replace('"version":1}', '"version":1.0}'),
+			valid.replace('"gold":7', '"gold":7E0')]:
+		check(fixture.put(text) == OK and campaign_state_of(fixture.path) == base,
+			"Campaign save format: exact whole decimal and exponent forms accepted")
+	check(fixture.cleanup() == OK, "Campaign save format: directory cleaned")
+
+func test_campaign_save_failures() -> void:
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Campaign save failures: isolated directory owned")
+	if not fixture.owned:
+		return
+	var path: String = fixture.path
+	var good := campaign_running(2)
+	var good_state: Dictionary = CampaignState.capture(good, 250000).state
+	var store := FailingCampaignSave.new(path)
+	check(store.save_campaign(good, 250000) == OK and campaign_state_of(path) == good_state, "Campaign save failures: baseline")
+	var before := FileAccess.get_file_as_bytes(path)
+	var next := campaign_running(3, 9)
+	var next_state: Dictionary = CampaignState.capture(next, 500000).state
+	store.fail_write = true
+	check(store.save_campaign(next, 500000) == ERR_FILE_CANT_WRITE and FileAccess.get_file_as_bytes(path) == before,
+		"Campaign save failures: write/flush failure reported, primary preserved")
+	store.fail_write = false
+	check(DirAccess.remove_absolute(path + ".tmp") == OK and DirAccess.make_dir_absolute(path + ".tmp") == OK,
+		"Campaign save failures: real blocked staging path")
+	check(store.save_campaign(next, 500000) != OK and FileAccess.get_file_as_bytes(path) == before,
+		"Campaign save failures: staging open failure reported, primary preserved")
+	check(DirAccess.remove_absolute(path + ".tmp") == OK, "Campaign save failures: staging obstruction removed")
+	store.alter_stage = true
+	check(store.save_campaign(next, 500000) == ERR_FILE_CORRUPT and FileAccess.get_file_as_bytes(path) == before
+		and not FileAccess.file_exists(path + ".bak"), "Campaign save failures: stage verification mismatch refused before rotation")
+	store.alter_stage = false
+	check(DirAccess.make_dir_absolute(path + ".bak") == OK, "Campaign save failures: real backup obstruction")
+	check(store.save_campaign(next, 500000) != OK and FileAccess.get_file_as_bytes(path) == before,
+		"Campaign save failures: backup rotation failure reported, primary preserved")
+	check(DirAccess.remove_absolute(path + ".bak") == OK, "Campaign save failures: backup obstruction removed")
+	store.fail_move_to = path
+	check(store.save_campaign(next, 500000) != OK and not FileAccess.file_exists(path)
+		and FileAccess.get_file_as_bytes(path + ".bak") == before,
+		"Campaign save failures: failed commit and restore retain last-good backup")
+	var recovered := CampaignSave.new(path).load_campaign()
+	check(recovered.outcome == CampaignSave.Outcome.LOADED and recovered.get("recovered", false)
+		and CampaignSave._state_of(recovered) == good_state, "Campaign save failures: missing primary recovered from validated backup")
+	store.fail_move_to = ""
+	check(store.save_campaign(next, 500000) == OK and campaign_state_of(path) == next_state
+		and FileAccess.get_file_as_bytes(path + ".bak") == before, "Campaign save failures: retry saves full state, backup retained")
+	# Commit failure with a working restore puts the last-good primary back.
+	var committed := FileAccess.get_file_as_bytes(path)
+	var restorer := FailingCampaignSave.new(path)
+	check(restorer.load_campaign().outcome == CampaignSave.Outcome.LOADED, "Campaign save failures: restorer loaded")
+	restorer.fail_move_to = path
+	restorer.move_failures_left = 1
+	check(restorer.save_campaign(good, 250000) == ERR_FILE_CANT_WRITE and FileAccess.get_file_as_bytes(path) == committed
+		and FileAccess.get_file_as_bytes(path + ".bak") == committed and not FileAccess.file_exists(path + ".tmp"),
+		"Campaign save failures: failed commit reported, last-good primary restored from backup")
+	check(CampaignSave.new(path).load_campaign().get("recovered", false) == false and campaign_state_of(path) == next_state,
+		"Campaign save failures: restored primary loads directly")
+	# Unreadable primary: reported, preserved, backup not bypassed.
+	check(DirAccess.remove_absolute(path) == OK and DirAccess.make_dir_absolute(path) == OK, "Campaign save failures: unreadable primary directory")
+	var unreadable := CampaignSave.new(path)
+	check(unreadable.load_campaign().outcome == CampaignSave.Outcome.IO_FAILURE and unreadable.save_campaign(next, 0) == ERR_UNAUTHORIZED
+		and DirAccess.dir_exists_absolute(path) and FileAccess.get_file_as_bytes(path + ".bak") == committed,
+		"Campaign save failures: unreadable primary preserved, saving disabled, backup not bypassed")
+	check(DirAccess.remove_absolute(path) == OK and fixture.put(committed.get_string_from_utf8()) == OK,
+		"Campaign save failures: primary restored for session tests")
+	# Mid-session transient read failure: retry allowed, nothing staged.
+	var session := PreflightFailingCampaignSave.new(path)
+	check(session.load_campaign().outcome == CampaignSave.Outcome.LOADED and not FileAccess.file_exists(path + ".tmp"),
+		"Campaign save failures: session loaded without stale stage")
+	session.fail_primary_read = true
+	check(session.save_campaign(good, 250000) == ERR_FILE_CANT_READ and not FileAccess.file_exists(path + ".tmp")
+		and FileAccess.get_file_as_bytes(path) == committed, "Campaign save failures: mid-session read failure stages nothing")
+	session.fail_primary_read = false
+	var reads := session.primary_reads
+	check(session.save_campaign(good, 250000) == OK and session.primary_reads > reads and campaign_state_of(path) == good_state,
+		"Campaign save failures: retry rereads primary and saves")
+	# Mid-session corruption: refused permanently for this launch, bytes preserved.
+	check(fixture.put("{") == OK, "Campaign save failures: primary corrupted after accepted load")
+	check(session.save_campaign(next, 500000) == ERR_UNAUTHORIZED and FileAccess.get_file_as_string(path) == "{"
+		and session.get_preservation_outcome() == CampaignSave.Outcome.CORRUPT, "Campaign save failures: mid-session corruption preserved")
+	check(fixture.put(committed.get_string_from_utf8()) == OK and session.save_campaign(next, 500000) == ERR_UNAUTHORIZED
+		and FileAccess.get_file_as_bytes(path) == committed, "Campaign save failures: saving stays disabled for the launch")
+	check(fixture.cleanup() == OK, "Campaign save failures: directory cleaned")
+	# Crash before an acknowledged dynasty confirmation: pre-confirm security, doctrine exactly once.
+	var dynasty := ProgressFixture.new("campaign.json")
+	check(dynasty.owned, "Campaign save dynasty: isolated directory owned")
+	if not dynasty.owned:
+		return
+	var secured := state_secured()
+	var secured_state: Dictionary = CampaignState.capture(secured, 0).state
+	var founder := FailingCampaignSave.new(dynasty.path)
+	check(founder.save_campaign(secured, 0) == OK, "Campaign save dynasty: secured dynasty 1 saved")
+	secured.found_dynasty()
+	founder.fail_move_to = dynasty.path
+	check(secured.dynasty == 2 and founder.save_campaign(secured, 0) != OK, "Campaign save dynasty: confirmation save failed")
+	var relaunch := CampaignSave.new(dynasty.path).load_campaign()
+	check(relaunch.outcome == CampaignSave.Outcome.LOADED and CampaignSave._state_of(relaunch) == secured_state
+		and relaunch.campaign.dynasty == 1 and relaunch.campaign.can_found_dynasty(),
+		"Campaign save dynasty: unacknowledged confirm reloads pre-confirm security")
+	var successor: Campaign = relaunch.campaign
+	var founded := successor.found_dynasty() != null
+	var damage: Array[int] = []
+	for squad in successor.battle.players:
+		damage.append(squad.damage)
+	check(founded and successor.dynasty == 2 and damage == [8, 16, 12] and successor.found_dynasty() == null,
+		"Campaign save dynasty: single confirm gives exactly 2x doctrine, no second reset")
+	founder.fail_move_to = ""
+	var again := CampaignSave.new(dynasty.path)
+	check(again.load_campaign().get("recovered", false) and again.save_campaign(successor, 0) == OK, "Campaign save dynasty: successor saved")
+	var reloaded := CampaignSave.new(dynasty.path).load_campaign()
+	damage.clear()
+	for squad in reloaded.campaign.battle.players:
+		damage.append(squad.damage)
+	check(reloaded.campaign.dynasty == 2 and damage == [8, 16, 12] and not reloaded.campaign.can_found_dynasty(),
+		"Campaign save dynasty: relaunched successor keeps doctrine once, no reset")
+	# No absence progress: a real delay changes nothing about the loaded battle.
+	var paused := campaign_running(2)
+	var paused_state: Dictionary = CampaignState.capture(paused, 750000).state
+	check(CampaignSave.new(dynasty.path).save_campaign(paused, 750000) == OK, "Campaign save absence: battle saved")
+	OS.delay_msec(1200)
+	var resumed := CampaignSave.new(dynasty.path).load_campaign()
+	check(CampaignSave._state_of(resumed) == paused_state and resumed.campaign.battle.rounds == 2
+		and resumed.round_progress_usec == 750000, "Campaign save absence: elapsed time adds no rounds, damage or progress")
+	check(dynasty.cleanup() == OK, "Campaign save dynasty: directory cleaned")
+
+func test_campaign_save_isolation() -> void:
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Campaign save isolation: isolated directory owned")
+	if not fixture.owned:
+		return
+	var progress_path: String = fixture.directory.path_join("progress.json")
+	var levels: Array[int] = [2, 1, 1]
+	check(ProgressSave.new(progress_path).save_progress(10, levels) == OK, "Campaign save isolation: sibling Save-v1 written")
+	var progress_bytes := FileAccess.get_file_as_bytes(progress_path)
+	var store := FailingCampaignSave.new(fixture.path)
+	var ok: bool = store.save_campaign(campaign_running(1), 0) == OK and store.save_campaign(campaign_running(2), 0) == OK
+	store.fail_move_to = fixture.path
+	ok = ok and store.save_campaign(campaign_running(3), 0) != OK
+	store.fail_move_to = ""
+	ok = ok and store.save_campaign(campaign_running(3), 0) == OK and fixture.put("{") == OK
+	ok = ok and CampaignSave.new(fixture.path).save_campaign(campaign_running(4), 0) == ERR_UNAUTHORIZED
+	check(ok, "Campaign save isolation: campaign saves, failures and refusals exercised")
+	check(FileAccess.get_file_as_bytes(progress_path) == progress_bytes and not FileAccess.file_exists(progress_path + ".tmp")
+		and not FileAccess.file_exists(progress_path + ".bak"), "Campaign save isolation: sibling Save-v1 bytes untouched")
+	var misdirected := CampaignSave.new(progress_path)
+	check(misdirected.load_campaign().outcome == CampaignSave.Outcome.IO_FAILURE
+		and misdirected.save_campaign(campaign_running(1), 0) == ERR_UNAUTHORIZED
+		and FileAccess.get_file_as_bytes(progress_path) == progress_bytes and not FileAccess.file_exists(progress_path + ".tmp"),
+		"Campaign save isolation: store refuses a Save-v1 path")
+	var loaded := ProgressSave.new(progress_path).load_progress()
+	check(loaded.outcome == ProgressSave.Outcome.LOADED and loaded.gold == 10 and loaded.levels == levels,
+		"Campaign save isolation: Save-v1 still loads unchanged")
+	check(fixture.cleanup() == OK, "Campaign save isolation: directory cleaned")
+	check(player_campaign_snapshot() == player_campaign_files,
+		"Campaign save isolation: player campaign save files unchanged")
+
+func scene_saved_exactly(scene: CampaignPresentation, path: String) -> bool:
+	var captured := CampaignState.capture(scene.campaign, scene.elapsed_usec)
+	return captured.outcome == CampaignState.Outcome.VALID and campaign_state_of(path) == captured.state
+
+func scene_state(scene: CampaignPresentation) -> Variant:
+	var captured := CampaignState.capture(scene.campaign, scene.elapsed_usec)
+	return captured.state if captured.outcome == CampaignState.Outcome.VALID else null
+
+func test_campaign_scene_saves() -> void:
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Campaign scene saves: isolated directory owned")
+	if not fixture.owned:
+		return
+	var path: String = fixture.path
+	var progress_path: String = fixture.directory.path_join("progress.json")
+	var v1_levels: Array[int] = [2, 1, 1]
+	check(ProgressSave.new(progress_path).save_progress(10, v1_levels) == OK, "Campaign scene saves: sibling Save-v1 written")
+	var v1_bytes := FileAccess.get_file_as_bytes(progress_path)
+	# Missing save: fresh session; the first accepted trigger creates the file.
+	var scene := campaign_scene_new(CampaignWindowFixture, CampaignSave.new(path)) as CampaignWindowFixture
+	check(scene.saving_enabled and scene.get_node("%SaveStatus").text == "Autosave on"
+		and scene.campaign.gold == 0 and scene.campaign.battle.rounds == 0 and not FileAccess.file_exists(path),
+		"Campaign scene saves: missing save starts fresh without writing")
+	scene.advance_usec(2500000)
+	check(scene.campaign.battle.rounds == 2 and not FileAccess.file_exists(path), "Campaign scene saves: rounds alone never save")
+	scene.advance_time(120.0)
+	check(scene.campaign.border_cleared and scene.campaign.gold == 10 and scene.elapsed_usec == 0
+		and scene.get_node("%SaveStatus").text == "Saved" and scene_saved_exactly(scene, path),
+		"Campaign scene saves: settlement saves reward, clearance and routing together")
+	var bytes := FileAccess.get_file_as_bytes(path)
+	scene.upgrades[0].pressed.emit()
+	check(scene.campaign.levels[0] == 1 and FileAccess.get_file_as_bytes(path) == bytes,
+		"Campaign scene saves: rejected purchase writes nothing")
+	campaign_scene_finish(scene)
+	scene.advance_usec(1250000)
+	scene.upgrades[0].pressed.emit()
+	check(scene.campaign.levels[0] == 2 and scene.campaign.battle.players[0].damage == 4 and scene.elapsed_usec == 250000
+		and scene.get_node("%SaveStatus").text == "Saved" and scene_saved_exactly(scene, path),
+		"Campaign scene saves: mid-battle purchase saves owned level, snapshot and fractional time")
+	scene.get_node("%FarmBorder").pressed.emit()
+	check(scene.campaign.pending_navigation == Campaign.Navigation.FARM and scene_saved_exactly(scene, path),
+		"Campaign scene saves: queued farm saved")
+	scene.advance_usec(300000)
+	scene.notification(Node.NOTIFICATION_WM_CLOSE_REQUEST)
+	check(scene.elapsed_usec == 550000 and scene_saved_exactly(scene, path), "Campaign scene saves: close request saves mid-round progress")
+	scene.advance_usec(100000)
+	scene.set_reason(0, true)
+	check(scene.suspended and scene.elapsed_usec == 650000 and scene_saved_exactly(scene, path),
+		"Campaign scene saves: entering suspension saves mid-round progress")
+	scene.set_reason(0, false)
+	campaign_scene_finish(scene)
+	check(scene.campaign.mode == Campaign.Mode.FARM and scene_saved_exactly(scene, path),
+		"Campaign scene saves: queued farm routed and saved")
+	scene.get_node("%Frontier").pressed.emit()
+	check(scene.campaign.pending_navigation == Campaign.Navigation.FRONTIER and scene_saved_exactly(scene, path),
+		"Campaign scene saves: queued frontier saved")
+	var expected: Variant = scene_state(scene)
+	scene.free()
+	# Relaunch: exact state, resume message, first frame excluded.
+	var loaded := campaign_scene_new(CampaignPresentation, CampaignSave.new(path))
+	check(loaded.get_node("%SaveStatus").text == "Autosave on" and loaded.get_node("%LastResult").text == "Resumed saved campaign"
+		and scene_state(loaded) == expected and loaded.skip_resume_frame, "Campaign scene saves: relaunch restores exact state")
+	loaded.advance_usec(9000000)
+	loaded.advance_usec(CampaignPresentation.ROUND_USEC - loaded.elapsed_usec - 1)
+	check(loaded.campaign.battle.rounds == 0, "Campaign scene saves: loaded first frame and absence add no rounds")
+	loaded.free()
+	# Missing primary: validated backup restored.
+	if FileAccess.file_exists(path + ".bak"):
+		DirAccess.remove_absolute(path + ".bak")
+	check(DirAccess.rename_absolute(path, path + ".bak") == OK, "Campaign scene saves: primary moved to backup")
+	var recovered := campaign_scene_new(CampaignPresentation, CampaignSave.new(path))
+	check(recovered.get_node("%SaveStatus").text == "Restored from backup" and scene_state(recovered) == expected,
+		"Campaign scene saves: backup restore shown and exact")
+	recovered.notification(Node.NOTIFICATION_WM_CLOSE_REQUEST)
+	check(recovered.get_node("%SaveStatus").text == "Saved" and scene_saved_exactly(recovered, path),
+		"Campaign scene saves: recovered session saves a new primary")
+	recovered.free()
+	# Unusable primaries: fresh session, saving disabled, file preserved.
+	var unsupported_state: Dictionary = (expected as Dictionary).duplicate(true)
+	unsupported_state.version = 2
+	var backup_bytes := FileAccess.get_file_as_bytes(path + ".bak")
+	for case in [["{", "damaged"], [JSON.stringify(unsupported_state), "from an unsupported version"], ["", "unreadable"]]:
+		if case[1] == "unreadable":
+			DirAccess.remove_absolute(path)
+			DirAccess.make_dir_absolute(path)
+		else:
+			fixture.put(case[0])
+		var refused := campaign_scene_new(CampaignPresentation, CampaignSave.new(path))
+		check(not refused.saving_enabled and refused.campaign.gold == 0 and not refused.campaign.border_cleared
+			and refused.get_node("%SaveStatus").text == "Saving disabled: campaign save %s, preserved. This session will not be kept." % case[1],
+			"Campaign scene saves: %s save starts fresh with saving disabled" % case[1])
+		refused.advance_time(120.0)
+		refused.notification(Node.NOTIFICATION_WM_CLOSE_REQUEST)
+		var preserved: bool = DirAccess.dir_exists_absolute(path) if case[1] == "unreadable" \
+			else FileAccess.get_file_as_string(path) == case[0]
+		check(refused.campaign.border_cleared and preserved and FileAccess.get_file_as_bytes(path + ".bak") == backup_bytes
+			and not FileAccess.file_exists(path + ".tmp") and refused.get_node("%SaveStatus").text.begins_with("Saving disabled"),
+			"Campaign scene saves: %s save preserved, backup not bypassed" % case[1])
+		refused.free()
+	DirAccess.remove_absolute(path)
+	# Failed write: memory kept, retry on next trigger saves the full state.
+	check(CampaignSave.new(path).save_campaign(campaign_running(1, 100), 400000) == OK, "Campaign scene saves: funded fixture saved")
+	var failing := FailingCampaignSave.new(path)
+	var retry := campaign_scene_new(CampaignPresentation, failing)
+	bytes = FileAccess.get_file_as_bytes(path)
+	failing.fail_write = true
+	retry.upgrades[0].pressed.emit()
+	check(retry.campaign.levels == [2, 1, 1] and retry.campaign.gold == 80 and FileAccess.get_file_as_bytes(path) == bytes
+		and retry.get_node("%SaveStatus").text == "Progress not saved — will retry",
+		"Campaign scene saves: failed save keeps memory and last good file")
+	failing.fail_write = false
+	retry.upgrades[1].pressed.emit()
+	check(retry.campaign.levels == [2, 2, 1] and retry.get_node("%SaveStatus").text == "Saved" and scene_saved_exactly(retry, path),
+		"Campaign scene saves: next trigger retries and saves full state")
+	check(fixture.put("{") == OK, "Campaign scene saves: primary corrupted mid-session")
+	retry.upgrades[2].pressed.emit()
+	retry.upgrades[0].pressed.emit()
+	check(not retry.saving_enabled and FileAccess.get_file_as_string(path) == "{"
+		and retry.get_node("%SaveStatus").text == "Saving disabled: campaign save damaged, preserved. This session will not be kept.",
+		"Campaign scene saves: mid-session corruption disables saving and preserves file")
+	retry.free()
+	DirAccess.remove_absolute(path)
+	# Dynasty preview: open/cancel/Escape never write; confirm saves the successor once.
+	check(CampaignSave.new(path).save_campaign(state_secured(), 0) == OK, "Campaign scene saves: secured fixture saved")
+	var secured := campaign_scene_new(CampaignPresentation, CampaignSave.new(path))
+	bytes = FileAccess.get_file_as_bytes(path)
+	secured.get_node("%FoundDynasty").pressed.emit()
+	var opened: bool = secured.dynasty_preview_open
+	secured.get_node("%CancelDynasty").pressed.emit()
+	secured.get_node("%FoundDynasty").pressed.emit()
+	var escape := InputEventKey.new()
+	escape.keycode = KEY_ESCAPE
+	escape.pressed = true
+	secured._input(escape)
+	check(opened and not secured.dynasty_preview_open and secured.campaign.dynasty == 1
+		and FileAccess.get_file_as_bytes(path) == bytes and secured.get_node("%SaveStatus").text == "Autosave on",
+		"Campaign scene saves: preview open, cancel and Escape leave file bytes identical")
+	secured.get_node("%FoundDynasty").pressed.emit()
+	secured.get_node("%ConfirmDynasty").pressed.emit()
+	check(secured.campaign.dynasty == 2 and secured.get_node("%SaveStatus").text == "Saved" and scene_saved_exactly(secured, path),
+		"Campaign scene saves: confirmed reset saved")
+	secured.free()
+	var successor := campaign_scene_new(CampaignPresentation, CampaignSave.new(path))
+	successor.get_node("%FoundDynasty").pressed.emit()
+	check(successor.campaign.dynasty == 2 and successor.campaign.inherited_drill and not successor.dynasty_preview_open
+		and successor.get_node("%FoundDynasty").disabled and successor.get_node("%DynastyStatus").text == "Dynasty 2 · Inherited Drill: 2× squad damage",
+		"Campaign scene saves: relaunched successor keeps doctrine, no further reset")
+	successor.free()
+	check(FileAccess.get_file_as_bytes(progress_path) == v1_bytes and not FileAccess.file_exists(progress_path + ".tmp")
+		and not FileAccess.file_exists(progress_path + ".bak"), "Campaign scene saves: sibling Save-v1 bytes untouched")
+	check(fixture.cleanup() == OK, "Campaign scene saves: directory cleaned")
+
+# A fresh scene with a fresh store stands in for a relaunch after a crash at each boundary.
+func test_campaign_scene_interruptions() -> void:
+	for action in ["purchase", "settlement", "dynasty"]:
+		for boundary in ["before write", "between rotate and commit", "after commit"]:
+			campaign_interruption(action, boundary)
+
+func campaign_interruption_act(scene: CampaignPresentation, action: String) -> void:
+	match action:
+		"purchase":
+			scene.upgrades[0].pressed.emit()
+		"settlement":
+			scene.advance_usec(CampaignPresentation.ROUND_USEC - scene.elapsed_usec)
+		"dynasty":
+			scene.get_node("%FoundDynasty").pressed.emit()
+			scene.get_node("%ConfirmDynasty").pressed.emit()
+
+func campaign_interruption(action: String, boundary: String) -> void:
+	var title: String = "Campaign interruption %s %s: " % [action, boundary]
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, title + "isolated directory owned")
+	if not fixture.owned:
+		return
+	var path: String = fixture.path
+	var base: Campaign = state_secured() if action == "dynasty" else campaign_running(3 if action == "settlement" else 1, 7 if action == "settlement" else 100)
+	var base_usec: int = 0 if action == "dynasty" else 400000
+	check(CampaignSave.new(path).save_campaign(base, base_usec) == OK, title + "base saved")
+	var base_state: Variant = CampaignState.capture(base, base_usec).state
+	var base_bytes := FileAccess.get_file_as_bytes(path)
+	var store := FailingCampaignSave.new(path)
+	var scene := campaign_scene_new(CampaignPresentation, store)
+	scene.advance_usec(0) # Consume the excluded first frame after load.
+	if boundary == "before write":
+		store.fail_write = true
+	elif boundary == "between rotate and commit":
+		store.fail_move_to = path # Commit and restore both fail: only the rotated backup remains.
+	campaign_interruption_act(scene, action)
+	var applied: Variant = scene_state(scene)
+	var failed: bool = boundary != "after commit"
+	check(applied != null and applied != base_state and scene.get_node("%SaveStatus").text == (
+		"Progress not saved — will retry" if failed else "Saved"), title + "transition applied in memory with exact status")
+	if boundary == "between rotate and commit":
+		check(not FileAccess.file_exists(path) and FileAccess.get_file_as_bytes(path + ".bak") == base_bytes,
+			title + "primary rotated to backup, commit missing")
+	scene.free() # Crash: no close request.
+	var relaunch := campaign_scene_new(CampaignPresentation, CampaignSave.new(path))
+	var status: String = relaunch.get_node("%SaveStatus").text
+	if failed:
+		check(scene_state(relaunch) == base_state and status == ("Restored from backup" if boundary == "between rotate and commit" else "Autosave on"),
+			title + "relaunch restores the complete pre-transition state")
+		relaunch.advance_usec(0)
+		campaign_interruption_act(relaunch, action)
+		check(scene_state(relaunch) == applied and relaunch.get_node("%SaveStatus").text == "Saved",
+			title + "redo applies the transition exactly once")
+	else:
+		check(scene_state(relaunch) == applied and status == "Autosave on", title + "relaunch restores the complete transition")
+	relaunch.free()
+	var final := campaign_scene_new(CampaignPresentation, CampaignSave.new(path))
+	var campaign := final.campaign
+	match action:
+		"purchase":
+			check(campaign.levels == [2, 1, 1] and campaign.gold == 80, title + "paid exactly once")
+		"settlement":
+			check(campaign.border_cleared and campaign.gold == 17 and campaign.current_encounter == Data.Encounter.ARCHER_POSITION,
+				title + "rewarded and routed exactly once")
+		"dynasty":
+			var damage: Array[int] = []
+			for squad in campaign.battle.players:
+				damage.append(squad.damage)
+			final.get_node("%FoundDynasty").pressed.emit()
+			check(campaign.dynasty == 2 and campaign.reset_used and campaign.gold == 0 and campaign.levels == [1, 1, 1]
+				and damage == [8, 16, 12] and not campaign.can_found_dynasty() and not final.dynasty_preview_open,
+				title + "single reset with exactly 2x doctrine, no second reset")
+	check(scene_state(final) == applied, title + "final relaunch matches the single applied transition")
+	final.free()
+	check(fixture.cleanup() == OK, title + "directory cleaned")
+
+func campaign_scene_new(script: GDScript = CampaignPresentation, store: CampaignSave = null) -> CampaignPresentation:
 	var scene: CampaignPresentation = CampaignScene.instantiate()
 	if script != CampaignPresentation:
 		scene.set_script(script)
+	# Never touch the player's real campaign save: null (disabled) or an isolated fixture store.
+	scene.campaign_save = store
 	root.add_child(scene)
 	scene.set_process(false)
 	return scene
@@ -617,8 +1160,8 @@ func test_campaign_scene_dynasty() -> void:
 		"Gate Lv.2", "return to level 1", "territory and security", "Border Skirmish in Advance",
 		"fresh full-health troops", "pending commands", "farming/navigation", "fractional round time",
 		"same three troop types", "exactly 2× squad damage after level additions",
-		"health, gold rewards and round frequency are unchanged", "only reset/bonus for this session",
-		"Closing/recreating", "main-game saves are untouched"]:
+		"health, gold rewards and round frequency are unchanged", "only dynasty reset",
+		"Inherited Drill is kept in the campaign save", "main-game saves are untouched"]:
 		check(copy.contains(text), "Dynasty scene: preview discloses " + text)
 	for name in ["GateUpgrade", "ShieldUpgrade", "FootUpgrade", "HorseUpgrade", "FarmBorder", "FarmArcher", "Frontier", "StartDefense", "FoundDynasty"]:
 		check(scene.get_node("%" + name).disabled, "Dynasty scene: preview disables " + name)
@@ -703,8 +1246,9 @@ func test_campaign_scene_fresh() -> void:
 	var scene := campaign_scene_new()
 	check(scene.get_node("%Title").text == "Campaign prototype"
 		and scene.get_node("%SessionNotice").visible
-		and scene.get_node("%SessionNotice").text == "Session-only progress. Closing/recreating resets this campaign and discards its doctrine. Main-game saves are not loaded or changed.",
-		"Campaign scene: permanent session-only notice and title")
+		and scene.get_node("%SessionNotice").text == "Campaign progress autosaves to its own file. Main-game saves are not loaded or changed."
+		and scene.get_node("%SaveStatus").text == "Saving disabled for isolated test",
+		"Campaign scene: permanent autosave notice, isolated save status and title")
 	check(scene.campaign.gold == 0 and scene.campaign.levels == [1, 1, 1]
 		and scene.campaign.current_encounter == 0 and scene.campaign.battle.rounds == 0
 		and scene.get_node("%CampaignStatus").text == "Border Skirmish · Advance · Running"

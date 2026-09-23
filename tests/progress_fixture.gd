@@ -4,10 +4,10 @@ var directory: String
 var path: String
 var owned: bool = false
 
-func _init() -> void:
+func _init(file_name: String = "progress.json") -> void:
 	directory = "user://progress-test-%d-%d" % [OS.get_process_id(), Time.get_ticks_usec()]
 	owned = DirAccess.make_dir_absolute(directory) == OK
-	path = directory.path_join("progress.json")
+	path = directory.path_join(file_name)
 
 func put(text: String, suffix: String = "") -> Error:
 	if not owned:
@@ -25,12 +25,13 @@ func cleanup() -> Error:
 	if not owned:
 		return ERR_UNAUTHORIZED
 	# Only this freshly-created directory and these test-owned entries may be removed.
-	for suffix in ["", ".tmp", ".bak"]:
-		var entry: String = path + suffix
-		if FileAccess.file_exists(entry) or DirAccess.dir_exists_absolute(entry):
-			var error := DirAccess.remove_absolute(entry)
-			if error != OK:
-				return error
+	for file_name in ["progress.json", "campaign.json"]:
+		for suffix in ["", ".tmp", ".bak"]:
+			var entry: String = directory.path_join(file_name) + suffix
+			if FileAccess.file_exists(entry) or DirAccess.dir_exists_absolute(entry):
+				var error := DirAccess.remove_absolute(entry)
+				if error != OK:
+					return error
 	var error := DirAccess.remove_absolute(directory)
 	if error == OK:
 		owned = false

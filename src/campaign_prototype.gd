@@ -1,6 +1,7 @@
 extends Control
 
 const Campaign = preload("res://src/campaign.gd")
+const CampaignSave = preload("res://src/campaign_save.gd")
 const Combat = preload("res://src/combat.gd")
 const Data = preload("res://src/encounter_data.gd")
 const USEC_PER_SECOND: int = 1000000
@@ -13,6 +14,9 @@ const ENCOUNTER_TITLES: Dictionary = {
 }
 
 var campaign := Campaign.new()
+# Tests set null (saving disabled) or a fixture store before add_child.
+var campaign_save: CampaignSave = CampaignSave.new()
+var saving_enabled: bool = false
 var elapsed_usec: int = 0
 var last_frame_usec: int = 0
 var suspended: bool = false
@@ -34,12 +38,58 @@ func _ready() -> void:
 	%ConfirmDynasty.pressed.connect(_confirm_dynasty)
 	for role in range(upgrades.size()):
 		upgrades[role].pressed.connect(_purchase.bind(role))
-	campaign.restart_battle()
+	_load_campaign()
 	last_frame_usec = Time.get_ticks_usec()
 	# Check native mode even at idle checkpoints where this node stops processing.
 	get_tree().process_frame.connect(_sync_suspension)
 	_sync_suspension()
 	_refresh()
+
+# Contract D1/D11: exact resume of a valid save; anything unusable starts a fresh session.
+func _load_campaign() -> void:
+	if campaign_save == null:
+		saving_enabled = false
+		campaign.restart_battle()
+		%SaveStatus.text = "Saving disabled for isolated test"
+		return
+	var loaded := campaign_save.load_campaign()
+	match loaded.outcome:
+		CampaignSave.Outcome.LOADED:
+			campaign = loaded.campaign
+			elapsed_usec = loaded.round_progress_usec
+			# No absence progress: the first frame after load is excluded from timing.
+			skip_resume_frame = true
+			%LastResult.text = "Resumed saved campaign"
+			set_process(campaign.phase in [Campaign.Phase.RUNNING, Campaign.Phase.DEFENDING])
+			saving_enabled = true
+			%SaveStatus.text = "Restored from backup" if loaded.get("recovered", false) else "Autosave on"
+		CampaignSave.Outcome.MISSING:
+			campaign.restart_battle()
+			saving_enabled = true
+			%SaveStatus.text = "Autosave on"
+		_:
+			campaign.restart_battle()
+			_show_preservation_status()
+
+func _show_preservation_status() -> void:
+	saving_enabled = false
+	var reason: String = "unreadable"
+	match campaign_save.get_preservation_outcome():
+		CampaignSave.Outcome.CORRUPT:
+			reason = "damaged"
+		CampaignSave.Outcome.UNSUPPORTED:
+			reason = "from an unsupported version"
+	%SaveStatus.text = "Saving disabled: campaign save %s, preserved. This session will not be kept." % reason
+
+# Contract D6/D7: the in-memory transition is already applied; "Saved" only after commit.
+func _save_campaign() -> void:
+	if not saving_enabled:
+		return
+	var error := campaign_save.save_campaign(campaign, elapsed_usec)
+	if campaign_save.get_preservation_outcome() not in [CampaignSave.Outcome.MISSING, CampaignSave.Outcome.LOADED]:
+		_show_preservation_status()
+		return
+	%SaveStatus.text = "Saved" if error == OK else "Progress not saved — will retry"
 
 func _process(_delta: float) -> void:
 	advance_foreground(Time.get_ticks_usec())
@@ -84,6 +134,8 @@ func advance_usec(usec: int) -> void:
 					"Gate destroyed" if completed.defeat_reason == Combat.DefeatReason.GATE_DESTROYED else "Timeout")
 			# Campaign already routed: never restart or tick its fresh successor here.
 			elapsed_usec = 0
+			# Reward, clearance and routing are one write (D6/D8).
+			_save_campaign()
 			set_process(campaign.phase in [Campaign.Phase.RUNNING, Campaign.Phase.DEFENDING])
 			_refresh()
 			break
@@ -99,6 +151,10 @@ func _notification(what: int) -> void:
 			focus_lost = true
 		NOTIFICATION_APPLICATION_FOCUS_IN:
 			focus_lost = false
+		NOTIFICATION_WM_CLOSE_REQUEST:
+			# Best-effort save of mid-round progress before the app quits.
+			_save_campaign()
+			return
 		_:
 			return
 	_sync_suspension()
@@ -115,6 +171,9 @@ func _sync_suspension() -> void:
 	suspended = should_suspend
 	if not suspended:
 		skip_resume_frame = true
+	else:
+		# Best-effort save on focus loss, pause or minimize (D6).
+		_save_campaign()
 	if is_node_ready():
 		_refresh()
 
@@ -145,6 +204,7 @@ func _confirm_dynasty() -> void:
 	last_frame_usec = Time.get_ticks_usec()
 	%LastResult.text = "No completed battle"
 	set_process(true)
+	_save_campaign()
 	_refresh()
 
 func _request_farm(encounter: int) -> void:
@@ -152,17 +212,20 @@ func _request_farm(encounter: int) -> void:
 	if suspended or dynasty_preview_open:
 		return
 	var was_checkpoint: bool = campaign.phase == Campaign.Phase.CONQUEST_CLEARED
-	if campaign.request_farm(encounter) and was_checkpoint:
-		elapsed_usec = 0
-		last_frame_usec = Time.get_ticks_usec()
-		set_process(true)
+	if campaign.request_farm(encounter):
+		if was_checkpoint:
+			elapsed_usec = 0
+			last_frame_usec = Time.get_ticks_usec()
+			set_process(true)
+		_save_campaign()
 	_refresh()
 
 func _request_frontier() -> void:
 	_sync_suspension()
 	if suspended or dynasty_preview_open:
 		return
-	campaign.request_frontier()
+	if campaign.request_frontier():
+		_save_campaign()
 	_refresh()
 
 func _start_defense() -> void:
@@ -172,20 +235,23 @@ func _start_defense() -> void:
 	elapsed_usec = 0
 	last_frame_usec = Time.get_ticks_usec()
 	set_process(true)
+	_save_campaign()
 	_refresh()
 
 func _purchase_gate() -> void:
 	_sync_suspension()
 	if suspended or dynasty_preview_open:
 		return
-	campaign.purchase_gate()
+	if campaign.purchase_gate():
+		_save_campaign()
 	_refresh()
 
 func _purchase(role: int) -> void:
 	_sync_suspension()
 	if suspended or dynasty_preview_open:
 		return
-	campaign.purchase(role)
+	if campaign.purchase(role):
+		_save_campaign()
 	_refresh()
 
 func _refresh() -> void:
@@ -200,7 +266,7 @@ func _refresh() -> void:
 		+ "Lose all conquered territory and security; restart Border Skirmish in Advance mode with fresh full-health troops.\n"
 		+ "Clear battle progress, pending commands, farming/navigation choices and fractional round time.\n"
 		+ "Keep access to the same three troop types. Gain Inherited Drill: exactly 2× squad damage after level additions; health, gold rewards and round frequency are unchanged.\n"
-		+ "This is the only reset/bonus for this session. Closing/recreating the campaign discards the doctrine too; main-game saves are untouched.") % [
+		+ "This is the only dynasty reset. Inherited Drill is kept in the campaign save; main-game saves are untouched.") % [
 		campaign.gold, campaign.levels[0], campaign.levels[1], campaign.levels[2], campaign.gate_level]
 	var checkpoint: bool = campaign.phase == Campaign.Phase.CONQUEST_CLEARED
 	var defending: bool = campaign.phase == Campaign.Phase.DEFENDING
