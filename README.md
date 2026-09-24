@@ -36,7 +36,7 @@ caps at level 3. Each level adds health/damage: shield +40/+2, foot +12/+4,
 horse +20/+3. Ownership changes immediately; combat snapshots change only at the
 next replay, restart or encounter switch. Insufficient funds and capped purchases change nothing.
 Gold and owned troop levels save locally after victories and successful purchases.
-Every launch starts fresh full-health Border combat; there is no absence/offline reward.
+Every launch starts fresh full-health Border combat; there is no absence/offline reward in the main game (only the campaign pays a capped away reward).
 
 Archer Position unlocks immediately after any troop reaches level 2, including
 from an existing version-1 save or recovered backup. Gold alone does not unlock it.
@@ -84,7 +84,10 @@ result retained onscreen rather than a replay delay. Farm requests require that
 encounter's clearance; the latest valid farm/frontier request applies after the
 current battle settles, never abandoning its reward. Purchases apply next battle.
 A long frame stops at the first battle boundary; focus loss/pause freezes combat,
-with no offline catch-up and the first resumed frame excluded.
+with no offline catch-up and the first resumed frame excluded. Reopening after the app was closed
+pays capped gold from secured territory (half a victory per minute of the best cleared farm,
+at most 8 hours), shown as "Away … · +N gold from secured territory (cap 8h)"; no combat is
+simulated.
 
 Stronghold clearance stops at a preparation checkpoint. **Start Defense** explicitly
 begins Counterattack; it never starts automatically after conquest, farming or resume.
@@ -1876,7 +1879,8 @@ a **Threat** level in the Found a Dynasty preview. Each level adds +25% to enemy
 (troops are unchanged), and securing the dynasty pays `3 × (1 + Threat)` Legacy instead of a flat
 3. You can pick up to one level above your best secured Threat, and Threat 0 is always available,
 so a player can't get stuck. The campaign save is now **v3**, and v1/v2 saves still load (see the v3
-amendment in `docs/campaign-save-contract.md`). An earlier idea of automatic scaling was
+amendment in `docs/campaign-save-contract.md`). *(Superseded: the save is now **v4**, which adds
+the away-reward stamp; v1–v3 saves still load.)* An earlier idea of automatic scaling was
 dropped: hand calculations showed a fully upgraded army could lose the dynasty-3 defense, and an
 unwinnable dynasty can never be refounded.
 

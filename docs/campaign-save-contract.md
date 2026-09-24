@@ -1,7 +1,7 @@
-# Campaign save contract — v1, with v2 (Legacy) and v3 (Threat) amendments
+# Campaign save contract — v1, with v2 (Legacy), v3 (Threat) and v4 (away reward) amendments
 
-The current file format is **v3**; see "v3 amendment (Threat)" at the end, which builds on
-"v2 amendment (Legacy)". The earlier sections are kept as history and still govern every rule
+The current file format is **v4**; see "v4 amendment (away reward)" at the end, which builds on
+"v3 amendment (Threat)" and "v2 amendment (Legacy)". The earlier sections are kept as history and still govern every rule
 the amendments do not change.
 
 **Status: APPROVED 23 September 2026 — implemented.** In-memory state capture, validation
@@ -372,7 +372,8 @@ against. v2's exact ledger could reject every such edit.
 exact +10/+3 ledger), then gets `threat` 0, `best_threat` 0 if it has ever been secured (dynasty
 > 1, or dynasty 1 secured), else -1, and `legacy_earned` set to the v2 ledger total. v1 files migrate
 the same way after their v1 migration. Files are not rewritten on load; the next ordinary save
-writes v3. Any version other than 1, 2 or 3 is unsupported.
+writes v3. Any version other than 1, 2 or 3 is unsupported. *(Superseded by v4: the next save
+writes v4; versions other than 1–4 are unsupported.)*
 
 **v3 acceptance cases** (covered in `tests/run_tests.gd`, tests `test_threat`,
 `test_threat_state` and `test_campaign_scene_dynasty`):
@@ -384,8 +385,62 @@ writes v3. Any version other than 1, 2 or 3 is unsupported.
 3. Choosing more than one above the best, or a negative Threat, is rejected with no change.
 4. v3 round-trips exactly. Threat above the unlocked level, out-of-range or missing keys, an
    inconsistent best, earned outside the feasible range, an unbalanced ledger, or enemy health
-   above the scaled max are all corrupt. Version 4 is unsupported.
+   above the scaled max are all corrupt. Version 4 is unsupported. *(Superseded by v4: version 4
+   is current; version 5 is unsupported.)*
 5. v2 dynasty-1 running and dynasty-2 secured files migrate (Threat 0, best -1/0, earned 0/13),
    still reject a tampered v2 ledger, can then found at Threat 1, and the next save writes v3.
 6. The preview defaults to Threat 0, clamps Raise/Lower, shows the payout, ignores input while
    suspended, and confirming founds the dynasty at the chosen Threat.
+
+## v4 amendment (away reward)
+
+Reopening the campaign pays capped gold for the time the app was closed, from territory already
+secured. Nothing is simulated: no battle, round, round progress, boss, defense milestone, Legacy,
+clearance or routing changes. Focus loss, minimizing or pausing inside a running session pays
+nothing; the reward is computed only when a saved campaign is loaded at launch.
+
+**Field.** v4 adds `saved_at`: the whole Unix second of the save, an integer in `0..2^53-1`
+(same exact-integer rules as `gold`). `0` means unknown. Every successful save stamps the current
+system time. The key set is the v3 set plus `saved_at`; missing, extra, negative, fractional,
+too large or non-numeric values are corrupt. Version 5 or higher is unsupported.
+
+**Rule.** `away = now - saved_at` (0 when `saved_at` is 0 or the clock went backwards). The best
+farmable cleared territory pays half a victory per minute: Archer Position (30 gold) if cleared,
+else Border Skirmish (10 gold), else nothing. `gold = floor(min(away, 28800) × reward / 120)`, so an
+absence pays at most 7 200 gold (Archer) or 2 400 gold (Border); the cap is 8 hours. Constants live
+in `src/campaign.gd` (`AWAY_CAP_SECONDS`, `AWAY_MINUTES_PER_VICTORY`).
+
+**Commit.** A non-zero reward is held as pending and saved immediately: every save adds the pending
+amount to the snapshot's gold, so the gold and the new stamp always reach disk together (never one
+without the other). The welcome-back line ("Away 2h 14m · +4020 gold from secured territory
+(cap 8h)") appears only once a save commits it; the pending amount is then cleared. If a save does
+not commit, the gold is removed from memory again and the file keeps its old stamp, so the reward is
+never paid twice. While saving stays enabled (a transient failure) the scene shows "Away reward
+waits for a successful save" and the next ordinary save (victory, purchase, navigation, focus loss,
+pause, minimize or close) retries it. If saving becomes disabled (the file is preserved as invalid),
+the pending reward is dropped and the scene shows "Away reward cannot be kept this session".
+
+**Migration.** v1, v2 and v3 files are parsed under their own exact key sets and migrate with
+`saved_at` 0, so they pay no away reward. Files are not rewritten on load; the next save writes v4.
+
+**Known limits.** Moving the system clock forward can collect up to 8 hours per relaunch; this is
+accepted for an offline single-player game. A dynasty's whole gold sink is about 240 gold, so any
+multi-hour absence maxes every upgrade; balancing that is a separate decision.
+
+**v4 acceptance cases** (covered in `tests/run_tests.gd`, tests `test_away_reward_rule`,
+`test_away_reward_format` and `test_away_reward_scene`):
+
+1. Nothing cleared pays 0; Border only for 60 s pays 5; Archer for 60 s pays 15; 8 h and 30 h
+   both pay 7 200; zero or negative time pays 0.
+2. v4 round-trips `saved_at` exactly; missing, negative, fractional, string or oversize values are
+   corrupt, a v3 file carrying `saved_at` is corrupt, and version 5 is unsupported.
+3. v1, v2 and v3 files migrate with `saved_at` 0; a v3 file loads without being rewritten and the
+   next save writes v4 with the store's clock.
+4. A campaign saved an hour earlier with Archer cleared relaunches with +900 gold, the welcome-back
+   line and every other field unchanged, and is re-saved with the new stamp; relaunching at the
+   same time, or with the clock moved backwards, pays nothing.
+5. If the reward save fails, the gold is reverted and the file stays byte-identical.
+6. After a transient reward-save failure, the next ordinary save commits +900 gold with the new
+   stamp in memory and on disk, later saves add nothing, and a relaunch at the same time pays
+   nothing more. If saving becomes disabled instead, the pending reward is dropped with the
+   "cannot be kept this session" message.
