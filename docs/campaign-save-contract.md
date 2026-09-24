@@ -1,7 +1,7 @@
-# Campaign save contract — v1, with v2 (Legacy), v3 (Threat) and v4 (away reward) amendments
+# Campaign save contract — v1, with v2 (Legacy), v3 (Threat), v4 (away reward) and v5 (Veteran Cadre) amendments
 
-The current file format is **v4**; see "v4 amendment (away reward)" at the end, which builds on
-"v3 amendment (Threat)" and "v2 amendment (Legacy)". The earlier sections are kept as history and still govern every rule
+The current file format is **v5**; see "v5 amendment (Veteran Cadre)" at the end, which builds on
+"v4 amendment (away reward)", "v3 amendment (Threat)" and "v2 amendment (Legacy)". The earlier sections are kept as history and still govern every rule
 the amendments do not change.
 
 **Status: APPROVED 23 September 2026 — implemented.** In-memory state capture, validation
@@ -402,7 +402,8 @@ nothing; the reward is computed only when a saved campaign is loaded at launch.
 **Field.** v4 adds `saved_at`: the whole Unix second of the save, an integer in `0..2^53-1`
 (same exact-integer rules as `gold`). `0` means unknown. Every successful save stamps the current
 system time. The key set is the v3 set plus `saved_at`; missing, extra, negative, fractional,
-too large or non-numeric values are corrupt. Version 5 or higher is unsupported.
+too large or non-numeric values are corrupt. Version 5 or higher is unsupported. *(Superseded by v5:
+version 5 is current; version 6 or higher is unsupported.)*
 
 **Rule.** `away = now - saved_at` (0 when `saved_at` is 0 or the clock went backwards). The best
 farmable cleared territory pays half a victory per minute: Archer Position (30 gold) if cleared,
@@ -422,6 +423,7 @@ the pending reward is dropped and the scene shows "Away reward cannot be kept th
 
 **Migration.** v1, v2 and v3 files are parsed under their own exact key sets and migrate with
 `saved_at` 0, so they pay no away reward. Files are not rewritten on load; the next save writes v4.
+*(Superseded by v5: the next save writes v5.)*
 
 **Known limits.** Moving the system clock forward can collect up to 8 hours per relaunch; this is
 accepted for an offline single-player game. A dynasty's whole gold sink is about 240 gold, so any
@@ -444,3 +446,33 @@ multi-hour absence maxes every upgrade; balancing that is a separate decision.
    stamp in memory and on disk, later saves add nothing, and a relaunch at the same time pays
    nothing more. If saving becomes disabled instead, the pending reward is dropped with the
    "cannot be kept this session" message.
+
+## v5 amendment (Veteran Cadre)
+
+Approved 24 September 2026. Veteran Cadre is a permanent, one-rank Legacy upgrade costing
+**50 Legacy** (`Campaign.VETERAN_CADRE_COST`). Every dynasty founded after purchase starts all three
+troop types at level 2; the gate still starts at 1. The purchase changes only `legacy` and the flag.
+
+**Field.** v5 adds `veteran_cadre`, a JSON boolean. The key set is the v4 set plus `veteran_cadre`;
+a missing key or any non-boolean value (number, string, null) is corrupt. Version 6 or higher is
+unsupported.
+
+**Ledger.** The exact Legacy ledger becomes
+`legacy + drill_spent(drill_rank) + (50 if veteran_cadre else 0) == legacy_earned`, so a flag set
+without the spend, or a spend without the flag, is corrupt. Troop levels stay validated as 1..3 with
+no starting-level coupling: the dynasty that makes the purchase legitimately holds level-1 troops.
+
+**Migration.** v1–v4 files are parsed under their own exact key sets and load with Veteran Cadre
+unowned; a v4 file carrying `veteran_cadre` is corrupt. Files are not rewritten on load; the next
+save writes v5.
+
+**v5 acceptance cases** (covered in `tests/run_tests.gd`, tests `test_veteran_cadre`,
+`test_veteran_cadre_state` and `test_campaign_scene_veteran_cadre`):
+
+1. A ledger-valid owned state round-trips exactly and a relaunched owner founds its next dynasty at
+   troop levels [2, 2, 2], gate 1.
+2. Flag without spend, spend without flag, integer/string/null/missing flag, and a v4 file carrying
+   the flag are corrupt; version 6 is unsupported.
+3. v1–v4 files load unowned with their Legacy intact; a v4 file loads without being rewritten and
+   the next save writes v5 with the flag.
+4. The scene purchase saves immediately; suspended or preview-open purchases change nothing.

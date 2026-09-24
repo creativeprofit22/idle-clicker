@@ -42,6 +42,7 @@ func _ready() -> void:
 	%StartDefense.pressed.connect(_start_defense)
 	%GateUpgrade.pressed.connect(_purchase_gate)
 	%TrainDrill.pressed.connect(_train_drill)
+	%VeteranCadre.pressed.connect(_buy_veteran_cadre)
 	%FoundDynasty.pressed.connect(_open_dynasty_preview)
 	%CancelDynasty.pressed.connect(_cancel_dynasty_preview)
 	%ConfirmDynasty.pressed.connect(_confirm_dynasty)
@@ -323,6 +324,15 @@ func _train_drill() -> void:
 		_save_campaign()
 	_refresh()
 
+# Permanent Legacy purchase; the level-2 start applies from the next founded dynasty.
+func _buy_veteran_cadre() -> void:
+	_sync_suspension()
+	if suspended or dynasty_preview_open:
+		return
+	if campaign.buy_veteran_cadre():
+		_save_campaign()
+	_refresh()
+
 func _purchase(role: int) -> void:
 	_sync_suspension()
 	if suspended or dynasty_preview_open:
@@ -336,6 +346,8 @@ func _refresh() -> void:
 	var secured: bool = campaign.phase == Campaign.Phase.CAMPAIGN_SECURED
 	%DynastyStatus.text = "Dynasty %d · Legacy %d · Drill rank %d (×%d squad damage)" % [
 		campaign.dynasty, campaign.legacy, campaign.drill_rank, 1 + campaign.drill_rank]
+	if campaign.veteran_cadre:
+		%DynastyStatus.text += " · Veteran Cadre"
 	if not secured:
 		%DynastyStatus.text += " · Securing this campaign earns %d Legacy" % campaign.secure_legacy()
 	%ThreatStatus.text = "Threat %d (enemies +%d%% health and damage) · Best secured Threat %s" % [
@@ -345,6 +357,9 @@ func _refresh() -> void:
 	%TrainDrill.text = "Drill at maximum rank" if drill_cost == 0 else "Train Drill rank %d — %d Legacy" % [
 		campaign.drill_rank + 1, drill_cost]
 	%TrainDrill.disabled = blocked or drill_cost == 0 or campaign.legacy < drill_cost
+	%VeteranCadre.text = "Veteran Cadre owned — new dynasties start troops at level 2" if campaign.veteran_cadre \
+		else "Recruit Veteran Cadre — %d Legacy" % Campaign.VETERAN_CADRE_COST
+	%VeteranCadre.disabled = blocked or not campaign.can_buy_veteran_cadre()
 	%DynastyPreview.visible = dynasty_preview_open
 	%FoundDynasty.disabled = blocked or not campaign.can_found_dynasty()
 	%CancelDynasty.disabled = suspended
@@ -356,13 +371,19 @@ func _refresh() -> void:
 		preview_threat, threat_max, Data.THREAT_STEP_PERCENT * preview_threat, Campaign.threat_legacy(preview_threat)]
 	%ThreatDown.disabled = suspended or not dynasty_preview_open or preview_threat <= 0
 	%ThreatUp.disabled = suspended or not dynasty_preview_open or preview_threat >= threat_max
-	%DynastyLosses.text = ("Lose all current gold: %d gold. Shield infantry Lv.%d, Foot archers Lv.%d, Horse archers Lv.%d and Gate Lv.%d all return to level 1.\n"
+	var troop_reset: String = ("Shield infantry Lv.%d, Foot archers Lv.%d and Horse archers Lv.%d return to level 2 (Veteran Cadre); Gate Lv.%d returns to level 1."
+		if campaign.veteran_cadre else
+		"Shield infantry Lv.%d, Foot archers Lv.%d, Horse archers Lv.%d and Gate Lv.%d all return to level 1.") % [
+		campaign.levels[0], campaign.levels[1], campaign.levels[2], campaign.gate_level]
+	var cadre_keep: String = "owned: troops start at level 2" if campaign.veteran_cadre \
+		else "not owned: %d Legacy" % Campaign.VETERAN_CADRE_COST
+	%DynastyLosses.text = ("Lose all current gold: %d gold. %s\n"
 		+ "Lose all conquered territory and security; restart Border Skirmish in Advance mode with fresh full-health troops.\n"
 		+ "Clear battle progress, pending commands, farming/navigation choices and fractional round time.\n"
-		+ "Keep access to the same three troop types. Keep Legacy %d and Drill rank %d (×%d squad damage after level additions); troop health, gold rewards and round frequency are unchanged.\n"
-		+ "Next secured campaign earns %d Legacy. Legacy and Drill rank are kept in the campaign save; main-game saves are untouched.") % [
-		campaign.gold, campaign.levels[0], campaign.levels[1], campaign.levels[2], campaign.gate_level,
-		campaign.legacy, campaign.drill_rank, 1 + campaign.drill_rank, Campaign.threat_legacy(preview_threat)]
+		+ "Keep access to the same three troop types. Keep Legacy %d and Drill rank %d (×%d squad damage after level additions); troop health, gold rewards and round frequency are unchanged. Keep Veteran Cadre (%s).\n"
+		+ "Next secured campaign earns %d Legacy. Legacy and Drill rank are kept in the campaign save, as is Veteran Cadre; main-game saves are untouched.") % [
+		campaign.gold, troop_reset, campaign.legacy, campaign.drill_rank, 1 + campaign.drill_rank, cadre_keep,
+		Campaign.threat_legacy(preview_threat)]
 	var checkpoint: bool = campaign.phase == Campaign.Phase.CONQUEST_CLEARED
 	var defending: bool = campaign.phase == Campaign.Phase.DEFENDING
 	match campaign.phase:

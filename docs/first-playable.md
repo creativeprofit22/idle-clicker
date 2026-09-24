@@ -78,8 +78,17 @@ Commander snapshot strength derives from damage, but the campaign UI has no comm
 control. Training is blocked while suspended, with the preview open, when unaffordable or
 at rank 3.
 
+**Recruit Veteran Cadre** (approved 24 Sep 2026) is a second, one-rank Legacy upgrade
+costing **50 Legacy**, bought once and kept forever. Every dynasty **founded after the
+purchase** starts Shield infantry, Foot archers and Horse archers at **level 2**; the
+current dynasty's levels and battle are unchanged. The gate still starts at level 1, and
+Drill (applied once, on top of the starting levels), Threat, Legacy payouts, gold rewards,
+the away reward and round timing are unchanged. Level 2 troops already satisfy the Archer
+Position unlock condition, which is intended. Purchase is allowed in any phase but blocked
+while suspended, with the preview open, when Legacy is below 50 or when already owned.
+
 **Found a Dynasty** is available at every secured campaign, without limit. The native
-preview shows actual gold, troop and gate losses, the Legacy and Drill rank that are kept,
+preview shows actual gold, troop and gate losses, the Legacy, Drill rank and Veteran Cadre state that are kept,
 and the Legacy the next secured campaign earns at the chosen Threat. Cancel or Escape changes no gameplay
 state and returns focus; preview-open purchase/navigation handlers are blocked.
 Confirmation requires an open preview, fresh model eligibility and no suspension, and
@@ -92,9 +101,9 @@ dynasty; troops, gold, costs and round timing are unchanged. The status line sho
 "Threat N … · Best secured Threat M".
 
 **Confirm reset — start dynasty N** (N = current dynasty + 1) loses all gold and
-territory/security, returns all troop/gate levels to 1, clears battle progress, queued
+territory/security, returns all troop levels to 1 (2 with Veteran Cadre) and the gate to 1, clears battle progress, queued
 commands/navigation, farm selection and fractional time, then starts fresh round-zero
-Border in Advance mode. Roster access, Legacy and Drill rank remain. Stronghold pays
+Border in Advance mode. Roster access, Legacy, Drill rank and Veteran Cadre remain. Stronghold pays
 **30 gold once per run** in every dynasty. The reset is saved as one transition; if the app
 stops before it is saved, relaunch shows the secured checkpoint. Campaign save v1 files
 migrate on load (the old free doctrine becomes Drill rank 1). Main-game saves are never
@@ -135,6 +144,15 @@ After commit `a7e716e` (a watchdog engine-time check), the full gate set was re-
 gave focus-only 14/0, campaign 57/0, defense 64/0 and dynasty 60/0, and `scene_smoke` 105/0.
 One earlier focus-only run failed 14/1 because of the known intermittent Windows/Godot focus
 disagreement; it is retained in README. No art, export, Android or release-readiness claim.
+
+### Veteran Cadre verification — 24 September 2026
+
+Local, uncommitted tree on `08c7cef`: import 0 errors; headless 3961/0 · forced 3962/1 ·
+3961/0 (exits 0/1/0); `scene_smoke` 105/0; native focus-only 14/0, campaign 57/0, defense 64/0,
+dynasty 84/0, all with exits 0, complete observations, child reaped and reader joined. Two earlier
+dynasty runs failed 81/1 on a test-ordering issue, now fixed and retained in README. The new
+`dynasty-cadre` captures were inspected. CI is not yet run, and physical manual acceptance for
+this change is **pending**.
 
 ### Historical verification — 10 September 2026
 

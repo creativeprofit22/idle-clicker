@@ -67,12 +67,12 @@ This isolated native-control prototype owns one Campaign that autosaves to its o
 `user://campaign.json` (with `.tmp`/`.bak` siblings); main-game saves are never loaded or
 changed. Relaunch restores the exact state: gold, owned upgrades, clearances, navigation queue,
 checkpoint, the damaged current battle with its purchase-time snapshot, fractional round time
-and dynasty, Legacy and Drill rank. Closed time and the first frame after launch add no combat or income.
+and dynasty, Legacy, Drill rank and Veteran Cadre. Closed time and the first frame after launch add no combat or income.
 No main-menu link, commander or restart control is included.
 
 Saves happen only after an accepted change: troop or gate purchase, farm/frontier request,
 Start Defense, every battle settlement (reward, clearance, routing and any Legacy written
-together), Train Drill and confirmed dynasty reset; plus best-effort saves on focus loss/pause/minimize and window close.
+together), Train Drill, Veteran Cadre and confirmed dynasty reset; plus best-effort saves on focus loss/pause/minimize and window close.
 Opening or cancelling the dynasty preview and ordinary rounds never save. The status line under
 the notice shows **Autosave on**, **Saved**, **Restored from backup**, or
 **Progress not saved — will retry** (the change stays in memory and the next trigger rewrites
@@ -124,8 +124,18 @@ battle, so buy rank 1 before resetting to start the successor at 2×: the passiv
 Border then takes two rounds instead of four. Training is blocked while suspended, with the
 preview open, when unaffordable, or at rank 3. Every successful purchase autosaves.
 
+**Recruit Veteran Cadre** (right below Train Drill) is a one-time permanent Legacy upgrade for
+**50 Legacy**. Every dynasty founded after the purchase starts Shield infantry, Foot archers and
+Horse archers at **level 2**; the current dynasty and battle don't change, and the gate still
+starts at level 1. Drill still applies once on top of the starting levels, and Threat, Legacy
+payouts, gold rewards, the away reward and round timing are unchanged. When owned, the button
+reads "Veteran Cadre owned — new dynasties start troops at level 2" and the dynasty line ends in
+"· Veteran Cadre". Buying is blocked while suspended, with the preview open, below 50 Legacy, or
+once owned, and autosaves. The campaign save stores it as `veteran_cadre` (save v5); older saves
+load with it unowned.
+
 **Found a Dynasty** is available at every secured campaign, without limit. Opening the native
-preview shows actual gold/troop/gate losses, the Legacy and Drill rank that are kept, and the
+preview shows actual gold/troop/gate losses, the Legacy, Drill rank and Veteran Cadre state that are kept, and the
 Legacy the next secured campaign earns at the chosen Threat. **Cancel** or Escape changes no gameplay state and
 returns focus to Found a Dynasty. Purchases and navigation are blocked while the preview is
 open; suspension also rejects reset inputs. **Confirm reset — start dynasty N** rechecks
@@ -137,10 +147,11 @@ defaults to 0 each time the preview opens and can go up to one above your best s
 and damage (rounded half up), fixed for the whole dynasty. Troops, gold rewards, costs and
 round timing don't change. Changing Threat in the preview writes nothing until Confirm.
 
-Confirmation loses all gold, troop/gate upgrades (levels return to 1), territory and
+Confirmation loses all gold, troop/gate upgrades (troops return to level 1, or 2 with Veteran
+Cadre; the gate to 1), territory and
 security. It clears battle progress, queued commands/navigation, farm selection and fractional
 time, then starts a fresh full-health Border in Advance mode at round zero. All three troop
-types, Legacy and Drill rank remain. Stronghold pays **30 gold once per run**; defense pays
+types, Legacy, Drill rank and Veteran Cadre remain. Stronghold pays **30 gold once per run**; defense pays
 **0 gold**. The secured status reads **Campaign secured · Counterattack defeated · +X Legacy
 earned**. If the app stops before a reset is saved, relaunch shows the secured checkpoint and
 the reset can be confirmed once. Campaign save v1 files (from before Legacy) load and migrate:
@@ -1951,6 +1962,44 @@ fitting without overlap. (The follow-up above reran `scene_smoke.gd`,
 `campaign_persistence_smoke.gd` and native `focus-only`.) CI hasn't run (nothing committed). These are
 window-driven results, not physical (hand-operated) acceptance: the physical gate stays
 **pending**. No art, export or Android claim is made.
+
+### Veteran Cadre Legacy upgrade — verified locally 24 Sep 2026 (uncommitted tree on `08c7cef`)
+
+Drill maxes out at 70 Legacy while Threat keeps paying, so Legacy piled up unused. **Veteran
+Cadre** (50 Legacy, one rank, user-approved 24 Sep 2026) starts every later dynasty's troops at
+level 2. The campaign save is now **v5** (`veteran_cadre` bool; ledger includes the 50 spend);
+v1–v4 saves load with it unowned. See the v5 amendment in `docs/campaign-save-contract.md`.
+
+| Check | Result |
+|---|---|
+| Import | exit 0, 0 errors |
+| Headless normal / forced / normal | 3961/0, exit 0 · 3962/1 (only `FAIL forced runner failure`), exit 1 · 3961/0, exit 0 |
+| `persistence_smoke.gd` / `campaign_persistence_smoke.gd` (headless, as in CI) | every phase 0 failures, exit 0 |
+| `scene_smoke.gd` | `SUMMARY: 105 graphical checks, 0 failures`, exit 0 |
+| Native `focus-only` / `campaign` / `defense` / `dynasty` | 14/0 · 57/0 · 64/0 · 84/0, all child/driver exits 0, `native_observations_complete=True`, child reaped, reader joined |
+
+The native `dynasty` scenario now relaunches the scene on a ledger-valid fixture (the real secured
+dynasty-1 save rewritten as dynasty 7, best Threat 5, 73 earned, 63 held), because dynasty 1 can
+only ever hold 10 Legacy. It then clicks Veteran Cadre natively (−50, saved as v5), checks the
+owned preview text, focus-follows Veteran Cadre, Confirm and Cancel at 540×480, confirms with
+Space and checks that dynasty 8 starts at levels [2, 2, 2] with gate 1 and Drill’s ×2 applied once
+(Shield damage 12).
+
+Two intermediate `dynasty` runs **failed** (81/1 each, child exit 1; retained). The failure
+was "keyboard target focused, enabled and visible" on Confirm. A failure-only `KEY_DIAG` line
+showed Confirm above the view (`y=-70, scroll=1006/1656`): the smoke had pressed Space before
+the preview's own focus-follow settled. The fix mirrors the existing preview sequence
+(Confirm → Cancel → Confirm focus-follow checks) before Space. No assertion, deadline or
+focus/suspension gate was weakened.
+
+Inspected captures: `dynasty-cadre` (540×480 owned preview: "Keep Veteran Cadre (owned: troops
+start at level 2)", Threat controls, Cancel and focused Confirm visible), `dynasty-cadre-successor`
+(dynasty 8, "· Veteran Cadre", troops Lv.2, damage 12/24/18), `dynasty-preview`,
+`dynasty-secured`, `campaign-secured` and `defense-ready` (new button disabled below Drill with no
+overlap). All are readable. `windows_g6_driver.py` was not run: it still checks for save version
+3, which has been stale since the v4 away-reward commit and is outside this change. CI hasn't
+run because nothing is committed. The physical gate stays **pending**, and there's no art,
+export, Android or release claim.
 
 ## Boundaries
 

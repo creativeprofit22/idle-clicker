@@ -20,6 +20,8 @@ var dynasty: int = 1
 # Permanent across dynasty resets: Legacy balance and purchased Drill rank.
 var drill_rank: int = 0
 var legacy: int = 0
+# Permanent one-rank Legacy upgrade: dynasties founded after purchase start troops at level 2.
+var veteran_cadre: bool = false
 # Drill rank captured when the current battle was created (purchases apply next battle).
 var _battle_drill_rank: int = 0
 # Threat chosen when this dynasty was founded (dynasty 1 is always 0); fixed for the dynasty.
@@ -32,6 +34,7 @@ const FIRST_SECURE_LEGACY: int = 10
 const REPEAT_SECURE_LEGACY: int = 3
 const DRILL_COSTS: Array[int] = [10, 20, 40]
 const DRILL_MAX: int = 3
+const VETERAN_CADRE_COST: int = 50
 const THREAT_MAX: int = 10
 # Closed-app reward: capped gold from the best farmable cleared territory, never simulated combat.
 const AWAY_CAP_SECONDS: int = 28800
@@ -73,6 +76,21 @@ func train_drill() -> bool:
 	drill_rank += 1
 	return true
 
+func can_buy_veteran_cadre() -> bool:
+	return not veteran_cadre and legacy >= VETERAN_CADRE_COST
+
+# Allowed in any phase; changes nothing but Legacy and the flag. It takes effect at the next founded dynasty.
+func buy_veteran_cadre() -> bool:
+	if not can_buy_veteran_cadre():
+		return false
+	legacy -= VETERAN_CADRE_COST
+	veteran_cadre = true
+	return true
+
+# Troop level a newly founded dynasty starts at (the gate always starts at 1).
+func dynasty_start_level() -> int:
+	return 2 if veteran_cadre else 1
+
 func _squad_damage_multiplier() -> int:
 	return 1 + drill_rank
 
@@ -92,7 +110,8 @@ func found_dynasty(next_threat: int = 0) -> Combat:
 	dynasty += 1
 	threat = next_threat
 	gold = 0
-	levels = [1, 1, 1]
+	var start: int = dynasty_start_level()
+	levels = [start, start, start]
 	gate_level = 1
 	phase = Phase.RUNNING
 	mode = Mode.ADVANCE

@@ -250,6 +250,12 @@ func test_dynasty() -> bool:
 		and drill_button.disabled and drill_button.text == "Train Drill rank 2 — 20 Legacy"
 		and scene.get_node("%DynastyStatus").text == "Dynasty 1 · Legacy 0 · Drill rank 1 (×2 squad damage)",
 		"native Train Drill click spends 10 Legacy for rank 1 without touching the settled battle")
+	var cadre_button: Button = scene.get_node("%VeteranCadre")
+	check(cadre_button.disabled and cadre_button.text == "Recruit Veteran Cadre — 50 Legacy"
+		and cadre_button.get_index() == drill_button.get_index() + 1, "Veteran Cadre shown after Drill, unaffordable at 0 Legacy")
+	# Real secured dynasty-1 state, reused below as the Veteran Cadre relaunch fixture.
+	var secured_capture := CampaignState.capture(campaign, scene.elapsed_usec)
+	check(secured_capture.outcome == CampaignState.Outcome.VALID, "secured dynasty state captured for the cadre fixture")
 	var checkpoint := dynasty_checkpoint()
 	root.size = Vector2i(540, 480)
 	root.content_scale_size = Vector2i(540, 480)
@@ -329,6 +335,82 @@ func test_dynasty() -> bool:
 		return false
 	check(not campaign.settle(successor) and not campaign.settle(defense) and campaign.gold == 10,
 		"old defense and successor cannot settle twice")
+	if secured_capture.outcome != CampaignState.Outcome.VALID:
+		return false
+	return await test_veteran_cadre(secured_capture.state)
+
+# Affordability fixture: dynasty 1 can only ever hold 10 Legacy, so the real secured state's history
+# is rewritten to a ledger-valid secured dynasty 7 (best Threat 5, 73 earned, 10 spent on Drill, 63 held)
+# and loaded through the scene's normal relaunch path. Purchase, preview and reset are all real input.
+func test_veteran_cadre(secured: Dictionary) -> bool:
+	var state: Dictionary = secured.duplicate(true)
+	state.dynasty = 7
+	state.best_threat = 5
+	state.legacy_earned = 73
+	state.legacy = 63
+	state.saved_at = 0
+	check(state.veteran_cadre == false and state.drill_rank == 1 and fixture.put(JSON.stringify(state)) == OK,
+		"cadre fixture written to the isolated save")
+	var old := scene
+	root.remove_child(old)
+	old.free()
+	scene = CampaignScene.instantiate()
+	scene.campaign_save = CampaignSave.new(fixture.path)
+	root.add_child(scene)
+	current_scene = scene
+	root.size = Vector2i(540, 480)
+	root.content_scale_size = Vector2i(540, 480)
+	await process_frame
+	await process_frame
+	var campaign := scene.campaign
+	var button: Button = scene.get_node("%VeteranCadre")
+	check(campaign.dynasty == 7 and campaign.phase == Campaign.Phase.CAMPAIGN_SECURED and campaign.legacy == 63
+		and not campaign.veteran_cadre and campaign.levels == [3, 3, 3] and not button.disabled
+		and button.text == "Recruit Veteran Cadre — 50 Legacy" and scene.get_node("%SaveStatus").text == "Autosave on",
+		"relaunched ledger-valid fixture offers Veteran Cadre")
+	button.grab_focus()
+	await process_frame
+	await process_frame
+	check(button.has_focus() and root.get_visible_rect().encloses(button.get_global_rect()),
+		"narrow focus-follow exposes VeteranCadre")
+	await click(button)
+	await process_frame
+	var on_disk: Variant = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
+	check(campaign.veteran_cadre and campaign.legacy == 13 and campaign.levels == [3, 3, 3] and button.disabled
+		and button.text == "Veteran Cadre owned — new dynasties start troops at level 2"
+		and scene.get_node("%DynastyStatus").text.ends_with(" · Veteran Cadre")
+		and scene.get_node("%SaveStatus").text == "Saved" and on_disk is Dictionary
+		and on_disk.veteran_cadre == true and on_disk.legacy == 13 and on_disk.version == 5,
+		"native Veteran Cadre click spends 50 Legacy once, shows owned and saves v5")
+	await click(scene.get_node("%FoundDynasty"))
+	await process_frame
+	await process_frame
+	var losses: String = scene.get_node("%DynastyLosses").text
+	check(scene.dynasty_preview_open and scene.get_node("%CancelDynasty").has_focus() and button.disabled
+		and losses.contains("Horse archers Lv.3 return to level 2 (Veteran Cadre)")
+		and losses.contains("returns to level 1") and not losses.contains("all return to level 1")
+		and losses.contains("Keep Veteran Cadre (owned: troops start at level 2)"),
+		"native preview discloses the level-2 start and the kept Veteran Cadre")
+	for name in ["ConfirmDynasty", "CancelDynasty", "ConfirmDynasty"]:
+		var target: Button = scene.get_node("%" + name)
+		target.grab_focus()
+		await process_frame
+		await process_frame
+		check(target.has_focus() and not target.disabled and root.get_visible_rect().encloses(target.get_global_rect()),
+			"cadre preview narrow focus-follow exposes " + name)
+	await capture("dynasty-cadre")
+	await keyboard(scene.get_node("%ConfirmDynasty"))
+	await process_frame
+	on_disk = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
+	check(campaign.dynasty == 8 and campaign.levels == [2, 2, 2] and campaign.gate_level == 1 and campaign.legacy == 13
+		and campaign.veteran_cadre and campaign.battle.players[0].damage == 12 and campaign.battle.rounds == 0
+		and not scene.dynasty_preview_open and on_disk is Dictionary and on_disk.dynasty == 8
+		and on_disk.levels.map(func(level: Variant) -> int: return int(level)) == [2, 2, 2] and on_disk.veteran_cadre == true,
+		"keyboard confirmation founds dynasty 8 with troops at level 2 and Drill applied once")
+	root.size = Vector2i(720, 960)
+	root.content_scale_size = Vector2i(720, 960)
+	scene.get_node("Margin/Scroll").scroll_vertical = 0
+	await capture("dynasty-cadre-successor")
 	return true
 
 func dynasty_checkpoint() -> Array:
@@ -645,8 +727,13 @@ func keyboard(button: Button) -> void:
 	scene.get_node("Margin/Scroll").ensure_control_visible(button)
 	await process_frame
 	await process_frame
-	check(button.has_focus() and not button.disabled and root.get_visible_rect().encloses(button.get_global_rect()),
-		"keyboard target focused, enabled and visible")
+	var ready := button.has_focus() and not button.disabled and root.get_visible_rect().encloses(button.get_global_rect())
+	if not ready:
+		var scroll: ScrollContainer = scene.get_node("Margin/Scroll")
+		print("KEY_DIAG: %s focus=%s disabled=%s rect=%s visible=%s scroll=%d max=%d suspended=%s preview=%s" % [
+			button.name, button.has_focus(), button.disabled, button.get_global_rect(), root.get_visible_rect(),
+			scroll.scroll_vertical, scroll.get_v_scroll_bar().max_value, scene.suspended, scene.dynasty_preview_open])
+	check(ready, "keyboard target focused, enabled and visible")
 	for down in [true, false]:
 		var event := InputEventKey.new()
 		event.keycode = KEY_SPACE

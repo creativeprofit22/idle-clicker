@@ -154,6 +154,7 @@ func run() -> void:
 		"dead attackers excluded; mobile takes damage before ranged")
 	check(Combat.new().players[0].health == 120, "fixtures: independent health")
 	test_dynasty()
+	test_veteran_cadre()
 	test_threat()
 	test_threat_state()
 	test_conquest_targeting()
@@ -195,6 +196,8 @@ func run() -> void:
 	test_campaign_scene_defense_lifecycle()
 	test_campaign_scene_conflicting_suspension()
 	test_campaign_scene_dynasty()
+	test_campaign_scene_veteran_cadre()
+	test_veteran_cadre_state()
 	test_campaign_state_round_trips()
 	test_campaign_state_duplicates()
 	test_campaign_state_rejection()
@@ -571,8 +574,8 @@ func test_campaign_state_rejection() -> void:
 	state_rejects(base, "battle not object", CORRUPT, func(s: Dictionary) -> void: s.battle = [])
 	state_rejects(base, "wrong format", CORRUPT, func(s: Dictionary) -> void: s.format = "idle-clicker-progress")
 	state_rejects(base, "missing format", CORRUPT, func(s: Dictionary) -> void: s.erase("format"))
-	state_rejects(base, "future version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 5)
-	state_rejects(base, "future version float", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 5.0)
+	state_rejects(base, "future version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 6)
+	state_rejects(base, "future version float", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 6.0)
 	state_rejects(base, "version zero", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 0)
 	state_rejects(base, "negative version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = -1)
 	state_rejects(base, "huge version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 1e20)
@@ -708,14 +711,98 @@ func test_campaign_state_rejection() -> void:
 		"Campaign state: capture refuses an unpaid Drill rank unchanged")
 	check(player_campaign_snapshot() == player_campaign_files, "Campaign state: player campaign save files unchanged")
 
-# Build a contract-v3 state from a v4 capture (drop the save stamp) as older builds wrote it.
-func state_as_v3(state: Dictionary) -> Dictionary:
+# A ledger-valid secured dynasty 6 (best Threat 4) holding 55 Legacy earned, from a real secured capture.
+# Dynasty 6 with best 4 allows 55..67 earned; this isolates affordability without 30+ real campaigns.
+func cadre_state(owned: bool) -> Dictionary:
+	var state: Dictionary = state_json(CampaignState.capture(state_secured(), 0).state)
+	state.dynasty = 6
+	state.best_threat = 4
+	state.legacy_earned = 55
+	state.legacy = 5 if owned else 55
+	state.veteran_cadre = owned
+	return state
+
+func test_veteran_cadre_state() -> void:
+	var CORRUPT := CampaignState.Outcome.CORRUPT
+	var unowned := cadre_state(false)
+	var loaded := CampaignState.restore(unowned)
+	check(loaded.outcome == CampaignState.Outcome.VALID and not loaded.campaign.veteran_cadre and loaded.campaign.legacy == 55,
+		"Veteran Cadre save: ledger-valid unowned fixture loads")
+	if loaded.outcome != CampaignState.Outcome.VALID:
+		return
+	var campaign: Campaign = loaded.campaign
+	check(campaign.buy_veteran_cadre() and campaign.legacy == 5, "Veteran Cadre save: purchase from loaded fixture")
+	var captured := CampaignState.capture(campaign, 0)
+	check(captured.outcome == CampaignState.Outcome.VALID and captured.state.version == 5
+		and captured.state.veteran_cadre == true and captured.state.legacy == 5 and captured.state.legacy_earned == 55,
+		"Veteran Cadre save: v5 capture keeps the flag and the spend")
+	var owned: Dictionary = state_json(captured.state)
+	var restored := CampaignState.restore(owned)
+	check(restored.outcome == CampaignState.Outcome.VALID and restored.campaign.veteran_cadre
+		and CampaignState.capture(restored.campaign, 0).state == captured.state
+		and campaign_snapshot(restored.campaign, false) == campaign_snapshot(campaign, false),
+		"Veteran Cadre save: v5 round trip is exact")
+	check(restored.campaign.found_dynasty() != null and restored.campaign.levels == [2, 2, 2]
+		and restored.campaign.gate_level == 1 and restored.campaign.dynasty == 7
+		and CampaignState.capture(restored.campaign, 0).outcome == CampaignState.Outcome.VALID,
+		"Veteran Cadre save: relaunched owner founds at level 2 and saves")
+	state_rejects(owned, "flag without the ledger spend", CORRUPT, func(s: Dictionary) -> void: s.legacy = 55)
+	state_rejects(unowned, "flag set by hand without spending", CORRUPT, func(s: Dictionary) -> void: s.veteran_cadre = true)
+	state_rejects(owned, "spend without the flag", CORRUPT, func(s: Dictionary) -> void: s.veteran_cadre = false)
+	state_rejects(owned, "integer flag", CORRUPT, func(s: Dictionary) -> void: s.veteran_cadre = 1)
+	state_rejects(owned, "string flag", CORRUPT, func(s: Dictionary) -> void: s.veteran_cadre = "true")
+	state_rejects(owned, "null flag", CORRUPT, func(s: Dictionary) -> void: s.veteran_cadre = null)
+	state_rejects(owned, "missing flag", CORRUPT, func(s: Dictionary) -> void: s.erase("veteran_cadre"))
+	state_rejects(owned, "v4 carrying the flag", CORRUPT, func(s: Dictionary) -> void: s.version = 4)
+	# Older files load unowned with nothing lost.
+	var v4: Dictionary = state_as_v4(unowned)
+	var migrated := CampaignState.restore(v4)
+	check(not v4.has("veteran_cadre") and migrated.outcome == CampaignState.Outcome.VALID
+		and not migrated.campaign.veteran_cadre and migrated.campaign.legacy == 55 and migrated.campaign.dynasty == 6
+		and migrated.campaign.best_threat == 4 and migrated.campaign.legacy_earned == 55,
+		"Veteran Cadre save: v4 loads unowned with Legacy and history intact")
+	state_rejects(state_as_v4(owned), "v4 with a spent balance", CORRUPT, func(_s: Dictionary) -> void: pass)
+	var secured: Dictionary = state_json(CampaignState.capture(state_secured(), 0).state)
+	for old: Dictionary in [state_as_v3(secured), state_as_v2(secured), state_as_v1(secured)]:
+		var result := CampaignState.restore(old)
+		check(result.outcome == CampaignState.Outcome.VALID and not result.campaign.veteran_cadre
+			and result.campaign.legacy == 10 and result.campaign.dynasty_start_level() == 1,
+			"Veteran Cadre save: v%d loads unowned with its Legacy" % old.version)
+	# On disk: a v4 file loads unowned without rewrite; the next save writes v5 with the flag.
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Veteran Cadre save: isolated directory owned")
+	if not fixture.owned:
+		return
+	check(fixture.put(JSON.stringify(v4)) == OK, "Veteran Cadre save: v4 file written")
+	var store := CampaignSave.new(fixture.path)
+	var from_disk := store.load_campaign()
+	check(from_disk.outcome == CampaignSave.Outcome.LOADED and not from_disk.campaign.veteran_cadre
+		and FileAccess.get_file_as_string(fixture.path) == JSON.stringify(v4),
+		"Veteran Cadre save: v4 file loads unowned through the store without being rewritten")
+	if from_disk.outcome == CampaignSave.Outcome.LOADED:
+		check(from_disk.campaign.buy_veteran_cadre() and store.save_campaign(from_disk.campaign, 0) == OK, "Veteran Cadre save: bought and saved")
+		var written: Variant = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
+		var relaunched := CampaignSave.new(fixture.path).load_campaign()
+		check(written.version == 5 and written.veteran_cadre == true and relaunched.outcome == CampaignSave.Outcome.LOADED
+			and relaunched.campaign.veteran_cadre and relaunched.campaign.legacy == 5,
+			"Veteran Cadre save: next save writes v5 that relaunches owned")
+	check(fixture.cleanup() == OK, "Veteran Cadre save: directory cleaned")
+
+# Build a contract-v4 state from a v5 capture (drop the Veteran Cadre flag) as older builds wrote it.
+func state_as_v4(state: Dictionary) -> Dictionary:
 	var old: Dictionary = state.duplicate(true)
+	old.version = 4
+	old.erase("veteran_cadre")
+	return old
+
+# Build a contract-v3 state from a v5 capture (drop the flag and save stamp) as older builds wrote it.
+func state_as_v3(state: Dictionary) -> Dictionary:
+	var old: Dictionary = state_as_v4(state)
 	old.version = 3
 	old.erase("saved_at")
 	return old
 
-# Build a contract-v2 state from a v4 capture (drop the stamp and Threat keys) as older builds wrote it.
+# Build a contract-v2 state from a v5 capture (drop the stamp and Threat keys) as older builds wrote it.
 func state_as_v2(state: Dictionary) -> Dictionary:
 	var old: Dictionary = state_as_v3(state)
 	old.version = 2
@@ -724,7 +811,7 @@ func state_as_v2(state: Dictionary) -> Dictionary:
 	old.erase("legacy_earned")
 	return old
 
-# Build a contract-v1 state from a v4 capture (drop the Threat and Legacy keys) as older builds wrote it.
+# Build a contract-v1 state from a v5 capture (drop the Threat and Legacy keys) as older builds wrote it.
 func state_as_v1(state: Dictionary) -> Dictionary:
 	var old: Dictionary = state_as_v2(state)
 	old.version = 1
@@ -776,7 +863,7 @@ func test_campaign_state_migration() -> void:
 	state_rejects(v1, "v1 with v2 Legacy key", CORRUPT, func(s: Dictionary) -> void: s["legacy"] = 3)
 	state_rejects(v1, "v1 with v2 snapshot rank", CORRUPT, func(s: Dictionary) -> void: s.battle["snapshot_drill_rank"] = 1)
 	state_rejects(v1, "v2 without Legacy keys", CORRUPT, func(s: Dictionary) -> void: s.version = 2)
-	# On disk: a v1 file loads through the real store, and the next ordinary save writes v4.
+	# On disk: a v1 file loads through the real store, and the next ordinary save writes v5.
 	var fixture := ProgressFixture.new("campaign.json")
 	check(fixture.owned, "Campaign migration: isolated directory owned")
 	if not fixture.owned:
@@ -789,9 +876,9 @@ func test_campaign_state_migration() -> void:
 		and FileAccess.get_file_as_string(fixture.path) == JSON.stringify(v1),
 		"Campaign migration: v1 file loads through the store without being rewritten")
 	check(store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK
-		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 4
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 5
 		and CampaignSave.new(fixture.path).load_campaign().campaign.legacy == 3,
-		"Campaign migration: next save writes v4 that reloads exactly")
+		"Campaign migration: next save writes v5 that reloads exactly")
 	check(fixture.cleanup() == OK, "Campaign migration: directory cleaned")
 
 func campaign_running(rounds: int = 2, gold: int = 7) -> Campaign:
@@ -849,7 +936,7 @@ func test_campaign_save_format() -> void:
 		return
 	var base: Dictionary = CampaignState.capture(campaign_running(), 250000).state
 	var valid: String = JSON.stringify(base)
-	check(valid.contains('"gold":7') and valid.ends_with('"version":4}'), "Campaign save format: canonical integer text")
+	check(valid.contains('"gold":7') and valid.ends_with('"version":5,"veteran_cadre":false}'), "Campaign save format: canonical integer text")
 	var backup: String = JSON.stringify(CampaignState.capture(campaign_running(1), 0).state)
 	check(fixture.put(backup, ".bak") == OK, "Campaign save format: valid backup beside every primary")
 	var mutated := func(mutate: Callable) -> String:
@@ -872,7 +959,7 @@ func test_campaign_save_format() -> void:
 		mutated.call(func(s: Dictionary) -> void: s.battle.player_health[0] = 121),
 		mutated.call(func(s: Dictionary) -> void: s.settled = true)]
 	check(corrupt[7].length() == 4097, "Campaign save format: oversize fixture is 4097 bytes")
-	var unsupported: Array[String] = [mutated.call(func(s: Dictionary) -> void: s.version = 5),
+	var unsupported: Array[String] = [mutated.call(func(s: Dictionary) -> void: s.version = 6),
 		'{"format":"idle-clicker-campaign","version":99,"gold":"future payload"}']
 	var replacement := campaign_running(3)
 	for expected in [CampaignSave.Outcome.CORRUPT, CampaignSave.Outcome.UNSUPPORTED]:
@@ -1124,7 +1211,7 @@ func test_campaign_scene_saves() -> void:
 	recovered.free()
 	# Unusable primaries: fresh session, saving disabled, file preserved.
 	var unsupported_state: Dictionary = (expected as Dictionary).duplicate(true)
-	unsupported_state.version = 5
+	unsupported_state.version = 6
 	var backup_bytes := FileAccess.get_file_as_bytes(path + ".bak")
 	for case in [["{", "damaged"], [JSON.stringify(unsupported_state), "from an unsupported version"], ["", "unreadable"]]:
 		if case[1] == "unreadable":
@@ -1307,23 +1394,23 @@ func test_away_reward_format() -> void:
 	var CORRUPT := CampaignState.Outcome.CORRUPT
 	var stamped: Dictionary = CampaignState.capture(campaign_running(), 250000, 1700000000).state
 	var restored := CampaignState.restore(state_json(stamped))
-	check(stamped.version == 4 and restored.outcome == CampaignState.Outcome.VALID and restored.saved_at == 1700000000
+	check(stamped.version == 5 and restored.outcome == CampaignState.Outcome.VALID and restored.saved_at == 1700000000
 		and CampaignState.capture(restored.campaign, restored.round_progress_usec, restored.saved_at).state == stamped,
-		"Away save: v4 round trip keeps saved_at exactly")
+		"Away save: v5 round trip keeps saved_at exactly")
 	state_rejects(stamped, "missing saved_at", CORRUPT, func(s: Dictionary) -> void: s.erase("saved_at"))
 	state_rejects(stamped, "negative saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = -1)
 	state_rejects(stamped, "fractional saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = 1.5)
 	state_rejects(stamped, "string saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = "1700000000")
 	state_rejects(stamped, "huge saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = ProgressSave.MAX_GOLD + 1)
 	state_rejects(stamped, "v3 carrying saved_at", CORRUPT, func(s: Dictionary) -> void: s.version = 3)
-	state_rejects(stamped, "version 5", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 5)
+	state_rejects(stamped, "version 6", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 6)
 	# v1-v3 files migrate with an unknown (0) stamp, so they never pay an away reward.
 	var secured: Dictionary = state_json(CampaignState.capture(state_secured(), 0, 1700000000).state)
 	for old: Dictionary in [state_as_v3(secured), state_as_v2(secured), state_as_v1(secured)]:
 		var migrated := CampaignState.restore(old)
 		check(not old.has("saved_at") and migrated.outcome == CampaignState.Outcome.VALID and migrated.saved_at == 0,
 			"Away save: v%d migrates with saved_at 0" % old.version)
-	# On disk: a v3 file loads with stamp 0; the next save writes v4 with the store's clock.
+	# On disk: a v3 file loads with stamp 0; the next save writes v5 with the store's clock.
 	var fixture := ProgressFixture.new("campaign.json")
 	check(fixture.owned, "Away save: isolated directory owned")
 	if not fixture.owned:
@@ -1338,7 +1425,7 @@ func test_away_reward_format() -> void:
 	if loaded.outcome == CampaignSave.Outcome.LOADED and store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK:
 		written = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
 	var reloaded := CampaignSave.new(fixture.path).load_campaign()
-	check(written != null and written.version == 4 and written.saved_at == 1700000500
+	check(written != null and written.version == 5 and written.saved_at == 1700000500
 		and reloaded.outcome == CampaignSave.Outcome.LOADED and reloaded.saved_at == 1700000500,
 		"Away save: store with injected clock stamps and reloads saved_at exactly")
 	check(fixture.cleanup() == OK, "Away save: directory cleaned")
@@ -1502,10 +1589,11 @@ func test_campaign_scene_dynasty() -> void:
 	var scene := campaign_scene_new(CampaignWindowFixture) as CampaignWindowFixture
 	var campaign := scene.campaign
 	var before := campaign_snapshot(campaign)
-	for name in ["FoundDynasty", "ConfirmDynasty", "CancelDynasty", "TrainDrill"]:
+	for name in ["FoundDynasty", "ConfirmDynasty", "CancelDynasty", "TrainDrill", "VeteranCadre"]:
 		scene.get_node("%" + name).pressed.emit()
 	check(campaign_snapshot(campaign) == before and not scene.dynasty_preview_open
 		and scene.get_node("%TrainDrill").disabled and scene.get_node("%TrainDrill").text == "Train Drill rank 1 — 10 Legacy"
+		and scene.get_node("%VeteranCadre").disabled and scene.get_node("%VeteranCadre").text == "Recruit Veteran Cadre — 50 Legacy"
 		and scene.get_node("%DynastyStatus").text == "Dynasty 1 · Legacy 0 · Drill rank 0 (×1 squad damage) · Securing this campaign earns 10 Legacy",
 		"Dynasty scene: premature emitted reset and training actions reject")
 	# Earn funds through real scene rounds; leave a gate upgrade affordable at security.
@@ -1530,7 +1618,7 @@ func test_campaign_scene_dynasty() -> void:
 	scene.get_node("%StartDefense").pressed.emit()
 	var defense := campaign_scene_finish(scene)
 	check(campaign.can_found_dynasty() and defense.result == Combat.Result.VICTORY and campaign.legacy == 10
-		and not scene.get_node("%TrainDrill").disabled
+		and not scene.get_node("%TrainDrill").disabled and scene.get_node("%VeteranCadre").disabled
 		and scene.get_node("%CampaignStatus").text == "Campaign secured · Counterattack defeated · +10 Legacy earned"
 		and scene.get_node("%DynastyStatus").text == "Dynasty 1 · Legacy 10 · Drill rank 0 (×1 squad damage)",
 		"Dynasty scene: real earned conquest and defense enable reset and pay 10 Legacy")
@@ -1557,7 +1645,8 @@ func test_campaign_scene_dynasty() -> void:
 		"fresh full-health troops", "pending commands", "farming/navigation", "fractional round time",
 		"same three troop types", "Keep Legacy 0 and Drill rank 1 (×2 squad damage after level additions)",
 		"health, gold rewards and round frequency are unchanged", "Next secured campaign earns 3 Legacy",
-		"Legacy and Drill rank are kept in the campaign save", "main-game saves are untouched"]:
+		"Legacy and Drill rank are kept in the campaign save", "main-game saves are untouched",
+		"Keep Veteran Cadre (not owned: 50 Legacy)", "as is Veteran Cadre"]:
 		check(copy.contains(text), "Dynasty scene: preview discloses " + text)
 	check(not copy.contains("only dynasty reset")
 		and scene.get_node("%ConfirmDynasty").text == "Confirm reset — start dynasty 2",
@@ -1583,7 +1672,7 @@ func test_campaign_scene_dynasty() -> void:
 	scene.get_node("%ThreatUp").pressed.emit()
 	check(scene.preview_threat == 0 and scene.get_node("%ThreatUp").disabled, "Threat scene: suspended raise rejected")
 	scene.set_reason(0, false)
-	for name in ["GateUpgrade", "ShieldUpgrade", "FootUpgrade", "HorseUpgrade", "FarmBorder", "FarmArcher", "Frontier", "StartDefense", "FoundDynasty", "TrainDrill"]:
+	for name in ["GateUpgrade", "ShieldUpgrade", "FootUpgrade", "HorseUpgrade", "FarmBorder", "FarmArcher", "Frontier", "StartDefense", "FoundDynasty", "TrainDrill", "VeteranCadre"]:
 		check(scene.get_node("%" + name).disabled, "Dynasty scene: preview disables " + name)
 		scene.get_node("%" + name).pressed.emit()
 	check(campaign_snapshot(campaign) == before, "Dynasty scene: emitted blocked signals preserve preview losses")
@@ -1673,6 +1762,67 @@ func test_campaign_scene_dynasty() -> void:
 		and scene.get_node("%DynastyStatus").text.ends_with("Securing this campaign earns 6 Legacy"),
 		"Dynasty scene: repeat reset starts dynasty 3 at the chosen Threat keeping Legacy and rank")
 	scene.free()
+
+func test_campaign_scene_veteran_cadre() -> void:
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Cadre scene: isolated directory owned")
+	if not fixture.owned:
+		return
+	var path: String = fixture.path
+	check(fixture.put(JSON.stringify(cadre_state(false))) == OK, "Cadre scene: affordable ledger-valid save written")
+	var scene := campaign_scene_new(CampaignWindowFixture, CampaignSave.new(path)) as CampaignWindowFixture
+	var campaign := scene.campaign
+	var button: Button = scene.get_node("%VeteranCadre")
+	check(campaign.dynasty == 6 and campaign.legacy == 55 and not campaign.veteran_cadre and not button.disabled
+		and button.text == "Recruit Veteran Cadre — 50 Legacy" and button.action_mode == BaseButton.ACTION_MODE_BUTTON_PRESS
+		and button.get_index() == scene.get_node("%TrainDrill").get_index() + 1
+		and not scene.get_node("%DynastyStatus").text.contains("Veteran Cadre"),
+		"Cadre scene: affordable purchase offered right after Drill")
+	var before := campaign_snapshot(campaign)
+	for reason in range(3):
+		scene.set_reason(reason, true)
+		check(button.disabled, "Cadre scene: suspension disables the purchase")
+		button.pressed.emit()
+		scene.set_reason(reason, false)
+	# Entering suspension saves ordinarily; the saved state must still be the unowned one.
+	check(campaign_snapshot(campaign) == before and scene_saved_exactly(scene, path)
+		and JSON.parse_string(FileAccess.get_file_as_string(path)).veteran_cadre == false,
+		"Cadre scene: suspended purchase rejected, save stays unowned")
+	var bytes := FileAccess.get_file_as_bytes(path)
+	scene.get_node("%FoundDynasty").pressed.emit()
+	var copy: String = scene.get_node("%DynastyLosses").text
+	check(scene.dynasty_preview_open and button.disabled and copy.contains("all return to level 1")
+		and copy.contains("Keep Veteran Cadre (not owned: 50 Legacy)"), "Cadre scene: unowned preview text")
+	button.pressed.emit()
+	check(campaign_snapshot(campaign) == before and FileAccess.get_file_as_bytes(path) == bytes,
+		"Cadre scene: purchase rejected while the preview is open")
+	scene.get_node("%CancelDynasty").pressed.emit()
+	button.pressed.emit()
+	check(campaign.veteran_cadre and campaign.legacy == 5 and campaign.levels == [3, 3, 3] and button.disabled
+		and button.text == "Veteran Cadre owned — new dynasties start troops at level 2"
+		and scene.get_node("%DynastyStatus").text.ends_with(" · Veteran Cadre")
+		and scene.get_node("%SaveStatus").text == "Saved" and scene_saved_exactly(scene, path),
+		"Cadre scene: purchase deducts 50, shows owned and saves immediately")
+	before = campaign_snapshot(campaign)
+	button.pressed.emit()
+	check(campaign_snapshot(campaign) == before, "Cadre scene: owned purchase signal rejected")
+	scene.get_node("%FoundDynasty").pressed.emit()
+	copy = scene.get_node("%DynastyLosses").text
+	for text in ["Shield infantry Lv.3, Foot archers Lv.3 and Horse archers Lv.3 return to level 2 (Veteran Cadre)",
+			"Gate Lv.3 returns to level 1", "Keep Veteran Cadre (owned: troops start at level 2)", "as is Veteran Cadre"]:
+		check(copy.contains(text), "Cadre scene: owned preview discloses " + text)
+	check(not copy.contains("all return to level 1"), "Cadre scene: owned preview drops the level-1 troop sentence")
+	scene.get_node("%ConfirmDynasty").pressed.emit()
+	check(campaign.dynasty == 7 and campaign.levels == [2, 2, 2] and campaign.gate_level == 1 and campaign.legacy == 5
+		and scene_saved_exactly(scene, path), "Cadre scene: confirmed dynasty starts troops at level 2 and saves")
+	scene.free()
+	var relaunched := campaign_scene_new(CampaignPresentation, CampaignSave.new(path))
+	check(relaunched.campaign.veteran_cadre and relaunched.campaign.levels == [2, 2, 2] and relaunched.campaign.dynasty == 7
+		and relaunched.get_node("%VeteranCadre").disabled
+		and relaunched.get_node("%VeteranCadre").text.begins_with("Veteran Cadre owned"),
+		"Cadre scene: relaunch keeps Veteran Cadre and the level-2 dynasty")
+	relaunched.free()
+	check(fixture.cleanup() == OK, "Cadre scene: directory cleaned")
 
 func test_campaign_scene_fresh() -> void:
 	var scene := campaign_scene_new()
@@ -2636,6 +2786,75 @@ func test_dynasty() -> void:
 		"Dynasty: defeat and recovery preserve Drill rank without stacking or Legacy")
 	dynasty_rejected(loss, "successor defensive recovery")
 
+func test_veteran_cadre() -> void:
+	# Refusals: unaffordable (0 and 49 Legacy) leaves everything unchanged.
+	var fresh := Campaign.new()
+	check(not fresh.veteran_cadre and fresh.dynasty_start_level() == 1 and not fresh.can_buy_veteran_cadre()
+		and not fresh.buy_veteran_cadre() and fresh.legacy == 0 and not fresh.veteran_cadre,
+		"Veteran Cadre: fresh campaign unowned, purchase refused at 0 Legacy")
+	var campaign := state_secured()
+	campaign.legacy = 49 # Isolated balance; the model purchase does not read the ledger.
+	var before := campaign_snapshot(campaign)
+	check(not campaign.can_buy_veteran_cadre() and not campaign.buy_veteran_cadre()
+		and campaign_snapshot(campaign) == before, "Veteran Cadre: 49 Legacy refused without mutation")
+	# Purchase with Drill: deducts exactly 50 once and touches nothing but Legacy and the flag.
+	campaign.legacy = 110
+	check(campaign.train_drill() and campaign.drill_rank == 1 and campaign.legacy == 100, "Veteran Cadre: Drill rank 1 bought first")
+	before = campaign_snapshot(campaign)
+	var settled := campaign.battle
+	check(campaign.can_buy_veteran_cadre() and campaign.buy_veteran_cadre() and campaign.legacy == 50
+		and campaign.veteran_cadre and campaign.dynasty_start_level() == 2 and campaign.battle == settled
+		and campaign_snapshot(campaign).slice(0, 24) == before.slice(0, 24)
+		and campaign_snapshot(campaign).slice(25, 30) == before.slice(25, 30)
+		and campaign.levels == [3, 3, 3] and campaign.gate_level == 3,
+		"Veteran Cadre: purchase deducts 50 once; battle, gold, levels and gate untouched")
+	before = campaign_snapshot(campaign)
+	check(not campaign.can_buy_veteran_cadre() and not campaign.buy_veteran_cadre()
+		and campaign_snapshot(campaign) == before and campaign.legacy == 50,
+		"Veteran Cadre: owned refuses a second purchase with enough Legacy")
+	# An unowned twin with the same Drill rank and history.
+	var twin := state_secured()
+	twin.legacy = 10
+	check(twin.train_drill() and twin.drill_rank == 1, "Veteran Cadre: twin Drill rank 1")
+	var successor := campaign.found_dynasty(1)
+	var plain := twin.found_dynasty(1)
+	check(successor != null and plain != null and campaign.levels == [2, 2, 2] and campaign.gate_level == 1
+		and twin.levels == [1, 1, 1] and twin.gate_level == 1 and campaign.veteran_cadre and campaign.legacy == 50
+		and campaign.dynasty == 2 and campaign.threat == 1 and campaign._battle_drill_rank == 1,
+		"Veteran Cadre: next dynasty starts troops at level 2, gate 1, no second deduction")
+	var level_two := Economy.new()
+	level_two.levels = [2, 2, 2]
+	var reference := level_two.restart_battle()
+	for role in range(3):
+		check(successor.players[role].damage == [6, 12, 9][role] * 2 and plain.players[role].damage == [4, 8, 6][role] * 2
+			and successor.players[role].max_health == reference.players[role].max_health
+			and plain.players[role].max_health == [120, 40, 60][role]
+			and successor.players[role].health == successor.players[role].max_health,
+			"Veteran Cadre: level-2 damage with Drill x2 applied once, unchanged health")
+	check(successor.commander_damage == 9 * 2 and plain.commander_damage == 6 * 2,
+		"Veteran Cadre: commander derives level 2 once with Drill")
+	var same_enemies: bool = successor.enemies.size() == plain.enemies.size()
+	for i in range(mini(successor.enemies.size(), plain.enemies.size())):
+		same_enemies = same_enemies and successor.enemies[i].max_health == plain.enemies[i].max_health \
+			and successor.enemies[i].damage == plain.enemies[i].damage
+	check(same_enemies and successor.enemies[0].max_health == 90 and campaign.secure_legacy() == twin.secure_legacy()
+		and campaign.max_selectable_threat() == twin.max_selectable_threat() and campaign._battle_reward == twin._battle_reward,
+		"Veteran Cadre: Threat scaling, payout and reward unchanged")
+	for c in [campaign, twin]:
+		c.archer_cleared = true # Isolated territory for the pure away formula only.
+	check(campaign.away_reward(3600) == twin.away_reward(3600) and campaign.away_reward(3600) > 0,
+		"Veteran Cadre: away reward unchanged")
+	for c in [campaign, twin]:
+		c.archer_cleared = false
+	# Retention: secure, reset twice; the flag and level-2 start persist and nothing is re-deducted.
+	for reset in range(2):
+		threat_secure(campaign)
+		var wallet: int = campaign.legacy
+		check(campaign.can_found_dynasty() and campaign.found_dynasty() != null and campaign.levels == [2, 2, 2]
+			and campaign.gate_level == 1 and campaign.veteran_cadre and campaign.legacy == wallet
+			and campaign.drill_rank == 1 and campaign.battle.players[0].damage == 12,
+			"Veteran Cadre: reset %d keeps the flag and level-2 start" % (reset + 1))
+
 # Real play to a secured defense at the campaign's current dynasty and Threat.
 func threat_secure(campaign: Campaign) -> Combat:
 	# dynasty_prepare farms Border, so win the opening Border battle first (real rounds, retried on loss).
@@ -2714,18 +2933,18 @@ func test_threat() -> void:
 
 func test_threat_state() -> void:
 	var CORRUPT := CampaignState.Outcome.CORRUPT
-	# v4 round trip: Threat, best and earned are persisted and battles restore scaled.
+	# v5 round trip: Threat, best and earned are persisted and battles restore scaled.
 	var campaign := state_secured()
 	campaign.train_drill()
 	campaign.found_dynasty(1)
 	campaign.battle.step_round()
 	var state: Dictionary = state_json(CampaignState.capture(campaign, 0).state)
 	var restored := CampaignState.restore(state)
-	check(restored.outcome == CampaignState.Outcome.VALID and state.version == 4 and state.threat == 1
+	check(restored.outcome == CampaignState.Outcome.VALID and state.version == 5 and state.threat == 1
 		and state.best_threat == 0 and state.legacy_earned == 10
 		and restored.campaign.threat == 1 and restored.campaign.best_threat == 0 and restored.campaign.legacy_earned == 10
 		and campaign_snapshot(restored.campaign, false) == campaign_snapshot(campaign, false),
-		"Threat save: v4 round trip keeps Threat, best, earned and the scaled battle exactly")
+		"Threat save: v5 round trip keeps Threat, best, earned and the scaled battle exactly")
 	state_rejects(state, "Threat above unlocked", CORRUPT, func(s: Dictionary) -> void: s.threat = 2)
 	state_rejects(state, "negative Threat", CORRUPT, func(s: Dictionary) -> void: s.threat = -1)
 	state_rejects(state, "Threat over max", CORRUPT, func(s: Dictionary) -> void: s.threat = Campaign.THREAT_MAX + 1)
@@ -2756,7 +2975,7 @@ func test_threat_state() -> void:
 	state = state_json(CampaignState.capture(campaign, 0).state)
 	check(CampaignState.validate(state).outcome == CampaignState.Outcome.VALID and state.legacy_earned == 19
 		and state.best_threat == 1 and state.dynasty == 3,
-		"Threat save: mixed-Threat history saves as a valid v4 ledger")
+		"Threat save: mixed-Threat history saves as a valid v5 ledger")
 	# Earned is a range check: with best Threat 1 over two later secures it lies in 19..22 (10 + 6 + 6).
 	var richest: Dictionary = state.duplicate(true)
 	richest.legacy_earned = 22
@@ -2793,7 +3012,7 @@ func test_threat_state() -> void:
 	state_rejects(v2_secured, "v2 dynasty without its Legacy", CORRUPT, func(s: Dictionary) -> void: s.dynasty = 3)
 	check(migrated.campaign.found_dynasty(1) != null and migrated.campaign.battle.enemies[0].max_health == 90,
 		"Threat migration: migrated v2 dynasty can found at Threat 1")
-	# On disk: a v2 file loads unchanged; the next save writes v4 that reloads exactly.
+	# On disk: a v2 file loads unchanged; the next save writes v5 that reloads exactly.
 	var fixture := ProgressFixture.new("campaign.json")
 	check(fixture.owned, "Threat migration: isolated directory owned")
 	if not fixture.owned:
@@ -2806,9 +3025,9 @@ func test_threat_state() -> void:
 		and FileAccess.get_file_as_string(fixture.path) == JSON.stringify(v2_secured),
 		"Threat migration: v2 file loads through the store without being rewritten")
 	check(store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK
-		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 4
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 5
 		and CampaignSave.new(fixture.path).load_campaign().campaign.legacy_earned == 13,
-		"Threat migration: next save writes v4 that reloads exactly")
+		"Threat migration: next save writes v5 that reloads exactly")
 	check(fixture.cleanup() == OK, "Threat migration: directory cleaned")
 
 func campaign_finish(campaign: Campaign) -> Combat:
@@ -2837,7 +3056,7 @@ func campaign_snapshot(campaign: Campaign, identity: bool = true) -> Array:
 		combat.commander_damage, squads, campaign.gate_level, combat.is_defense,
 		combat.gate_max_health, combat.gate_health, combat.defeat_reason,
 		campaign.dynasty, campaign.legacy, campaign.drill_rank, campaign._battle_drill_rank,
-		campaign.threat, campaign.best_threat, campaign.legacy_earned]
+		campaign.threat, campaign.best_threat, campaign.legacy_earned, campaign.veteran_cadre]
 
 func campaign_fresh(campaign: Campaign, previous: Combat, encounter: int) -> void:
 	var combat := campaign.battle
