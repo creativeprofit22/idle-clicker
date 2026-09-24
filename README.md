@@ -1996,10 +1996,24 @@ Inspected captures: `dynasty-cadre` (540×480 owned preview: "Keep Veteran Cadre
 start at level 2)", Threat controls, Cancel and focused Confirm visible), `dynasty-cadre-successor`
 (dynasty 8, "· Veteran Cadre", troops Lv.2, damage 12/24/18), `dynasty-preview`,
 `dynasty-secured`, `campaign-secured` and `defense-ready` (new button disabled below Drill with no
-overlap). All are readable. `windows_g6_driver.py` was not run: it still checks for save version
-3, which has been stale since the v4 away-reward commit and is outside this change. CI hasn't
-run because nothing is committed. The physical gate stays **pending**, and there's no art,
-export, Android or release claim.
+overlap). All are readable. CI hasn't run because nothing is committed. The physical gate stays
+**pending**, and there's no art, export, Android or release claim.
+
+**G6 driver brought up to v5 (24 Sep 2026, uncommitted tree on `df9ebce`).** `windows_g6_driver.py`
+still expected save version 3, which had been out of date since the v4 away-reward commit, so it
+could not pass. Its dynasty-2 save check now requires `version` 5 and `veteran_cadre` false. Dynasty 1
+can earn only 10 Legacy, so the 50-Legacy Cadre can't be bought. No other version or key-set
+assumptions were found. Every other assertion, deadline and PID/window scope is unchanged.
+
+| Check | Result |
+|---|---|
+| `windows_g6_driver.py` | 27/0, driver exit 0, both launches exited 0 on WM_CLOSE with child reaped and reader joined; dynasty 1 secured in 125.8 s, dynasty 2 (Threat 0) in 20.3 s; passive dynasty-2 Border 72→36 in 1.93 s; saves were v5 with `veteran_cadre` false (dynasty 2: 10 earned; dynasty 3: Threat 1, 13 earned) |
+
+Inspected captures (copy `%LOCALAPPDATA%\Temp\bs-g6-df9ebce-002059`): `21` (dynasty-1 preview,
+"Keep Veteran Cadre (not owned: 50 Legacy)", Cadre button disabled), `24` (dynasty 2, damage
+8/16/12), `31` (dynasty-2 preview targeting dynasty 3) and `32` (dynasty 3 at Threat 1, Enemy
+shield 90/90). All are readable with no overlap. This first run passed, so there were no failed runs
+to keep. This is window-driven evidence only; the physical gate stays **pending**.
 
 ## Boundaries
 

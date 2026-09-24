@@ -350,10 +350,10 @@ def main() -> int:
                      and data["gold"] == 0 and data["levels"] == [1, 1, 1] and data["gate_level"] == 1
                      and data["cleared"] == [False, False, False] and data["current_encounter"] == 0,
                      f"Confirm starts dynasty 2 once with Legacy/Drill kept: {data}")
-        checks.check(data["version"] == 3 and data["threat"] == 0 and data["best_threat"] == 0
-                     and data["legacy_earned"] == 10
+        checks.check(data["version"] == 5 and data["threat"] == 0 and data["best_threat"] == 0
+                     and data["legacy_earned"] == 10 and data["veteran_cadre"] is False
                      and s["labels"]["ThreatStatus"].startswith("Threat 0 (enemies +0% health and damage)"),
-                     "dynasty 2 saved as v3 at the default Threat 0 with best 0 and 10 Legacy earned")
+                     "dynasty 2 saved as v5 at the default Threat 0 with best 0 and 10 Legacy earned, Veteran Cadre unowned")
         army = s["labels"]["Army"]
         checks.check(all(f"Damage {d}" in army for d in (8, 16, 12)),
                      "dynasty 2 squads deal ×2 damage (8/16/12)")
