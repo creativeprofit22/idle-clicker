@@ -32,6 +32,10 @@ var legacy_earned: int = 0
 # Cause of the last lost Counterattack (Combat.DefeatReason: NONE, GATE_DESTROYED or TIMEOUT).
 # Kept until the next defense starts; shown as a hint only, never changes rewards or state.
 var last_defense_loss: int = Combat.DefeatReason.NONE
+# Rally: boosted rounds still to resolve (0..RALLY_ROUNDS) and cooldown rounds left
+# (0..RALLY_COOLDOWN). Never both nonzero; both 0 means ready.
+var rally_rounds: int = 0
+var rally_cooldown: int = 0
 
 const FIRST_SECURE_LEGACY: int = 10
 const REPEAT_SECURE_LEGACY: int = 3
@@ -39,6 +43,9 @@ const DRILL_COSTS: Array[int] = [10, 20, 40]
 const DRILL_MAX: int = 3
 const VETERAN_CADRE_COST: int = 50
 const THREAT_MAX: int = 10
+const RALLY_PERCENT: int = Combat.RALLY_PERCENT
+const RALLY_ROUNDS: int = 5
+const RALLY_COOLDOWN: int = 20
 # Closed-app reward: capped gold from the best farmable cleared territory, never simulated combat.
 const AWAY_CAP_SECONDS: int = 28800
 const AWAY_MINUTES_PER_VICTORY: int = 2
@@ -66,6 +73,40 @@ func secure_legacy() -> int:
 # Highest Threat a new dynasty may choose: one above the best secured, never locked out of 0.
 func max_selectable_threat() -> int:
 	return clampi(best_threat + 1, 0, THREAT_MAX)
+
+# Rally is usable in any ongoing campaign battle when neither active nor cooling down.
+func can_rally() -> bool:
+	return phase in [Phase.RUNNING, Phase.DEFENDING] and battle != null \
+		and battle.result == Combat.Result.ONGOING and rally_rounds == 0 and rally_cooldown == 0
+
+# Like the commander strike, the boost starts at the next resolved round.
+func rally() -> bool:
+	if not can_rally():
+		return false
+	rally_rounds = RALLY_ROUNDS
+	return true
+
+# Resolves one round of the current battle with any Rally boost, then ticks Rally.
+# The cooldown clock advances only here, so it counts resolved battle rounds only.
+func resolve_round() -> void:
+	if battle == null or battle.result != Combat.Result.ONGOING:
+		return
+	battle.rally_active = rally_rounds > 0
+	battle.step_round()
+	battle.rally_active = false
+	if rally_rounds > 0:
+		rally_rounds -= 1
+		if rally_rounds == 0 or battle.result != Combat.Result.ONGOING:
+			rally_rounds = 0
+			rally_cooldown = RALLY_COOLDOWN
+	elif rally_cooldown > 0:
+		rally_cooldown -= 1
+
+# A battle that ends or restarts while Rally is active drops the rest and starts the full cooldown.
+func _drop_rally() -> void:
+	if rally_rounds > 0:
+		rally_rounds = 0
+		rally_cooldown = RALLY_COOLDOWN
 
 func drill_cost() -> int:
 	return 0 if drill_rank >= DRILL_MAX else DRILL_COSTS[drill_rank]
@@ -126,6 +167,8 @@ func found_dynasty(next_threat: int = 0) -> Combat:
 	pending_farm = -1
 	# Founding requires a won defense, which already cleared this; reset anyway for safety.
 	last_defense_loss = Combat.DefeatReason.NONE
+	rally_rounds = 0
+	rally_cooldown = 0
 	return _begin_encounter(Data.Encounter.BORDER_SKIRMISH)
 
 func gate_purchase_cost() -> int:
@@ -177,6 +220,7 @@ func _begin_encounter(encounter: int) -> Combat:
 	var created := super.restart_battle(encounter)
 	if created != null:
 		_battle_drill_rank = drill_rank
+		_drop_rally()
 	if created != null and created.is_defense:
 		created.gate_max_health = 80 + 60 * (gate_level - 1)
 		created.gate_health = created.gate_max_health
@@ -219,6 +263,8 @@ func request_frontier() -> bool:
 func settle(completed: Combat) -> bool:
 	if not super.settle(completed):
 		return false
+	# Normally already dropped by resolve_round(); covers a battle ended by any other path.
+	_drop_rally()
 	var victory: bool = completed.result == Combat.Result.VICTORY
 	if victory:
 		match current_encounter:

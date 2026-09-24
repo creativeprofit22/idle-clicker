@@ -201,6 +201,9 @@ func run() -> void:
 	test_campaign_scene_dynasty()
 	test_campaign_scene_veteran_cadre()
 	test_veteran_cadre_state()
+	test_rally()
+	test_rally_state()
+	test_campaign_scene_rally()
 	test_campaign_state_round_trips()
 	test_campaign_state_duplicates()
 	test_campaign_state_rejection()
@@ -577,8 +580,8 @@ func test_campaign_state_rejection() -> void:
 	state_rejects(base, "battle not object", CORRUPT, func(s: Dictionary) -> void: s.battle = [])
 	state_rejects(base, "wrong format", CORRUPT, func(s: Dictionary) -> void: s.format = "idle-clicker-progress")
 	state_rejects(base, "missing format", CORRUPT, func(s: Dictionary) -> void: s.erase("format"))
-	state_rejects(base, "future version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 7)
-	state_rejects(base, "future version float", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 7.0)
+	state_rejects(base, "future version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 8)
+	state_rejects(base, "future version float", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 8.0)
 	state_rejects(base, "version zero", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 0)
 	state_rejects(base, "negative version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = -1)
 	state_rejects(base, "huge version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 1e20)
@@ -736,15 +739,15 @@ func test_veteran_cadre_state() -> void:
 	var campaign: Campaign = loaded.campaign
 	check(campaign.buy_veteran_cadre() and campaign.legacy == 5, "Veteran Cadre save: purchase from loaded fixture")
 	var captured := CampaignState.capture(campaign, 0)
-	check(captured.outcome == CampaignState.Outcome.VALID and captured.state.version == 6
+	check(captured.outcome == CampaignState.Outcome.VALID and captured.state.version == 7
 		and captured.state.veteran_cadre == true and captured.state.legacy == 5 and captured.state.legacy_earned == 55,
-		"Veteran Cadre save: v6 capture keeps the flag and the spend")
+		"Veteran Cadre save: v7 capture keeps the flag and the spend")
 	var owned: Dictionary = state_json(captured.state)
 	var restored := CampaignState.restore(owned)
 	check(restored.outcome == CampaignState.Outcome.VALID and restored.campaign.veteran_cadre
 		and CampaignState.capture(restored.campaign, 0).state == captured.state
 		and campaign_snapshot(restored.campaign, false) == campaign_snapshot(campaign, false),
-		"Veteran Cadre save: v6 round trip is exact")
+		"Veteran Cadre save: v7 round trip is exact")
 	check(restored.campaign.found_dynasty() != null and restored.campaign.levels == [2, 2, 2]
 		and restored.campaign.gate_level == 1 and restored.campaign.dynasty == 7
 		and CampaignState.capture(restored.campaign, 0).outcome == CampaignState.Outcome.VALID,
@@ -790,14 +793,22 @@ func test_veteran_cadre_state() -> void:
 		check(from_disk.campaign.buy_veteran_cadre() and store.save_campaign(from_disk.campaign, 0) == OK, "Veteran Cadre save: bought and saved")
 		var written: Variant = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
 		var relaunched := CampaignSave.new(fixture.path).load_campaign()
-		check(written.version == 6 and written.veteran_cadre == true and relaunched.outcome == CampaignSave.Outcome.LOADED
+		check(written.version == 7 and written.veteran_cadre == true and relaunched.outcome == CampaignSave.Outcome.LOADED
 			and relaunched.campaign.veteran_cadre and relaunched.campaign.legacy == 5,
-			"Veteran Cadre save: next save writes v6 that relaunches owned")
+			"Veteran Cadre save: next save writes v7 that relaunches owned")
 	check(fixture.cleanup() == OK, "Veteran Cadre save: directory cleaned")
 
-# Build a contract-v5 state from a v6 capture (drop the defense-loss cause) as older builds wrote it.
-func state_as_v5(state: Dictionary) -> Dictionary:
+# Build a contract-v6 state from a v7 capture (drop the Rally counters) as older builds wrote it.
+func state_as_v6(state: Dictionary) -> Dictionary:
 	var old: Dictionary = state.duplicate(true)
+	old.version = 6
+	old.erase("rally_rounds")
+	old.erase("rally_cooldown")
+	return old
+
+# Build a contract-v5 state from a v7 capture (drop Rally and the defense-loss cause) as older builds wrote it.
+func state_as_v5(state: Dictionary) -> Dictionary:
+	var old: Dictionary = state_as_v6(state)
 	old.version = 5
 	old.erase("last_defense_loss")
 	return old
@@ -890,9 +901,9 @@ func test_campaign_state_migration() -> void:
 		and FileAccess.get_file_as_string(fixture.path) == JSON.stringify(v1),
 		"Campaign migration: v1 file loads through the store without being rewritten")
 	check(store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK
-		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 6
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 7
 		and CampaignSave.new(fixture.path).load_campaign().campaign.legacy == 3,
-		"Campaign migration: next save writes v6 that reloads exactly")
+		"Campaign migration: next save writes v7 that reloads exactly")
 	check(fixture.cleanup() == OK, "Campaign migration: directory cleaned")
 
 func campaign_running(rounds: int = 2, gold: int = 7) -> Campaign:
@@ -951,7 +962,7 @@ func test_campaign_save_format() -> void:
 	var base: Dictionary = CampaignState.capture(campaign_running(), 250000).state
 	var valid: String = JSON.stringify(base)
 	check(valid.contains('"gold":7') and valid.contains('"last_defense_loss":0,')
-		and valid.ends_with('"version":6,"veteran_cadre":false}'), "Campaign save format: canonical integer text")
+		and valid.ends_with('"version":7,"veteran_cadre":false}'), "Campaign save format: canonical integer text")
 	var backup: String = JSON.stringify(CampaignState.capture(campaign_running(1), 0).state)
 	check(fixture.put(backup, ".bak") == OK, "Campaign save format: valid backup beside every primary")
 	var mutated := func(mutate: Callable) -> String:
@@ -974,7 +985,7 @@ func test_campaign_save_format() -> void:
 		mutated.call(func(s: Dictionary) -> void: s.battle.player_health[0] = 121),
 		mutated.call(func(s: Dictionary) -> void: s.settled = true)]
 	check(corrupt[7].length() == 4097, "Campaign save format: oversize fixture is 4097 bytes")
-	var unsupported: Array[String] = [mutated.call(func(s: Dictionary) -> void: s.version = 7),
+	var unsupported: Array[String] = [mutated.call(func(s: Dictionary) -> void: s.version = 8),
 		'{"format":"idle-clicker-campaign","version":99,"gold":"future payload"}']
 	var replacement := campaign_running(3)
 	for expected in [CampaignSave.Outcome.CORRUPT, CampaignSave.Outcome.UNSUPPORTED]:
@@ -1226,7 +1237,7 @@ func test_campaign_scene_saves() -> void:
 	recovered.free()
 	# Unusable primaries: fresh session, saving disabled, file preserved.
 	var unsupported_state: Dictionary = (expected as Dictionary).duplicate(true)
-	unsupported_state.version = 7
+	unsupported_state.version = 8
 	var backup_bytes := FileAccess.get_file_as_bytes(path + ".bak")
 	for case in [["{", "damaged"], [JSON.stringify(unsupported_state), "from an unsupported version"], ["", "unreadable"]]:
 		if case[1] == "unreadable":
@@ -1409,16 +1420,16 @@ func test_away_reward_format() -> void:
 	var CORRUPT := CampaignState.Outcome.CORRUPT
 	var stamped: Dictionary = CampaignState.capture(campaign_running(), 250000, 1700000000).state
 	var restored := CampaignState.restore(state_json(stamped))
-	check(stamped.version == 6 and restored.outcome == CampaignState.Outcome.VALID and restored.saved_at == 1700000000
+	check(stamped.version == 7 and restored.outcome == CampaignState.Outcome.VALID and restored.saved_at == 1700000000
 		and CampaignState.capture(restored.campaign, restored.round_progress_usec, restored.saved_at).state == stamped,
-		"Away save: v6 round trip keeps saved_at exactly")
+		"Away save: v7 round trip keeps saved_at exactly")
 	state_rejects(stamped, "missing saved_at", CORRUPT, func(s: Dictionary) -> void: s.erase("saved_at"))
 	state_rejects(stamped, "negative saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = -1)
 	state_rejects(stamped, "fractional saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = 1.5)
 	state_rejects(stamped, "string saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = "1700000000")
 	state_rejects(stamped, "huge saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = ProgressSave.MAX_GOLD + 1)
 	state_rejects(stamped, "v3 carrying saved_at", CORRUPT, func(s: Dictionary) -> void: s.version = 3)
-	state_rejects(stamped, "version 7", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 7)
+	state_rejects(stamped, "version 8", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 8)
 	# v1-v3 files migrate with an unknown (0) stamp, so they never pay an away reward.
 	var secured: Dictionary = state_json(CampaignState.capture(state_secured(), 0, 1700000000).state)
 	for old: Dictionary in [state_as_v3(secured), state_as_v2(secured), state_as_v1(secured)]:
@@ -1440,7 +1451,7 @@ func test_away_reward_format() -> void:
 	if loaded.outcome == CampaignSave.Outcome.LOADED and store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK:
 		written = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
 	var reloaded := CampaignSave.new(fixture.path).load_campaign()
-	check(written != null and written.version == 6 and written.saved_at == 1700000500
+	check(written != null and written.version == 7 and written.saved_at == 1700000500
 		and reloaded.outcome == CampaignSave.Outcome.LOADED and reloaded.saved_at == 1700000500,
 		"Away save: store with injected clock stamps and reloads saved_at exactly")
 	check(fixture.cleanup() == OK, "Away save: directory cleaned")
@@ -2563,11 +2574,11 @@ func test_defense_loss_cause_state() -> void:
 		var state: Dictionary = state_json(captured.state)
 		var restored := CampaignState.restore(state)
 		var cause: int = Combat.DefeatReason.GATE_DESTROYED if outcome == "gate" else Combat.DefeatReason.TIMEOUT
-		check(captured.outcome == CampaignState.Outcome.VALID and state.version == 6 and state.last_defense_loss == cause
+		check(captured.outcome == CampaignState.Outcome.VALID and state.version == 7 and state.last_defense_loss == cause
 			and restored.outcome == CampaignState.Outcome.VALID and restored.campaign.last_defense_loss == cause
 			and CampaignState.capture(restored.campaign, restored.round_progress_usec).state == captured.state
 			and campaign_snapshot(restored.campaign, false) == campaign_snapshot(campaign, false),
-			"Defense loss save: %s cause round-trips exactly in v6" % outcome)
+			"Defense loss save: %s cause round-trips exactly in v7" % outcome)
 		state_rejects(state, "missing loss cause", CORRUPT, func(s: Dictionary) -> void: s.erase("last_defense_loss"))
 		state_rejects(state, "boolean loss cause", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = true)
 		state_rejects(state, "string loss cause", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = "2")
@@ -2577,7 +2588,7 @@ func test_defense_loss_cause_state() -> void:
 		state_rejects(state, "negative loss cause", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = -1)
 		state_rejects(state, "out-of-range loss cause", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = 4)
 		state_rejects(state, "v5 carrying the loss cause", CORRUPT, func(s: Dictionary) -> void: s.version = 5)
-		state_rejects(state, "version 7 with a loss cause", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 7)
+		state_rejects(state, "version 8 with a loss cause", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 8)
 		# Older files load with no cause.
 		for old: Dictionary in [state_as_v5(state), state_as_v4(state), state_as_v3(state)]:
 			var migrated := CampaignState.restore(old)
@@ -2615,10 +2626,10 @@ func test_defense_loss_cause_state() -> void:
 	if store.save_campaign(lost, 0) == OK:
 		written = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
 	var relaunched := CampaignSave.new(fixture.path).load_campaign()
-	check(written != null and written.version == 6 and written.last_defense_loss == Combat.DefeatReason.TIMEOUT
+	check(written != null and written.version == 7 and written.last_defense_loss == Combat.DefeatReason.TIMEOUT
 		and relaunched.outcome == CampaignSave.Outcome.LOADED
 		and relaunched.campaign.last_defense_loss == Combat.DefeatReason.TIMEOUT,
-		"Defense loss save: next save writes v6 and the cause survives relaunch")
+		"Defense loss save: next save writes v7 and the cause survives relaunch")
 	check(fixture.cleanup() == OK, "Defense loss save: directory cleaned")
 
 func test_campaign_scene_defense_loss_cause() -> void:
@@ -3144,11 +3155,11 @@ func test_threat_state() -> void:
 	campaign.battle.step_round()
 	var state: Dictionary = state_json(CampaignState.capture(campaign, 0).state)
 	var restored := CampaignState.restore(state)
-	check(restored.outcome == CampaignState.Outcome.VALID and state.version == 6 and state.threat == 1
+	check(restored.outcome == CampaignState.Outcome.VALID and state.version == 7 and state.threat == 1
 		and state.best_threat == 0 and state.legacy_earned == 10
 		and restored.campaign.threat == 1 and restored.campaign.best_threat == 0 and restored.campaign.legacy_earned == 10
 		and campaign_snapshot(restored.campaign, false) == campaign_snapshot(campaign, false),
-		"Threat save: v6 round trip keeps Threat, best, earned and the scaled battle exactly")
+		"Threat save: v7 round trip keeps Threat, best, earned and the scaled battle exactly")
 	state_rejects(state, "Threat above unlocked", CORRUPT, func(s: Dictionary) -> void: s.threat = 2)
 	state_rejects(state, "negative Threat", CORRUPT, func(s: Dictionary) -> void: s.threat = -1)
 	state_rejects(state, "Threat over max", CORRUPT, func(s: Dictionary) -> void: s.threat = Campaign.THREAT_MAX + 1)
@@ -3179,7 +3190,7 @@ func test_threat_state() -> void:
 	state = state_json(CampaignState.capture(campaign, 0).state)
 	check(CampaignState.validate(state).outcome == CampaignState.Outcome.VALID and state.legacy_earned == 19
 		and state.best_threat == 1 and state.dynasty == 3,
-		"Threat save: mixed-Threat history saves as a valid v6 ledger")
+		"Threat save: mixed-Threat history saves as a valid v7 ledger")
 	# Earned is a range check: with best Threat 1 over two later secures it lies in 19..22 (10 + 6 + 6).
 	var richest: Dictionary = state.duplicate(true)
 	richest.legacy_earned = 22
@@ -3229,10 +3240,434 @@ func test_threat_state() -> void:
 		and FileAccess.get_file_as_string(fixture.path) == JSON.stringify(v2_secured),
 		"Threat migration: v2 file loads through the store without being rewritten")
 	check(store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK
-		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 6
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 7
 		and CampaignSave.new(fixture.path).load_campaign().campaign.legacy_earned == 13,
-		"Threat migration: next save writes v6 that reloads exactly")
+		"Threat migration: next save writes v7 that reloads exactly")
 	check(fixture.cleanup() == OK, "Threat migration: directory cleaned")
+
+func enemy_health(combat: Combat) -> int:
+	var total: int = 0
+	for squad in combat.enemies:
+		total += squad.health
+	return total
+
+# Damage the player army lands this round when no target overkill occurs.
+func army_hit(combat: Combat, boosted: bool) -> int:
+	var total: int = 0
+	for squad in combat.players:
+		if squad.health > 0 and combat._target_index(combat.enemies, squad.role) >= 0:
+			total += Combat.rally_damage(squad.damage) if boosted else squad.damage
+	return total
+
+# Isolated fixture: both armies too healthy to finish, so every round lands in full.
+func rally_endless(campaign: Campaign) -> void:
+	for army in [campaign.battle.players, campaign.battle.enemies]:
+		for squad in army:
+			squad.max_health = 100000
+			squad.health = 100000
+
+# Finish a battle through the campaign's Rally-aware round, as the scene does.
+func campaign_finish_resolved(campaign: Campaign) -> Combat:
+	var completed := campaign.battle
+	for i in range(60):
+		if completed.result != Combat.Result.ONGOING:
+			break
+		campaign.resolve_round()
+	check(completed.result != Combat.Result.ONGOING and campaign.settle(completed),
+		"Rally: bounded real battle settles through resolve_round")
+	return completed
+
+# The state_secured() flow, resolved through the campaign round, optionally rallying at each battle start.
+func rally_secured(rally_each: bool, late_defense: int = -1) -> Campaign:
+	var campaign := Campaign.new()
+	campaign.gold = 240
+	for role in range(3):
+		campaign.purchase(role)
+		campaign.purchase(role)
+	campaign.purchase_gate()
+	campaign.purchase_gate()
+	campaign.restart_battle()
+	for stage in range(3):
+		if rally_each:
+			campaign.rally()
+		campaign_finish_resolved(campaign)
+	campaign.start_defense()
+	if rally_each:
+		campaign.rally()
+	for i in range(maxi(0, late_defense)):
+		campaign.resolve_round()
+	if late_defense >= 0:
+		campaign.rally()
+	campaign_finish_resolved(campaign)
+	return campaign
+
+func test_rally() -> void:
+	check(Combat.rally_damage(1) == 2 and Combat.rally_damage(2) == 3 and Combat.rally_damage(3) == 5
+		and Combat.rally_damage(4) == 6 and Combat.rally_damage(8) == 12 and Combat.rally_damage(0) == 0,
+		"Rally: +50% squad damage rounded half up in integers")
+	check(Campaign.RALLY_PERCENT == 50 and Campaign.RALLY_ROUNDS == 5 and Campaign.RALLY_COOLDOWN == 20,
+		"Rally: approved boost, duration and cooldown")
+	# Available from the start: a fresh dynasty-1 battle can rally, with no purchase.
+	var fresh := campaign_running(0)
+	check(fresh.rally_rounds == 0 and fresh.rally_cooldown == 0 and fresh.can_rally(),
+		"Rally: ready from the start of a fresh campaign")
+	var before := campaign_snapshot(fresh)
+	check(fresh.rally() and fresh.rally_rounds == 5 and fresh.rally_cooldown == 0
+		and not fresh.battle.rally_active and campaign_snapshot(fresh) == before,
+		"Rally: use arms 5 boosted rounds and changes nothing else yet")
+	check(not fresh.can_rally() and not fresh.rally() and fresh.rally_rounds == 5,
+		"Rally: refused while active")
+	# Exact 5-round boost then 20-round cooldown, each round checked against a parallel passive run.
+	var rallied := campaign_running(0)
+	var passive := campaign_running(0)
+	rally_endless(rallied)
+	rally_endless(passive)
+	rallied.rally()
+	var timing_ok: bool = true
+	for round in range(1, 26):
+		var boosted: bool = round <= 5
+		var enemy_before: int = enemy_health(rallied.battle)
+		var hit: int = army_hit(rallied.battle, boosted)
+		var passive_before: int = enemy_health(passive.battle)
+		var passive_hit: int = army_hit(passive.battle, false)
+		rallied.resolve_round()
+		passive.resolve_round()
+		var expected_rounds: int = maxi(0, 5 - round)
+		var expected_cooldown: int = 0 if round < 5 else 25 - round
+		timing_ok = timing_ok and enemy_before - enemy_health(rallied.battle) == hit
+		timing_ok = timing_ok and passive_before - enemy_health(passive.battle) == passive_hit
+		timing_ok = timing_ok and (hit > passive_hit) == boosted and (hit == passive_hit) == not boosted
+		timing_ok = timing_ok and rallied.rally_rounds == expected_rounds and rallied.rally_cooldown == expected_cooldown
+		timing_ok = timing_ok and not rallied.battle.rally_active and rallied.battle.rounds == round
+		timing_ok = timing_ok and rallied.can_rally() == (round == 25) and passive.rally_rounds == 0
+		timing_ok = timing_ok and passive.rally_cooldown == 0
+		if round >= 5 and round < 25:
+			timing_ok = timing_ok and not rallied.rally()
+		# Troops and health: enemy output is never boosted, so player health tracks the passive run.
+		for i in range(rallied.battle.players.size()):
+			timing_ok = timing_ok and rallied.battle.players[i].health == passive.battle.players[i].health
+	check(timing_ok, "Rally: rounds 1-5 boosted exactly, then 20 unboosted cooldown rounds, then ready")
+	check(rallied.rally() and rallied.rally_rounds == 5, "Rally: ready again after the 25-round cycle")
+	# First-round Border numbers: 4+8+6 = 18 passive, 6+12+9 = 27 rallied.
+	var border := campaign_running(0)
+	check(army_hit(border.battle, false) == 18 and army_hit(border.battle, true) == 27,
+		"Rally: dynasty-1 Border army hits for 18 passive and 27 rallied")
+	# The battle ending while active drops the rest and starts the full cooldown (real Border: 3 rallied rounds).
+	var short := campaign_running(0)
+	var reference := campaign_running(0)
+	short.rally()
+	var short_battle := short.battle
+	for i in range(3):
+		short.resolve_round()
+	check(short_battle.result == Combat.Result.VICTORY and short_battle.rounds == 3 and short.rally_rounds == 0
+		and short.rally_cooldown == 20 and not short.can_rally(),
+		"Rally: Border won on boosted round 3 drops the rest and starts the full cooldown")
+	short.resolve_round()
+	check(short_battle.rounds == 3 and short.rally_cooldown == 20, "Rally: finished battle resolves nothing and never ticks")
+	check(not short.rally(), "Rally: refused on a finished battle")
+	campaign_finish_resolved(reference)
+	var gold_before: int = short.gold
+	check(short.settle(short_battle) and short.gold - gold_before == reference.gold - 7
+		and short.border_cleared and short.current_encounter == reference.current_encounter
+		and short.battle.rounds == 0 and short.rally_cooldown == 20 and not short.can_rally(),
+		"Rally: same Border reward and routing as a passive win; cooldown carries into the next battle")
+	short.resolve_round()
+	check(short.rally_cooldown == 19, "Rally: cooldown ticks on the next battle's resolved round")
+	# Any restart while active also drops to the full cooldown.
+	var restarted := campaign_running(1)
+	restarted.rally()
+	restarted.resolve_round()
+	check(restarted.restart_battle() != null and restarted.rally_rounds == 0 and restarted.rally_cooldown == 20,
+		"Rally: battle restart while active drops to the full cooldown")
+	# Refused with no ongoing battle: checkpoint and secured.
+	var checkpoint := defense_ready()
+	check(not checkpoint.can_rally() and not checkpoint.rally() and checkpoint.rally_rounds == 0,
+		"Rally: refused at the cleared checkpoint")
+	var secured := state_secured()
+	check(not secured.can_rally() and not secured.rally() and secured.rally_rounds == 0,
+		"Rally: refused once secured")
+	# Farming and defense are ongoing battles.
+	check(checkpoint.request_farm(Data.Encounter.BORDER_SKIRMISH) and checkpoint.mode == Campaign.Mode.FARM
+		and checkpoint.rally(), "Rally: usable while farming")
+	var defending := defense_ready()
+	var assault := defending.start_defense()
+	var calm := defense_ready()
+	var calm_assault := calm.start_defense()
+	check(defending.rally(), "Rally: usable in the Counterattack")
+	defending.resolve_round()
+	calm.resolve_round()
+	var players_same: bool = true
+	for i in range(assault.players.size()):
+		players_same = players_same and assault.players[i].health == calm_assault.players[i].health
+	check(assault.gate_health == calm_assault.gate_health and assault.gate_max_health == calm_assault.gate_max_health
+		and players_same and assault.rounds == calm_assault.rounds and defending.gold == calm.gold
+		and defending.threat == calm.threat and enemy_health(assault) < enemy_health(calm_assault),
+		"Rally: defense round hits harder but gate, troop health, rounds, gold and Threat match")
+	# The cooldown clock never ticks outside resolved rounds: at the checkpoint it waits.
+	var strong := rally_secured(true)
+	var plain := rally_secured(false)
+	check(strong.phase == Campaign.Phase.CAMPAIGN_SECURED and plain.phase == Campaign.Phase.CAMPAIGN_SECURED
+		and strong.gold == plain.gold and strong.legacy == plain.legacy and strong.legacy_earned == plain.legacy_earned
+		and strong.levels == plain.levels and strong.gate_level == plain.gate_level and strong.best_threat == plain.best_threat,
+		"Rally: a rallied run secures with identical gold, Legacy, levels, gate and Threat")
+	var waiting := defense_ready()
+	var stronghold := Campaign.new()
+	stronghold.gold = 180
+	for role in range(3):
+		stronghold.purchase(role)
+		stronghold.purchase(role)
+	stronghold.restart_battle()
+	campaign_finish(stronghold)
+	campaign_finish(stronghold)
+	stronghold.rally()
+	var last: Combat = campaign_finish_resolved(stronghold)
+	var left: int = stronghold.rally_cooldown
+	check(stronghold.phase == Campaign.Phase.CONQUEST_CLEARED and left > 0 and left <= 20
+		and left == 20 - maxi(0, last.rounds - 5) and not stronghold.can_rally() and waiting.phase == stronghold.phase,
+		"Rally: using it on the Stronghold leaves it recovering at the checkpoint")
+	stronghold.request_farm(Data.Encounter.BORDER_SKIRMISH)
+	check(stronghold.rally_cooldown == left, "Rally: cooldown does not tick while waiting at the checkpoint")
+	# Drill stacks multiplicatively: rank 3 squads (4x) deal 6x base while rallied.
+	var drilled := Campaign.new()
+	drilled.legacy = 1000 # Isolated in-memory fixture funds for three real Drill purchases.
+	for i in range(3):
+		drilled.train_drill()
+	drilled.restart_battle()
+	var base_damage: Array = []
+	var drilled_damage: Array = []
+	for i in range(3):
+		base_damage.append(border.battle.players[i].damage)
+		drilled_damage.append(drilled.battle.players[i].damage)
+	check(drilled.drill_rank == 3 and base_damage == [4, 8, 6] and drilled_damage == [16, 32, 24]
+		and army_hit(drilled.battle, true) == 24 + 48 + 36 and army_hit(drilled.battle, true) == 6 * 18,
+		"Rally: Drill rank 3 (4x) rallied lands 6x the rank-0 army")
+	rally_endless(drilled)
+	var drilled_before: int = enemy_health(drilled.battle)
+	drilled.rally()
+	drilled.resolve_round()
+	check(drilled_before - enemy_health(drilled.battle) == 108, "Rally: rank-3 rallied round removes 108 enemy health")
+	# The commander strike is added separately and never boosted.
+	var hits: Array = []
+	for mode in [[true, true], [false, true], [true, false], [false, false]]:
+		var sample := campaign_running(0)
+		rally_endless(sample)
+		if mode[0]:
+			sample.rally()
+		if mode[1]:
+			sample.battle.queue_commander()
+		var start: int = enemy_health(sample.battle)
+		sample.resolve_round()
+		check(sample.battle.commander_damage == 6 and not sample.battle.commander_queued,
+			"Rally: commander damage snapshot unchanged")
+		hits.append(start - enemy_health(sample.battle))
+	check(hits == [33, 24, 27, 18], "Rally: same-round commander adds its unboosted 6 on top of the rallied 27")
+	# A passive run through the Counterattack is identical to the pre-Rally round path.
+	var resolved := rally_secured(false)
+	var stepped := state_secured()
+	check(campaign_snapshot(resolved, false) == campaign_snapshot(stepped, false)
+		and resolved.rally_rounds == 0 and resolved.rally_cooldown == 0,
+		"Rally: untouched, a full run through the Counterattack matches the pre-Rally results exactly")
+	# Rallying on the Counterattack's last rounds leaves it recovering; Found a Dynasty makes it ready.
+	var length: int = stepped.battle.rounds
+	var late := rally_secured(false, length - 2)
+	check(late.phase == Campaign.Phase.CAMPAIGN_SECURED and late.rally_rounds == 0 and late.rally_cooldown == 20
+		and late.legacy == plain.legacy and late.gold == plain.gold,
+		"Rally: late Counterattack rally secures identically and leaves the full cooldown")
+	check(late.found_dynasty() != null and late.rally_rounds == 0 and late.rally_cooldown == 0
+		and late.can_rally(), "Rally: Found a Dynasty makes it ready")
+
+func test_rally_state() -> void:
+	var CORRUPT := CampaignState.Outcome.CORRUPT
+	# Active, cooling and ready round-trip exactly and continue identically.
+	var active := campaign_running(0)
+	active.rally()
+	active.resolve_round()
+	active.resolve_round()
+	var cooling := defense_ready()
+	cooling.start_defense()
+	cooling.rally()
+	for i in range(7):
+		cooling.resolve_round()
+	var ready := campaign_running(2)
+	var cases := {"active": [active, 3, 0], "cooling": [cooling, 0, 18], "ready": [ready, 0, 0]}
+	for name: String in cases:
+		var campaign: Campaign = cases[name][0]
+		var captured := CampaignState.capture(campaign, 250000)
+		var state: Dictionary = state_json(captured.state)
+		var restored := CampaignState.restore(state)
+		check(captured.outcome == CampaignState.Outcome.VALID and state.version == 7
+			and state.rally_rounds == cases[name][1] and state.rally_cooldown == cases[name][2]
+			and restored.outcome == CampaignState.Outcome.VALID
+			and restored.campaign.rally_rounds == cases[name][1] and restored.campaign.rally_cooldown == cases[name][2]
+			and CampaignState.capture(restored.campaign, restored.round_progress_usec).state == captured.state,
+			"Rally save: %s state round-trips exactly" % name)
+		if restored.outcome != CampaignState.Outcome.VALID:
+			continue
+		var copy: Campaign = restored.campaign
+		for i in range(3):
+			campaign.resolve_round()
+			copy.resolve_round()
+		check(campaign_snapshot(copy, false) == campaign_snapshot(campaign, false)
+			and copy.rally_rounds == campaign.rally_rounds and copy.rally_cooldown == campaign.rally_cooldown,
+			"Rally save: restored %s state continues identically" % name)
+		# Older files load with Rally ready and nothing else lost.
+		for old: Dictionary in [state_as_v6(state), state_as_v5(state), state_as_v4(state), state_as_v3(state)]:
+			var migrated := CampaignState.restore(old)
+			check(not old.has("rally_rounds") and not old.has("rally_cooldown")
+				and migrated.outcome == CampaignState.Outcome.VALID
+				and migrated.campaign.rally_rounds == 0 and migrated.campaign.rally_cooldown == 0
+				and migrated.campaign.gold == restored.campaign.gold
+				and migrated.campaign.levels == restored.campaign.levels
+				and migrated.campaign.phase == restored.campaign.phase,
+				"Rally save: v%d %s file loads with Rally ready" % [old.version, name])
+	# v1 and v2 need dynasty 1 without Legacy: the ready Border run.
+	var border := campaign_running(2)
+	var plain: Dictionary = state_json(CampaignState.capture(border, 0).state)
+	for old: Dictionary in [state_as_v2(plain), state_as_v1(plain)]:
+		var migrated := CampaignState.restore(old)
+		check(migrated.outcome == CampaignState.Outcome.VALID and migrated.campaign.rally_rounds == 0
+			and migrated.campaign.rally_cooldown == 0 and migrated.campaign.gold == border.gold,
+			"Rally save: v%d file loads with Rally ready" % old.version)
+	# Corrupt values on an active running state (battle at round 2, 3 boosted rounds left).
+	var fresh_active := campaign_running(0)
+	fresh_active.rally()
+	fresh_active.resolve_round()
+	fresh_active.resolve_round()
+	var base: Dictionary = state_json(CampaignState.capture(fresh_active, 0).state)
+	check(CampaignState.validate(base).outcome == CampaignState.Outcome.VALID and base.rally_rounds == 3,
+		"Rally save: active base state is valid")
+	for key in ["rally_rounds", "rally_cooldown"]:
+		state_rejects(base, "missing " + key, CORRUPT, func(s: Dictionary) -> void: s.erase(key))
+		state_rejects(base, "boolean " + key, CORRUPT, func(s: Dictionary) -> void: s[key] = true)
+		state_rejects(base, "string " + key, CORRUPT, func(s: Dictionary) -> void: s[key] = "1")
+		state_rejects(base, "null " + key, CORRUPT, func(s: Dictionary) -> void: s[key] = null)
+		state_rejects(base, "fractional " + key, CORRUPT, func(s: Dictionary) -> void: s[key] = 1.5)
+		state_rejects(base, "negative " + key, CORRUPT, func(s: Dictionary) -> void: s[key] = -1)
+	state_rejects(base, "rally_rounds above 5", CORRUPT, func(s: Dictionary) -> void: s.rally_rounds = 6)
+	state_rejects(base, "rally_cooldown above 20", CORRUPT, func(s: Dictionary) -> void:
+		s.rally_rounds = 0
+		s.rally_cooldown = 21)
+	state_rejects(base, "active and cooling at once", CORRUPT, func(s: Dictionary) -> void: s.rally_cooldown = 4)
+	state_rejects(base, "boost older than its battle", CORRUPT, func(s: Dictionary) -> void: s.rally_rounds = 2)
+	state_rejects(base, "v6 carrying Rally keys", CORRUPT, func(s: Dictionary) -> void: s.version = 6)
+	state_rejects(base, "version 8 with Rally", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 8)
+	for valid: Array in [[5, 0], [4, 0], [0, 20], [0, 1]]:
+		check(CampaignState.validate(base.merged({"rally_rounds": valid[0], "rally_cooldown": valid[1]}, true)).outcome
+			== CampaignState.Outcome.VALID, "Rally save: %d active / %d cooling at round 2 is valid" % valid)
+	var checkpoint: Dictionary = state_json(CampaignState.capture(defense_ready(), 0).state)
+	state_rejects(checkpoint, "active at the checkpoint", CORRUPT, func(s: Dictionary) -> void: s.rally_rounds = 5)
+	check(CampaignState.validate(checkpoint.merged({"rally_cooldown": 12}, true)).outcome == CampaignState.Outcome.VALID,
+		"Rally save: cooling at the checkpoint is valid")
+	var secured: Dictionary = state_json(CampaignState.capture(state_secured(), 0).state)
+	state_rejects(secured, "active once secured", CORRUPT, func(s: Dictionary) -> void: s.rally_rounds = 1)
+	# On disk: a v6 file loads unchanged; the next save writes v7 with the Rally state.
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Rally save: isolated directory owned")
+	if not fixture.owned:
+		return
+	var v6_text := JSON.stringify(state_as_v6(state_json(CampaignState.capture(campaign_running(1), 0).state)))
+	check(fixture.put(v6_text) == OK, "Rally save: v6 file written")
+	var store := CampaignSave.new(fixture.path)
+	var loaded := store.load_campaign()
+	check(loaded.outcome == CampaignSave.Outcome.LOADED and loaded.campaign.rally_rounds == 0
+		and loaded.campaign.rally_cooldown == 0 and FileAccess.get_file_as_string(fixture.path) == v6_text,
+		"Rally save: v6 file loads with Rally ready and is not rewritten")
+	# A fresh cooling defense (the one above kept resolving rounds and may have ended unsettled).
+	cooling = defense_ready()
+	cooling.start_defense()
+	cooling.rally()
+	for i in range(7):
+		cooling.resolve_round()
+	var written: Variant = null
+	if store.save_campaign(cooling, 0) == OK:
+		written = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
+	var relaunched := CampaignSave.new(fixture.path).load_campaign()
+	check(written != null and written.version == 7 and written.rally_cooldown == cooling.rally_cooldown
+		and written.rally_rounds == 0 and relaunched.outcome == CampaignSave.Outcome.LOADED
+		and relaunched.campaign.rally_cooldown == cooling.rally_cooldown,
+		"Rally save: next save writes v7 and the cooldown survives relaunch")
+	check(fixture.cleanup() == OK, "Rally save: directory cleaned")
+
+func test_campaign_scene_rally() -> void:
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Rally scene: isolated directory owned")
+	if not fixture.owned:
+		return
+	var path: String = fixture.path
+	var scene := campaign_scene_new(CampaignWindowFixture, CampaignSave.new(path)) as CampaignWindowFixture
+	var button: Button = scene.get_node("%Rally")
+	check(scene.campaign.phase == Campaign.Phase.RUNNING and not button.disabled
+		and button.text == "Rally — +50% army damage for 5 rounds" and button.action_mode == BaseButton.ACTION_MODE_BUTTON_PRESS
+		and button.autowrap_mode != TextServer.AUTOWRAP_OFF and button.focus_mode == Control.FOCUS_ALL
+		and button.get_index() == scene.get_node("%GateHealth").get_index() + 1,
+		"Rally scene: ready button after the battle lines")
+	var other: Button = scene.get_node("%GateUpgrade")
+	other.grab_focus()
+	var focused: Control = scene.get_viewport().gui_get_focus_owner()
+	check(focused == other, "Rally scene: another control holds focus")
+	var before := campaign_snapshot(scene.campaign)
+	for reason in range(3):
+		scene.set_reason(reason, true)
+		check(button.disabled, "Rally scene: suspension disables Rally")
+		button.pressed.emit()
+		check(scene.campaign.rally_rounds == 0, "Rally scene: suspended press refused")
+		scene.set_reason(reason, false)
+	scene.dynasty_preview_open = true # Guard check: the preview flag alone must refuse Rally.
+	scene._refresh()
+	check(button.disabled, "Rally scene: preview flag disables Rally")
+	button.pressed.emit()
+	scene.dynasty_preview_open = false
+	scene._refresh()
+	check(scene.campaign.rally_rounds == 0 and campaign_snapshot(scene.campaign) == before,
+		"Rally scene: refused while suspended or with the preview open")
+	# Mid-round press: the rest of this round resolves boosted as round 1 of 5.
+	scene.advance_time(0.5) # The first frame after resuming is skipped by design.
+	scene.advance_time(0.5)
+	check(scene.elapsed_usec == 500000 and scene.campaign.battle.rounds == 0, "Rally scene: halfway through round 1")
+	var round_before: int = scene.campaign.battle.rounds
+	var health_before: int = enemy_health(scene.campaign.battle)
+	button.pressed.emit()
+	check(scene.campaign.rally_rounds == 5 and button.disabled and button.text == "Rally active — 5 rounds left"
+		and scene.get_node("%SaveStatus").text == "Saved" and scene_saved_exactly(scene, path)
+		and JSON.parse_string(FileAccess.get_file_as_string(path)).rally_rounds == 5
+		and scene.get_viewport().gui_get_focus_owner() == other and scene.campaign.battle.rounds == round_before,
+		"Rally scene: mid-round press arms, saves immediately and keeps focus")
+	scene.advance_time(0.5)
+	check(scene.campaign.battle.rounds == round_before + 1 and health_before - enemy_health(scene.campaign.battle) == 27
+		and scene.campaign.rally_rounds == 4 and button.text == "Rally active — 4 rounds left",
+		"Rally scene: the round completing after the press is boosted")
+	# Border falls on boosted round 3: the rest drops and the full cooldown shows.
+	scene.advance_time(1.0)
+	scene.advance_time(1.0)
+	scene.set_process(false)
+	check(scene.campaign.border_cleared and scene.campaign.rally_rounds == 0 and scene.campaign.rally_cooldown == 20
+		and button.disabled and button.text == "Rally recovering — ready in 20 battle rounds (20 s)"
+		and scene_saved_exactly(scene, path),
+		"Rally scene: battle end shows the full 20-round cooldown and saves it")
+	scene.advance_time(1.0)
+	scene.set_process(false)
+	check(scene.campaign.rally_cooldown == 19 and button.text == "Rally recovering — ready in 19 battle rounds (19 s)",
+		"Rally scene: cooldown text counts down per resolved round")
+	scene.notification(Node.NOTIFICATION_WM_CLOSE_REQUEST)
+	scene.free()
+	var relaunched := campaign_scene_new(CampaignPresentation, CampaignSave.new(path))
+	check(relaunched.campaign.rally_cooldown == 19 and relaunched.campaign.rally_rounds == 0
+		and relaunched.get_node("%Rally").disabled
+		and relaunched.get_node("%Rally").text == "Rally recovering — ready in 19 battle rounds (19 s)",
+		"Rally scene: relaunch restores the cooldown exactly")
+	relaunched.free()
+	var waiting := state_scene(defense_ready())
+	check(waiting.get_node("%Rally").disabled and waiting.get_node("%Rally").text == "Rally — available during battles",
+		"Rally scene: unavailable at the checkpoint")
+	waiting.get_node("%Rally").pressed.emit()
+	check(waiting.campaign.rally_rounds == 0, "Rally scene: checkpoint press refused")
+	waiting.get_node("%StartDefense").pressed.emit()
+	check(not waiting.get_node("%Rally").disabled, "Rally scene: ready again in the Counterattack")
+	waiting.get_node("%Rally").pressed.emit()
+	check(waiting.campaign.rally_rounds == 5 and waiting.get_node("%Rally").text == "Rally active — 5 rounds left",
+		"Rally scene: Counterattack press arms Rally")
+	waiting.free()
+	check(fixture.cleanup() == OK, "Rally scene: directory cleaned")
 
 func campaign_finish(campaign: Campaign) -> Combat:
 	var completed := campaign.battle

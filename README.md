@@ -106,6 +106,20 @@ and stops timing/navigation/start. Affordable purchases remain ownership-only op
 even after security. Suspension freezes combat and rejects every purchase/navigation input.
 There is no Fortified frontier, export or release approval.
 
+**Rally** (the button under the battle lines) boosts army damage by **+50%** for the next
+**5 battle rounds**, then recovers for **20 battle rounds**. It works in any ongoing campaign
+battle — conquest, farming and the Counterattack — and is available from the start of every
+dynasty. Pressing it mid-round boosts from the next round, like the commander strike. It stacks
+on top of Drill (rank 3 becomes 6×), never boosts the commander strike, and never changes gold,
+Legacy, health, the gate, Threat or round timing. The button reads "Rally — +50% army damage
+for 5 rounds" when ready, "Rally active — N rounds left", "Rally recovering — ready in N battle
+rounds (N s)", or "Rally — available during battles" at the checkpoint or once secured. The
+cooldown only counts resolved rounds: it pauses at the checkpoint, while suspended and while the
+app is closed. If a battle ends while Rally is active the rest is lost and the full cooldown
+starts. Found a Dynasty makes it ready. It is refused while suspended or with the reset preview
+open, autosaves when pressed, and is stored in campaign save v7 (older saves load it ready).
+Playing without Rally gives exactly the same results as before.
+
 ### Legacy, Drill ranks and repeatable dynasty resets
 
 A **settled Counterattack victory with a surviving gate** plus all three clearances secures
@@ -2038,6 +2052,42 @@ Inspected captures: `defense-recovery` (720×720: full cause and hint in the res
 hint) and `small-defense-loss` (540×480: both lines wrap fully inside the window, no overlap). All
 runs passed first time, so there were no failed runs to keep. CI hasn't run because nothing is
 committed. The physical gate stays **pending**, and there's no art, export, Android or release claim.
+
+### Rally tactical ability — verified locally 24 Sep 2026 (tree on `5bcbafb`)
+
+Rally (+50% squad damage for 5 rounds, then a 20-round cooldown; rules in `docs/first-playable.md`)
+is in the combat/campaign layer. The scene now resolves rounds through the campaign so Rally can
+apply. The campaign save is now **v7** (`rally_rounds`, `rally_cooldown`); v1–v6 load with Rally
+ready. See the v7 amendment in `docs/campaign-save-contract.md`. `windows_g6_driver.py` now expects
+v7 with Rally ready.
+
+| Check | Result |
+|---|---|
+| Import | exit 0, 0 errors |
+| Headless normal / forced / normal | 4477/0, exit 0 · 4478/1 (only `FAIL forced runner failure`), exit 1 · 4477/0, exit 0; 0 `ERROR:` lines |
+| `persistence_smoke.gd` / `campaign_persistence_smoke.gd` (headless, as in CI) | every phase 0 failures, exit 0 |
+| `scene_smoke.gd` | `SUMMARY: 105 graphical checks, 0 failures`, exit 0 |
+| Native `focus-only`, runs 1 and 2 | **FAILED 14/1** each: "native minimized window reports focus lost", `native_observations_complete=False`; child reaped, reader joined (retained) |
+| Native `focus-only`, unchanged `5bcbafb` in a clean worktree | **FAILED 14/1** the same way (retained) |
+| Native `campaign` | **FAILED** (incomplete, no summary): "foreground interrupted (mode=0 focus=false suspended=true)" after all seven Rally checks passed; child reaped, reader joined (retained) |
+| Native `defense` / `dynasty` | not run in the first session: the desktop was losing foreground |
+| Native rerun on a quiet desktop: `focus-only` / `campaign` / `defense` / `dynasty` | 14/0 · 65/0 · 77/0 · 84/0, all child/driver exits 0, `native_observations_complete=True`, child reaped, reader joined |
+| `windows_g6_driver.py` | 27/0, driver exit 0, both launches reaped with reader joined; dynasty-2 save v7 with Rally ready |
+
+In every focus-only failure, Windows reported the window as **not foreground before minimize**
+(`foreground_equal=False` at `minimize-requested`). This is the same environment focus problem
+recorded on 23 Sep. The unchanged baseline fails identically, so this is not a Rally regression.
+The campaign run lost focus mid-battle, before any minimize. Something else on the desktop took
+foreground. No test, deadline or focus/suspension gate was changed. Per AGENTS.md, native runs
+stopped instead of looping. The user then kept the desktop idle, and the same unchanged code
+passed every native scenario on the first try, including keyboard Rally in the Counterattack at
+540×480.
+
+Inspected captures: `defense-rally-active` (540×480, "Rally active — 5 rounds left", focus
+outline kept on Rally, no overlap), plus from the campaign run: `campaign-rally-active` ("Rally active — 5 rounds
+left", disabled, under the enemy line) and `campaign-rally-cooldown` ("Rally recovering — ready in
+20 battle rounds (20 s)" after Border's early win). All are readable with no overlap. The physical gate stays **pending**, and there's no art, export,
+Android or release claim.
 
 ## Boundaries
 

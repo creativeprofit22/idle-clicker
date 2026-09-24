@@ -49,6 +49,7 @@ func _ready() -> void:
 	%FarmArcher.pressed.connect(_request_farm.bind(Data.Encounter.ARCHER_POSITION))
 	%Frontier.pressed.connect(_request_frontier)
 	%StartDefense.pressed.connect(_start_defense)
+	%Rally.pressed.connect(_rally)
 	%GateUpgrade.pressed.connect(_purchase_gate)
 	%TrainDrill.pressed.connect(_train_drill)
 	%VeteranCadre.pressed.connect(_buy_veteran_cadre)
@@ -193,7 +194,7 @@ func advance_usec(usec: int) -> void:
 		var completed := campaign.battle
 		var encounter: int = campaign.current_encounter
 		var gold_before: int = campaign.gold
-		completed.step_round()
+		campaign.resolve_round()
 		if campaign.settle(completed):
 			%LastResult.text = "%s: %s · +%d gold" % [ENCOUNTER_TITLES[encounter],
 				"Victory" if completed.result == Combat.Result.VICTORY else "Defeat",
@@ -316,6 +317,15 @@ func _start_defense() -> void:
 	_save_campaign()
 	_refresh()
 
+# Takes effect at the next round boundary; never moves focus.
+func _rally() -> void:
+	_sync_suspension()
+	if suspended or dynasty_preview_open:
+		return
+	if campaign.rally():
+		_save_campaign()
+	_refresh()
+
 func _purchase_gate() -> void:
 	_sync_suspension()
 	if suspended or dynasty_preview_open:
@@ -429,6 +439,17 @@ func _refresh() -> void:
 		labels[i].text = "\n".join(rows)
 	%GateHealth.visible = campaign.battle.is_defense
 	%GateHealth.text = "Gate HP: %d / %d" % [campaign.battle.gate_health, campaign.battle.gate_max_health]
+	%Rally.disabled = blocked or not campaign.can_rally()
+	if campaign.rally_rounds > 0:
+		%Rally.text = "Rally active — %d round%s left" % [campaign.rally_rounds,
+			"" if campaign.rally_rounds == 1 else "s"]
+	elif campaign.rally_cooldown > 0:
+		%Rally.text = "Rally recovering — ready in %d battle round%s (%d s)" % [campaign.rally_cooldown,
+			"" if campaign.rally_cooldown == 1 else "s", roundi(campaign.rally_cooldown * Data.ROUND_SECONDS)]
+	elif campaign.can_rally():
+		%Rally.text = "Rally — +%d%% army damage for %d rounds" % [Campaign.RALLY_PERCENT, Campaign.RALLY_ROUNDS]
+	else:
+		%Rally.text = "Rally — available during battles"
 	var gate_cost: int = campaign.gate_purchase_cost()
 	%GateUpgrade.text = "Gate Lv.%d · %s" % [campaign.gate_level,
 		"MAX" if gate_cost == 0 else "Upgrade %d gold" % gate_cost]

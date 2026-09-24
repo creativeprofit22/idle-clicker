@@ -134,7 +134,24 @@ func run() -> void:
 	check(campaign.gold == 0 and campaign.levels == [1, 1, 1]
 		and scene.get_node("%FarmBorder").disabled, "fresh session and locked farming")
 	await capture("initial")
+	# Rally by mouse during the real Border: saved, arms 5 boosted rounds, focus stays with the pressed control.
+	var rally: Button = scene.get_node("%Rally")
+	check(not rally.disabled and rally.text == "Rally — +50% army damage for 5 rounds"
+		and campaign.can_rally(), "Rally ready during the first Border")
+	var focus_before: Control = root.gui_get_focus_owner()
+	await click(rally)
+	check(campaign.battle.result == Presentation.Combat.Result.ONGOING and campaign.rally_rounds > 0
+		and rally.disabled and rally.text.begins_with("Rally active — ")
+		and root.gui_get_focus_owner() in [focus_before, rally]
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).rally_rounds == campaign.rally_rounds,
+		"mouse Rally arms the boost, saves it and never moves focus to another control")
+	await capture("campaign-rally-active")
 	await next_battle()
+	check(campaign.rally_rounds == 0 and campaign.rally_cooldown > 0 and campaign.rally_cooldown <= 20
+		and rally.disabled and rally.text.begins_with("Rally recovering — ready in %d battle round" % campaign.rally_cooldown)
+		and rally.text.ends_with("(%d s)" % campaign.rally_cooldown),
+		"Border end drops Rally to a cooldown shown with rounds and seconds left")
+	await capture("campaign-rally-cooldown")
 	check(campaign.border_cleared and campaign.current_encounter == Data.Encounter.ARCHER_POSITION
 		and campaign.gold == 10 and scene.get_node("%LastResult").text.contains("+10"),
 		"real-time Border victory automatically advances to Archer and pays once")
@@ -380,7 +397,7 @@ func test_veteran_cadre(secured: Dictionary) -> bool:
 		and button.text == "Veteran Cadre owned — new dynasties start troops at level 2"
 		and scene.get_node("%DynastyStatus").text.ends_with(" · Veteran Cadre")
 		and scene.get_node("%SaveStatus").text == "Saved" and on_disk is Dictionary
-		and on_disk.veteran_cadre == true and on_disk.legacy == 13 and on_disk.version == 6,
+		and on_disk.veteran_cadre == true and on_disk.legacy == 13 and on_disk.version == 7,
 		"native Veteran Cadre click spends 50 Legacy once, shows owned and saves v5")
 	await click(scene.get_node("%FoundDynasty"))
 	await process_frame
@@ -572,6 +589,25 @@ func test_defense() -> bool:
 	await capture("defense-retry")
 	if not await test_native_resume(Campaign.Phase.DEFENDING):
 		return false
+	# Rally by keyboard in the retried Counterattack at 540x480: readable, saved, focus kept.
+	root.size = Vector2i(540, 480)
+	root.content_scale_size = Vector2i(540, 480)
+	await process_frame
+	await process_frame
+	var rally: Button = scene.get_node("%Rally")
+	check(campaign.battle == assault and assault.result == Presentation.Combat.Result.ONGOING and not rally.disabled
+		and campaign.can_rally(), "Rally ready during the retried Counterattack")
+	await keyboard(rally)
+	await process_frame
+	check(campaign.rally_rounds > 0 and rally.disabled and rally.text.begins_with("Rally active — ")
+		and root.gui_get_focus_owner() == rally and root.get_visible_rect().encloses(rally.get_global_rect())
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).rally_rounds == campaign.rally_rounds,
+		"keyboard Rally in defense arms, saves, keeps focus and stays visible at 540x480")
+	await capture("defense-rally-active")
+	root.size = Vector2i(720, 720)
+	root.content_scale_size = Vector2i(720, 720)
+	await process_frame
+	await process_frame
 	await next_battle()
 	check(campaign.phase == Campaign.Phase.CAMPAIGN_SECURED and campaign.battle == assault
 		and assault.gate_health > 0 and campaign.gold == 40
@@ -586,6 +622,10 @@ func test_defense() -> bool:
 		and assault.gate_health == gate and campaign.gold == 40, "secured state stays idle without replay or payment")
 	for name in ["StartDefense", "FarmBorder", "FarmArcher", "Frontier"]:
 		check(scene.get_node("%" + name).disabled, "secured navigation disabled " + name)
+	check(campaign.rally_rounds == 0 and campaign.rally_cooldown > 0 and campaign.rally_cooldown <= 20
+		and scene.get_node("%Rally").disabled
+		and scene.get_node("%Rally").text.begins_with("Rally recovering — ready in %d battle round" % campaign.rally_cooldown),
+		"rallied defense win leaves Rally recovering and disabled once secured")
 	await capture("campaign-secured")
 	return true
 

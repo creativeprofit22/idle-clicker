@@ -1,7 +1,7 @@
-# Campaign save contract — v1, with v2 (Legacy), v3 (Threat), v4 (away reward), v5 (Veteran Cadre) and v6 (defense loss cause) amendments
+# Campaign save contract — v1, with v2 (Legacy), v3 (Threat), v4 (away reward), v5 (Veteran Cadre), v6 (defense loss cause) and v7 (Rally) amendments
 
-The current file format is **v6**; see "v6 amendment (defense loss cause)" at the end, which builds on
-"v5 amendment (Veteran Cadre)", "v4 amendment (away reward)", "v3 amendment (Threat)" and "v2 amendment (Legacy)". The earlier sections are kept as history and still govern every rule
+The current file format is **v7**; see "v7 amendment (Rally)" at the end, which builds on
+"v6 amendment (defense loss cause)", "v5 amendment (Veteran Cadre)", "v4 amendment (away reward)", "v3 amendment (Threat)" and "v2 amendment (Legacy)". The earlier sections are kept as history and still govern every rule
 the amendments do not change.
 
 **Status: APPROVED 23 September 2026 — implemented.** In-memory state capture, validation
@@ -486,7 +486,8 @@ hint: it changes no reward, level, clearance, routing or Legacy.
 **Field.** v6 adds `last_defense_loss`, a JSON integer holding a `Combat.DefeatReason` value:
 `0` (NONE), `2` (GATE_DESTROYED) or `3` (TIMEOUT). The key set is the v5 set plus
 `last_defense_loss`. A missing key, a non-integer, a boolean, `1` (ARMY_DEFEAT, impossible in
-defense) or any out-of-range value is corrupt. Version 7 or higher is unsupported.
+defense) or any out-of-range value is corrupt. Version 7 or higher is unsupported. *(Superseded by
+v7: version 8 or higher is unsupported.)*
 
 **Lifecycle.** A lost defense sets the cause from the battle's own defeat reason (gate at zero is
 decided before the round-60 timeout). `Start Defense` clears it; a victory can only follow that
@@ -497,6 +498,7 @@ RUNNING or CONQUEST_CLEARED (never DEFENDING or CAMPAIGN_SECURED).
 
 **Migration.** v1–v5 files are parsed under their own exact key sets and load with NONE; a v5 file
 carrying `last_defense_loss` is corrupt. Files are not rewritten on load; the next save writes v6.
+*(Superseded by v7: the next save writes v7.)*
 
 **v6 acceptance cases** (covered in `tests/run_tests.gd`, tests `test_defense_loss_cause`,
 `test_defense_loss_cause_state` and `test_campaign_scene_defense_loss_cause`):
@@ -511,3 +513,31 @@ carrying `last_defense_loss` is corrupt. Files are not rewritten on load; the ne
 5. v1–v5 files load with NONE and are not rewritten on load; the next save writes v6.
 6. The scene shows the cause and hint in the result and status text, and the status text again
    after relaunch.
+
+## v7 amendment (Rally)
+
+Approved 24 September 2026. Rally (+50% squad damage for 5 resolved rounds, then a 20-round
+cooldown; see `first-playable.md`) is **saved**, so relaunching can never skip a cooldown or
+restart a boost. Its cooldown counts resolved battle rounds only, so closed-app time does not
+advance it and the away reward is unchanged.
+
+**Fields.** v7 adds two JSON integers: `rally_rounds` (boosted rounds still to resolve, 0..5)
+and `rally_cooldown` (cooldown rounds left, 0..20). Both 0 means ready. The key set is the v6
+set plus both keys. A missing key, boolean, string, fractional or out-of-range value is corrupt.
+Version 8 or higher is unsupported.
+
+**Cross-field.** Both nonzero is corrupt. `rally_rounds > 0` is corrupt unless the phase is
+RUNNING or DEFENDING (an ongoing battle) and the battle has resolved at least
+`5 - rally_rounds` rounds (a boost cannot predate its battle). A cooldown may exist in any phase.
+
+**Migration.** v1–v6 files are parsed under their own exact key sets and load with Rally ready;
+a v6 file carrying either key is corrupt. Files are not rewritten on load; the next save writes v7.
+
+**v7 acceptance cases** (covered in `tests/run_tests.gd`, tests `test_rally`, `test_rally_state`
+and `test_campaign_scene_rally`):
+
+1. Active, cooling and ready states round-trip exactly through save and restore.
+2. The corrupt values above, both nonzero, an active Rally outside a running battle or older than
+   its battle, and a v6 file carrying a Rally key are corrupt; version 8 is unsupported.
+3. v1–v6 files load with Rally ready and are not rewritten on load; the next save writes v7.
+4. Pressing Rally in the scene saves immediately and relaunch restores the remaining cooldown.

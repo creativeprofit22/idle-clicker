@@ -87,6 +87,27 @@ the away reward and round timing are unchanged. Level 2 troops already satisfy t
 Position unlock condition, which is intended. Purchase is allowed in any phase but blocked
 while suspended, with the preview open, when Legacy is below 50 or when already owned.
 
+**Rally** (approved 24 Sep 2026) is a campaign-only tactical ability, available from the
+start of every dynasty with no purchase or unlock state.
+
+| Rule | Value |
+| --- | --- |
+| Boost | +50% squad damage: each living squad deals `(damage × 150 + 50) / 100` (integer, rounded half up) |
+| Duration | 5 resolved battle rounds |
+| Cooldown | 20 resolved battle rounds, starting after the last boosted round (fastest cycle 25 rounds) |
+| Modes | Any ongoing campaign battle: conquest (Advance), farming and the Counterattack. Refused at the cleared checkpoint, once secured and on a finished battle. The main game and opening battle are unchanged |
+| Timing | May be pressed mid-round; like the commander strike it applies from the next round boundary, so the next resolved round is boosted round 1 of 5. There is no separate queue |
+| Refusal | While active, while cooling down, with no ongoing battle, while suspended and with the reset preview open |
+| Battle ends while active | Remaining boosted rounds are dropped and the full 20-round cooldown starts (also on any battle restart) |
+| Cooldown clock | Only resolved battle rounds count; not the checkpoint, suspension, minimizing or closed-app time |
+| Drill | Multiplicative: Rally applies to squad damage that already includes Drill (rank 3: 4× → 6×) |
+| Commander strike | Not boosted; still added separately with its fixed snapshot damage |
+| Never changes | Gold rewards, Legacy, health (troops, enemies, gate), gate, Threat, round frequency, away reward |
+| Dynasty reset | Found a Dynasty makes Rally ready |
+| Save | Saved (campaign save v7) and restored exactly, so relaunching cannot skip a cooldown |
+
+A run that never presses Rally gives exactly the same results as before Rally existed.
+
 **Found a Dynasty** is available at every secured campaign, without limit. The native
 preview shows actual gold, troop and gate losses, the Legacy, Drill rank and Veteran Cadre state that are kept,
 and the Legacy the next secured campaign earns at the chosen Threat. Cancel or Escape changes no gameplay
@@ -153,6 +174,19 @@ dynasty 84/0, all with exits 0, complete observations, child reaped and reader j
 dynasty runs failed 81/1 on a test-ordering issue, now fixed and retained in README. The new
 `dynasty-cadre` captures were inspected. CI is not yet run, and physical manual acceptance for
 this change is **pending**.
+
+### Rally verification — 24 September 2026
+
+Local, uncommitted tree on `5bcbafb`: import 0 errors; headless 4477/0 · forced 4478/1 ·
+4477/0 (exits 0/1/0); both headless persistence smokes 0 failures; `scene_smoke` 105/0. Native
+driver runs are **not passed**. Focus-only failed 14/1 twice, and the unchanged baseline failed
+the same way (the window wasn't foreground before minimize). The campaign run passed every Rally
+check, then lost foreground to the desktop mid-battle. Defense and dynasty weren't run. All
+failures are retained in README. On a quiet desktop the same code then passed focus-only
+14/0, campaign 65/0, defense 77/0 and dynasty 84/0 (exits 0, observations complete, cleanup
+confirmed), and `windows_g6_driver.py` 27/0. The Rally captures `campaign-rally-active`,
+`campaign-rally-cooldown` and `defense-rally-active` (540×480) were inspected and are readable.
+The physical manual gate is **pending**.
 
 ### Historical verification — 10 September 2026
 

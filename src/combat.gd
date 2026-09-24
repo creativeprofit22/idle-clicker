@@ -15,6 +15,15 @@ var rounds: int = 0
 var result: Result = Result.ONGOING
 var commander_queued: bool = false
 var commander_damage: int = 0
+# Set by the campaign for exactly one step_round() while Rally is active; never saved here.
+var rally_active: bool = false
+
+const RALLY_PERCENT: int = 50
+
+# Rally-boosted squad damage: +50%, rounded half up, in integers.
+static func rally_damage(damage: int) -> int:
+	@warning_ignore("integer_division")
+	return (damage * (100 + RALLY_PERCENT) + 50) / 100
 
 func _init(encounter: Data.Encounter = Data.Encounter.BORDER_SKIRMISH,
 		army: Array[Data.Squad] = Data.players(), threat: int = 0) -> void:
@@ -58,7 +67,7 @@ func step_round() -> void:
 	for squad in players:
 		var target: int = _target_index(enemies, squad.role)
 		if squad.health > 0 and target >= 0:
-			outgoing[target] += squad.damage
+			outgoing[target] += rally_damage(squad.damage) if rally_active else squad.damage
 	var gate_damage: int = 0
 	for squad in enemies:
 		if squad.health <= 0:
