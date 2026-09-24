@@ -44,6 +44,10 @@ func encounter_reward(encounter: int) -> int:
 func _squad_damage_multiplier() -> int:
 	return 1
 
+# Enemy Threat level for created battles; the campaign overrides it per dynasty.
+func _enemy_threat() -> int:
+	return 0
+
 # Squad stats for the given troop levels, with the Drill multiplier applied exactly once.
 func _snapshot_army(snapshot_levels: Array[int]) -> Array[Data.Squad]:
 	var army: Array[Data.Squad] = Data.players()
@@ -59,7 +63,7 @@ func restart_battle(encounter: int = -1) -> Combat:
 	if not is_encounter_unlocked(requested):
 		return null
 	# Abandon the old battle without settling it: restart never awards gold.
-	battle = Combat.new(requested, _snapshot_army(levels))
+	battle = Combat.new(requested, _snapshot_army(levels), _enemy_threat())
 	current_encounter = requested
 	_battle_reward = encounter_reward(requested)
 	_settled = false

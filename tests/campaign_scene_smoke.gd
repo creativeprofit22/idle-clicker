@@ -286,6 +286,11 @@ func test_dynasty() -> bool:
 	check(not scene.dynasty_preview_open and scene.get_node("%FoundDynasty").has_focus()
 		and dynasty_checkpoint() == checkpoint, "keyboard Cancel restores unchanged secured checkpoint")
 	await keyboard(scene.get_node("%FoundDynasty"))
+	# Let the reopen and its focus-follow settle; a person cannot press Escape in the same frame.
+	await process_frame
+	await process_frame
+	check(scene.dynasty_preview_open and scene.get_node("%CancelDynasty").has_focus()
+		and dynasty_checkpoint() == checkpoint, "keyboard reopens preview with Cancel focused")
 	for down in [true, false]:
 		var event := InputEventKey.new()
 		event.keycode = KEY_ESCAPE
@@ -293,6 +298,10 @@ func test_dynasty() -> bool:
 		root.push_input(event, true)
 	check(not scene.dynasty_preview_open and scene.get_node("%FoundDynasty").has_focus()
 		and dynasty_checkpoint() == checkpoint, "Escape dismisses reopened preview without gameplay mutation")
+	await process_frame
+	await process_frame
+	check(root.get_visible_rect().encloses(scene.get_node("%FoundDynasty").get_global_rect()),
+		"narrow focus-follow keeps FoundDynasty visible after Escape")
 	await click(scene.get_node("%FoundDynasty"))
 	# Observe the synchronous transition after the scene handler, before key release
 	# legitimately contributes foreground microseconds through Presentation._input().
@@ -607,8 +616,13 @@ func click(button: Button) -> void:
 	# Let deferred scroll layout settle before checking or sampling the target.
 	await process_frame
 	await process_frame
-	check(not button.disabled and root.get_visible_rect().encloses(button.get_global_rect()),
-		"mouse target enabled and fully visible")
+	var visible_ok := not button.disabled and root.get_visible_rect().encloses(button.get_global_rect())
+	if not visible_ok:
+		var scroll: ScrollContainer = scene.get_node("Margin/Scroll")
+		print("CLICK_DIAG: %s disabled=%s rect=%s visible=%s scroll=%d max=%d suspended=%s preview=%s" % [
+			button.name, button.disabled, button.get_global_rect(), root.get_visible_rect(),
+			scroll.scroll_vertical, scroll.get_v_scroll_bar().max_value, scene.suspended, scene.dynasty_preview_open])
+	check(visible_ok, "mouse target enabled and fully visible")
 	var point: Vector2 = button.get_global_rect().get_center()
 	var motion := InputEventMouseMotion.new()
 	motion.position = point

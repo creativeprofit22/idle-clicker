@@ -22,15 +22,29 @@ var drill_rank: int = 0
 var legacy: int = 0
 # Drill rank captured when the current battle was created (purchases apply next battle).
 var _battle_drill_rank: int = 0
+# Threat chosen when this dynasty was founded (dynasty 1 is always 0); fixed for the dynasty.
+var threat: int = 0
+# Highest Threat ever secured (-1 before the first secure) and total Legacy ever paid out.
+var best_threat: int = -1
+var legacy_earned: int = 0
 
 const FIRST_SECURE_LEGACY: int = 10
 const REPEAT_SECURE_LEGACY: int = 3
 const DRILL_COSTS: Array[int] = [10, 20, 40]
 const DRILL_MAX: int = 3
+const THREAT_MAX: int = 10
+
+# Legacy paid for securing a later dynasty at the given Threat.
+static func threat_legacy(level: int) -> int:
+	return REPEAT_SECURE_LEGACY * (1 + level)
 
 # Legacy paid when the current dynasty's campaign is secured.
 func secure_legacy() -> int:
-	return FIRST_SECURE_LEGACY if dynasty == 1 else REPEAT_SECURE_LEGACY
+	return FIRST_SECURE_LEGACY if dynasty == 1 else threat_legacy(threat)
+
+# Highest Threat a new dynasty may choose: one above the best secured, never locked out of 0.
+func max_selectable_threat() -> int:
+	return clampi(best_threat + 1, 0, THREAT_MAX)
 
 func drill_cost() -> int:
 	return 0 if drill_rank >= DRILL_MAX else DRILL_COSTS[drill_rank]
@@ -47,6 +61,9 @@ func train_drill() -> bool:
 func _squad_damage_multiplier() -> int:
 	return 1 + drill_rank
 
+func _enemy_threat() -> int:
+	return threat
+
 func can_found_dynasty() -> bool:
 	return phase == Phase.CAMPAIGN_SECURED \
 		and border_cleared and archer_cleared and stronghold_cleared \
@@ -54,10 +71,11 @@ func can_found_dynasty() -> bool:
 		and battle != null and battle.is_defense and _settled \
 		and battle.result == Combat.Result.VICTORY and battle.gate_health > 0
 
-func found_dynasty() -> Combat:
-	if not can_found_dynasty():
+func found_dynasty(next_threat: int = 0) -> Combat:
+	if not can_found_dynasty() or next_threat < 0 or next_threat > max_selectable_threat():
 		return null
 	dynasty += 1
+	threat = next_threat
 	gold = 0
 	levels = [1, 1, 1]
 	gate_level = 1
@@ -177,6 +195,8 @@ func settle(completed: Combat) -> bool:
 			# Legacy is credited in the same transition (one save write, D8).
 			phase = Phase.CAMPAIGN_SECURED
 			legacy += secure_legacy()
+			legacy_earned += secure_legacy()
+			best_threat = maxi(best_threat, threat)
 			return true
 		phase = Phase.RUNNING
 	if victory and current_encounter == Data.Encounter.STRONGHOLD:

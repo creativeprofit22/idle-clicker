@@ -17,10 +17,10 @@ var commander_queued: bool = false
 var commander_damage: int = 0
 
 func _init(encounter: Data.Encounter = Data.Encounter.BORDER_SKIRMISH,
-		army: Array[Data.Squad] = Data.players()) -> void:
+		army: Array[Data.Squad] = Data.players(), threat: int = 0) -> void:
 	for squad in army:
 		players.append(Data.Squad.new(squad.role, squad.title, squad.max_health, squad.damage))
-	enemies = Data.enemies(encounter)
+	enemies = Data.enemies(encounter, threat)
 	is_defense = encounter == Data.Encounter.COUNTERATTACK
 	gate_max_health = 80 if is_defense else 0
 	gate_health = gate_max_health

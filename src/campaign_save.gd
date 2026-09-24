@@ -1,6 +1,6 @@
 extends RefCounted
 
-# Campaign storage (contract v2 (v1 files migrate on load in CampaignState), D9/D11). Mirrors Save-v1's stage/verify/rotate algorithm
+# Campaign storage (contract v3 (v1/v2 files migrate on load in CampaignState), D9/D11). Mirrors Save-v1's stage/verify/rotate algorithm
 # in a separate file; Save-v1 (progress_save.gd) is reused only for static helpers.
 const Campaign = preload("res://src/campaign.gd")
 const CampaignState = preload("res://src/campaign_state.gd")

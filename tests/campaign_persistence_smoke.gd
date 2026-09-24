@@ -13,7 +13,7 @@ const ProgressFixture = preload("res://tests/progress_fixture.gd")
 const Combat = preload("res://src/combat.gd")
 const Data = preload("res://src/encounter_data.gd")
 const PHASES: Array[String] = ["conquest", "resume-conquest", "checkpoint", "resume-defense",
-	"reset-interrupt", "reset", "successor", "successor-complete"]
+	"reset-interrupt", "reset", "successor", "successor-complete", "threat", "resume-threat"]
 const ABSENCE_MSEC: int = 1200
 
 # Commit seam: every move onto the primary fails, so the failed confirmation leaves the
@@ -124,8 +124,17 @@ func script_phase(scene: Presentation, phase: String) -> bool:
 				and campaign.pending_navigation == Campaign.Navigation.FARM
 		"resume-defense", "successor":
 			return play_until(scene, Campaign.Phase.CAMPAIGN_SECURED, 3, 0, true)
-		"reset-interrupt", "successor-complete":
+		"reset-interrupt", "successor-complete", "resume-threat":
 			return true # The interrupted confirmation is undone by relaunch; completion adds nothing.
+		"threat":
+			# Found dynasty 3 one Threat above the best secured (0), then stop mid-round after
+			# one completed round of its Threat-1 Border.
+			press(scene, "FoundDynasty")
+			press(scene, "ThreatUp")
+			press(scene, "ConfirmDynasty")
+			scene.advance_usec(Presentation.ROUND_USEC + 400000)
+			return campaign.dynasty == 3 and campaign.threat == 1 and campaign.battle.rounds == 1 \
+				and campaign.battle.result == Combat.Result.ONGOING and scene.elapsed_usec == 400000
 		"reset":
 			press(scene, "TrainDrill")
 			press(scene, "FoundDynasty")
@@ -236,6 +245,17 @@ func child(phase: String, path: String) -> void:
 			scene.advance_usec(60000000)
 			check(state_of(scene) == expected and not scene.dynasty_preview_open,
 				"successor-complete: cancelled repeat preview and relaunch time change nothing")
+		"resume-threat":
+			var enemy: Data.Squad = campaign.battle.enemies[0]
+			check(campaign.dynasty == 3 and campaign.threat == 1 and campaign.best_threat == 0
+				and campaign.legacy_earned == 13 and campaign.current_encounter == Data.Encounter.BORDER_SKIRMISH
+				and campaign.battle.enemies.size() == 1 and enemy.max_health == 90 and enemy.health < 90
+				and campaign.battle.rounds == 1 and campaign.battle.result == Combat.Result.ONGOING
+				and scene.elapsed_usec == 400000 and processing,
+				"resume-threat: Threat-1 dynasty 3 battle restored mid-fight (enemy shield 72 +25% = 90)")
+			check(scene.get_node("%ThreatStatus").text.begins_with("Threat 1 (enemies +25% health and damage)")
+				and scene.get_node("%DynastyStatus").text.ends_with("Securing this campaign earns 6 Legacy"),
+				"resume-threat: Threat line and 6-Legacy payout shown after relaunch")
 	var scripted := script_phase(scene, phase)
 	check(scripted, "%s: scripted inputs applied" % phase)
 	script_phase(reference, phase)

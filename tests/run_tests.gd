@@ -148,6 +148,8 @@ func run() -> void:
 		"dead attackers excluded; mobile takes damage before ranged")
 	check(Combat.new().players[0].health == 120, "fixtures: independent health")
 	test_dynasty()
+	test_threat()
+	test_threat_state()
 	test_conquest_targeting()
 	test_archer_position()
 	test_progression_balance()
@@ -452,6 +454,8 @@ func test_campaign_state_round_trips() -> void:
 	var unspent := Campaign.new()
 	unspent.dynasty = 2
 	unspent.legacy = 10 # Ledger-valid: dynasty 1 secured (+10), reset without training.
+	unspent.legacy_earned = 10
+	unspent.best_threat = 0
 	unspent.restart_battle()
 	var training := state_scene(unspent)
 	training.advance_usec(1500000)
@@ -546,8 +550,8 @@ func test_campaign_state_rejection() -> void:
 	state_rejects(base, "battle not object", CORRUPT, func(s: Dictionary) -> void: s.battle = [])
 	state_rejects(base, "wrong format", CORRUPT, func(s: Dictionary) -> void: s.format = "idle-clicker-progress")
 	state_rejects(base, "missing format", CORRUPT, func(s: Dictionary) -> void: s.erase("format"))
-	state_rejects(base, "future version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 3)
-	state_rejects(base, "future version float", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 3.0)
+	state_rejects(base, "future version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 4)
+	state_rejects(base, "future version float", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 4.0)
 	state_rejects(base, "version zero", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 0)
 	state_rejects(base, "negative version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = -1)
 	state_rejects(base, "huge version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 1e20)
@@ -576,6 +580,8 @@ func test_campaign_state_rejection() -> void:
 	var ledger: Dictionary = base.duplicate(true)
 	ledger.dynasty = 2
 	ledger.drill_rank = 1
+	ledger.best_threat = 0
+	ledger.legacy_earned = 10
 	check(CampaignState.validate(ledger).outcome == CampaignState.Outcome.VALID
 		and CampaignState.restore(ledger).campaign.battle.players[0].damage == 4,
 		"Campaign state: dynasty 2 rank 1 with rank-0 snapshot is valid and keeps 1x battle stats")
@@ -681,9 +687,18 @@ func test_campaign_state_rejection() -> void:
 		"Campaign state: capture refuses an unpaid Drill rank unchanged")
 	check(player_campaign_snapshot() == player_campaign_files, "Campaign state: player campaign save files unchanged")
 
-# Build a contract-v1 state from a v2 capture (drop the Legacy keys) as older builds wrote it.
-func state_as_v1(state: Dictionary) -> Dictionary:
+# Build a contract-v2 state from a v3 capture (drop the Threat keys) as older builds wrote it.
+func state_as_v2(state: Dictionary) -> Dictionary:
 	var old: Dictionary = state.duplicate(true)
+	old.version = 2
+	old.erase("threat")
+	old.erase("best_threat")
+	old.erase("legacy_earned")
+	return old
+
+# Build a contract-v1 state from a v3 capture (drop the Threat and Legacy keys) as older builds wrote it.
+func state_as_v1(state: Dictionary) -> Dictionary:
+	var old: Dictionary = state_as_v2(state)
 	old.version = 1
 	old.erase("legacy")
 	old.erase("drill_rank")
@@ -733,7 +748,7 @@ func test_campaign_state_migration() -> void:
 	state_rejects(v1, "v1 with v2 Legacy key", CORRUPT, func(s: Dictionary) -> void: s["legacy"] = 3)
 	state_rejects(v1, "v1 with v2 snapshot rank", CORRUPT, func(s: Dictionary) -> void: s.battle["snapshot_drill_rank"] = 1)
 	state_rejects(v1, "v2 without Legacy keys", CORRUPT, func(s: Dictionary) -> void: s.version = 2)
-	# On disk: a v1 file loads through the real store, and the next ordinary save writes v2.
+	# On disk: a v1 file loads through the real store, and the next ordinary save writes v3.
 	var fixture := ProgressFixture.new("campaign.json")
 	check(fixture.owned, "Campaign migration: isolated directory owned")
 	if not fixture.owned:
@@ -746,9 +761,9 @@ func test_campaign_state_migration() -> void:
 		and FileAccess.get_file_as_string(fixture.path) == JSON.stringify(v1),
 		"Campaign migration: v1 file loads through the store without being rewritten")
 	check(store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK
-		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 2
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 3
 		and CampaignSave.new(fixture.path).load_campaign().campaign.legacy == 3,
-		"Campaign migration: next save writes v2 that reloads exactly")
+		"Campaign migration: next save writes v3 that reloads exactly")
 	check(fixture.cleanup() == OK, "Campaign migration: directory cleaned")
 
 func campaign_running(rounds: int = 2, gold: int = 7) -> Campaign:
@@ -806,7 +821,7 @@ func test_campaign_save_format() -> void:
 		return
 	var base: Dictionary = CampaignState.capture(campaign_running(), 250000).state
 	var valid: String = JSON.stringify(base)
-	check(valid.contains('"gold":7') and valid.ends_with('"version":2}'), "Campaign save format: canonical integer text")
+	check(valid.contains('"gold":7') and valid.ends_with('"version":3}'), "Campaign save format: canonical integer text")
 	var backup: String = JSON.stringify(CampaignState.capture(campaign_running(1), 0).state)
 	check(fixture.put(backup, ".bak") == OK, "Campaign save format: valid backup beside every primary")
 	var mutated := func(mutate: Callable) -> String:
@@ -829,7 +844,7 @@ func test_campaign_save_format() -> void:
 		mutated.call(func(s: Dictionary) -> void: s.battle.player_health[0] = 121),
 		mutated.call(func(s: Dictionary) -> void: s.settled = true)]
 	check(corrupt[7].length() == 4097, "Campaign save format: oversize fixture is 4097 bytes")
-	var unsupported: Array[String] = [mutated.call(func(s: Dictionary) -> void: s.version = 3),
+	var unsupported: Array[String] = [mutated.call(func(s: Dictionary) -> void: s.version = 4),
 		'{"format":"idle-clicker-campaign","version":99,"gold":"future payload"}']
 	var replacement := campaign_running(3)
 	for expected in [CampaignSave.Outcome.CORRUPT, CampaignSave.Outcome.UNSUPPORTED]:
@@ -1081,7 +1096,7 @@ func test_campaign_scene_saves() -> void:
 	recovered.free()
 	# Unusable primaries: fresh session, saving disabled, file preserved.
 	var unsupported_state: Dictionary = (expected as Dictionary).duplicate(true)
-	unsupported_state.version = 3
+	unsupported_state.version = 4
 	var backup_bytes := FileAccess.get_file_as_bytes(path + ".bak")
 	for case in [["{", "damaged"], [JSON.stringify(unsupported_state), "from an unsupported version"], ["", "unreadable"]]:
 		if case[1] == "unreadable":
@@ -1328,6 +1343,27 @@ func test_campaign_scene_dynasty() -> void:
 	check(not copy.contains("only dynasty reset")
 		and scene.get_node("%ConfirmDynasty").text == "Confirm reset — start dynasty 2",
 		"Dynasty scene: preview is repeatable and names the next dynasty")
+	# Threat choice: defaults to the safe 0, clamps to one above the best secured, never mutates play.
+	check(scene.preview_threat == 0 and scene.get_node("%ThreatDown").disabled and not scene.get_node("%ThreatUp").disabled
+		and scene.get_node("%ThreatChoice").text.contains("New dynasty Threat 0 (up to 1)")
+		and scene.get_node("%ThreatChoice").text.contains("securing it earns 3 Legacy")
+		and scene.get_node("%ThreatChoice").text.contains("Threat 0 is always available"),
+		"Threat scene: preview defaults to Threat 0 with up to 1 unlocked")
+	scene.get_node("%ThreatUp").pressed.emit()
+	scene.get_node("%ThreatUp").pressed.emit()
+	check(scene.preview_threat == 1 and scene.get_node("%ThreatUp").disabled and not scene.get_node("%ThreatDown").disabled
+		and scene.get_node("%ThreatChoice").text.contains("enemies +25% health and damage; securing it earns 6 Legacy")
+		and scene.get_node("%DynastyLosses").text.contains("Next secured campaign earns 6 Legacy")
+		and campaign_snapshot(campaign) == before and scene.elapsed_usec == 345678,
+		"Threat scene: raise clamps at 1 above best and updates payout without mutation")
+	scene.get_node("%ThreatDown").pressed.emit()
+	scene.get_node("%ThreatDown").pressed.emit()
+	check(scene.preview_threat == 0 and scene.get_node("%DynastyLosses").text.contains("Next secured campaign earns 3 Legacy"),
+		"Threat scene: lower clamps at Threat 0")
+	scene.set_reason(0, true)
+	scene.get_node("%ThreatUp").pressed.emit()
+	check(scene.preview_threat == 0 and scene.get_node("%ThreatUp").disabled, "Threat scene: suspended raise rejected")
+	scene.set_reason(0, false)
 	for name in ["GateUpgrade", "ShieldUpgrade", "FootUpgrade", "HorseUpgrade", "FarmBorder", "FarmArcher", "Frontier", "StartDefense", "FoundDynasty", "TrainDrill"]:
 		check(scene.get_node("%" + name).disabled, "Dynasty scene: preview disables " + name)
 		scene.get_node("%" + name).pressed.emit()
@@ -1410,9 +1446,13 @@ func test_campaign_scene_dynasty() -> void:
 	scene.get_node("%FoundDynasty").pressed.emit()
 	check(scene.dynasty_preview_open and scene.get_node("%ConfirmDynasty").text == "Confirm reset — start dynasty 3",
 		"Dynasty scene: repeat preview offers dynasty 3")
+	scene.get_node("%ThreatUp").pressed.emit()
 	scene.get_node("%ConfirmDynasty").pressed.emit()
-	check(campaign.dynasty == 3 and campaign.legacy == 3 and campaign.drill_rank == 1 and not scene.dynasty_preview_open,
-		"Dynasty scene: repeat reset starts dynasty 3 keeping Legacy and rank")
+	check(campaign.dynasty == 3 and campaign.legacy == 3 and campaign.drill_rank == 1 and not scene.dynasty_preview_open
+		and campaign.threat == 1 and campaign.battle.enemies[0].max_health == 90
+		and scene.get_node("%ThreatStatus").text == "Threat 1 (enemies +25% health and damage) · Best secured Threat 0"
+		and scene.get_node("%DynastyStatus").text.ends_with("Securing this campaign earns 6 Legacy"),
+		"Dynasty scene: repeat reset starts dynasty 3 at the chosen Threat keeping Legacy and rank")
 	scene.free()
 
 func test_campaign_scene_fresh() -> void:
@@ -2377,6 +2417,181 @@ func test_dynasty() -> void:
 		"Dynasty: defeat and recovery preserve Drill rank without stacking or Legacy")
 	dynasty_rejected(loss, "successor defensive recovery")
 
+# Real play to a secured defense at the campaign's current dynasty and Threat.
+func threat_secure(campaign: Campaign) -> Combat:
+	# dynasty_prepare farms Border, so win the opening Border battle first (real rounds, retried on loss).
+	for i in range(10):
+		if campaign.border_cleared:
+			break
+		campaign_finish(campaign)
+	check(campaign.border_cleared, "Threat: opening Border battle cleared")
+	if not campaign.border_cleared:
+		return campaign.battle
+	dynasty_prepare(campaign)
+	var defense := campaign.start_defense()
+	campaign_finish(campaign)
+	return defense
+
+func threat_rejected(campaign: Campaign, level: int, title: String) -> void:
+	var before := campaign_snapshot(campaign)
+	check(campaign.found_dynasty(level) == null and campaign_snapshot(campaign) == before,
+		"Threat rejected unchanged: " + title)
+
+func test_threat() -> void:
+	# Enemy scaling: +25% health and damage per level, rounded half up; troops never scale.
+	check(Data.threat_scaled(72, 1) == 90 and Data.threat_scaled(3, 1) == 4 and Data.threat_scaled(3, 2) == 5
+		and Data.threat_scaled(72, 2) == 108 and Data.threat_scaled(3, 0) == 3 and Data.threat_scaled(10, 4) == 20,
+		"Threat: scaling formula rounds half up at +25% per level")
+	for encounter in [Data.Encounter.BORDER_SKIRMISH, Data.Encounter.ARCHER_POSITION,
+			Data.Encounter.STRONGHOLD, Data.Encounter.COUNTERATTACK]:
+		var base := Data.enemies(encounter)
+		var scaled := Data.enemies(encounter, 3)
+		var ok: bool = base.size() == scaled.size() and base.size() > 0
+		for i in range(base.size()):
+			ok = (ok and scaled[i].max_health == Data.threat_scaled(base[i].max_health, 3)
+				and scaled[i].health == scaled[i].max_health
+				and scaled[i].damage == Data.threat_scaled(base[i].damage, 3)
+				and scaled[i].role == base[i].role and scaled[i].title == base[i].title)
+		check(ok, "Threat: encounter %d enemies scale health and damage" % encounter)
+	# Payouts: dynasty 1 always 10; later secures 3 x (1 + Threat).
+	check(Campaign.threat_legacy(0) == 3 and Campaign.threat_legacy(1) == 6 and Campaign.threat_legacy(4) == 15,
+		"Threat: later secure pays 3, 6 ... 3 x (1 + Threat)")
+	var campaign := Campaign.new()
+	check(campaign.threat == 0 and campaign.best_threat == -1 and campaign.legacy_earned == 0
+		and campaign.max_selectable_threat() == 0 and campaign.secure_legacy() == 10,
+		"Threat: fresh dynasty 1 is Threat 0 with nothing unlocked")
+	campaign.restart_battle()
+	var first := threat_secure(campaign)
+	check(first.result == Combat.Result.VICTORY and campaign.legacy == 10 and campaign.legacy_earned == 10
+		and campaign.best_threat == 0 and campaign.max_selectable_threat() == 1,
+		"Threat: securing dynasty 1 records best Threat 0 and unlocks Threat 1")
+	threat_rejected(campaign, 2, "two above best")
+	threat_rejected(campaign, -1, "negative")
+	check(campaign.train_drill() and campaign.drill_rank == 1, "Threat: train Drill rank 1")
+	var hard := campaign.found_dynasty(1)
+	check(hard != null and campaign.dynasty == 2 and campaign.threat == 1 and campaign.secure_legacy() == 6
+		and hard.enemies[0].max_health == 90 and hard.enemies[0].health == 90 and hard.enemies[0].damage == 4
+		and hard.players[0].max_health == 120 and hard.players[0].damage == 8,
+		"Threat: dynasty 2 at Threat 1 scales enemies only and promises 6 Legacy")
+	# Every battle in the dynasty (farm, conquest and defense) keeps the Threat.
+	var defense := threat_secure(campaign)
+	check(defense.is_defense and defense.enemies[0].max_health == Data.threat_scaled(Data.enemies(Data.Encounter.COUNTERATTACK)[0].max_health, 1)
+		and defense.result == Combat.Result.VICTORY and campaign.legacy == 6 and campaign.legacy_earned == 16
+		and campaign.best_threat == 1 and campaign.max_selectable_threat() == 2,
+		"Threat: real Threat-1 secure pays 6 Legacy and unlocks Threat 2")
+	# Dropping back to Threat 0 is always allowed and never lowers the best.
+	check(campaign.found_dynasty(0) != null and campaign.threat == 0 and campaign.secure_legacy() == 3
+		and campaign.battle.enemies[0].max_health == 72 and campaign.max_selectable_threat() == 2,
+		"Threat: dynasty 3 can drop to Threat 0 with authored enemies")
+	threat_secure(campaign)
+	check(campaign.legacy == 9 and campaign.legacy_earned == 19 and campaign.best_threat == 1,
+		"Threat: Threat-0 secure pays 3 and keeps best Threat 1")
+	# Farming mid-dynasty keeps Threat; restart_battle keeps it too.
+	check(campaign.found_dynasty(2) != null and campaign.threat == 2
+		and campaign.restart_battle().enemies[0].max_health == 108, "Threat: restarted battle keeps Threat 2")
+	var capped := Campaign.new()
+	capped.best_threat = Campaign.THREAT_MAX
+	check(capped.max_selectable_threat() == Campaign.THREAT_MAX, "Threat: selectable Threat capped at maximum")
+
+func test_threat_state() -> void:
+	var CORRUPT := CampaignState.Outcome.CORRUPT
+	# v3 round trip: Threat, best and earned are persisted and battles restore scaled.
+	var campaign := state_secured()
+	campaign.train_drill()
+	campaign.found_dynasty(1)
+	campaign.battle.step_round()
+	var state: Dictionary = state_json(CampaignState.capture(campaign, 0).state)
+	var restored := CampaignState.restore(state)
+	check(restored.outcome == CampaignState.Outcome.VALID and state.version == 3 and state.threat == 1
+		and state.best_threat == 0 and state.legacy_earned == 10
+		and restored.campaign.threat == 1 and restored.campaign.best_threat == 0 and restored.campaign.legacy_earned == 10
+		and campaign_snapshot(restored.campaign, false) == campaign_snapshot(campaign, false),
+		"Threat save: v3 round trip keeps Threat, best, earned and the scaled battle exactly")
+	state_rejects(state, "Threat above unlocked", CORRUPT, func(s: Dictionary) -> void: s.threat = 2)
+	state_rejects(state, "negative Threat", CORRUPT, func(s: Dictionary) -> void: s.threat = -1)
+	state_rejects(state, "Threat over max", CORRUPT, func(s: Dictionary) -> void: s.threat = Campaign.THREAT_MAX + 1)
+	state_rejects(state, "fractional Threat", CORRUPT, func(s: Dictionary) -> void: s.threat = 0.5)
+	state_rejects(state, "missing Threat", CORRUPT, func(s: Dictionary) -> void: s.erase("threat"))
+	state_rejects(state, "missing best Threat", CORRUPT, func(s: Dictionary) -> void: s.erase("best_threat"))
+	state_rejects(state, "missing Legacy earned", CORRUPT, func(s: Dictionary) -> void: s.erase("legacy_earned"))
+	state_rejects(state, "best Threat before it was reachable", CORRUPT, func(s: Dictionary) -> void: s.best_threat = 1)
+	state_rejects(state, "no best after a secure", CORRUPT, func(s: Dictionary) -> void: s.best_threat = -1)
+	state_rejects(state, "inflated earned and balance", CORRUPT, func(s: Dictionary) -> void:
+		s.legacy_earned = 13
+		s.legacy = 3)
+	state_rejects(state, "earned without balance", CORRUPT, func(s: Dictionary) -> void: s.legacy_earned = 13)
+	state_rejects(state, "enemy healed past scaled max", CORRUPT, func(s: Dictionary) -> void: s.battle.enemy_health[0] = 91)
+	state_rejects(state, "v2 carrying Threat keys", CORRUPT, func(s: Dictionary) -> void: s.version = 2)
+	var dynasty_one: Dictionary = state_json(CampaignState.capture(campaign_running(), 0).state)
+	state_rejects(dynasty_one, "dynasty 1 at Threat 1", CORRUPT, func(s: Dictionary) -> void: s.threat = 1)
+	state_rejects(dynasty_one, "dynasty 1 unsecured with a best", CORRUPT, func(s: Dictionary) -> void: s.best_threat = 0)
+	# The scaled enemy cap is enforced: Threat-1 health 90 is valid, Threat-0 cap would not allow it.
+	var edited: Dictionary = state.duplicate(true)
+	edited.battle.enemy_health[0] = 90
+	check(CampaignState.validate(edited).outcome == CampaignState.Outcome.VALID,
+		"Threat save: Threat-1 enemy at scaled full health is valid")
+	# Legacy earned ranges: dynasty 3 after Threat-1 secure and Threat-0 secure earns 10 + 6 + 3.
+	threat_secure(campaign)
+	campaign.found_dynasty(0)
+	threat_secure(campaign)
+	state = state_json(CampaignState.capture(campaign, 0).state)
+	check(CampaignState.validate(state).outcome == CampaignState.Outcome.VALID and state.legacy_earned == 19
+		and state.best_threat == 1 and state.dynasty == 3,
+		"Threat save: mixed-Threat history saves as a valid v3 ledger")
+	# Earned is a range check: with best Threat 1 over two later secures it lies in 19..22 (10 + 6 + 6).
+	var richest: Dictionary = state.duplicate(true)
+	richest.legacy_earned = 22
+	richest.legacy += 3
+	check(CampaignState.validate(richest).outcome == CampaignState.Outcome.VALID,
+		"Threat save: richest history for best Threat 1 accepted")
+	state_rejects(state, "earned above richest history", CORRUPT, func(s: Dictionary) -> void:
+		s.legacy_earned = 23
+		s.legacy += 4)
+	state_rejects(state, "earned from a Threat above the best", CORRUPT, func(s: Dictionary) -> void:
+		s.legacy_earned = 25
+		s.legacy += 6)
+	state_rejects(state, "earned below cheapest history", CORRUPT, func(s: Dictionary) -> void:
+		s.legacy_earned = 16
+		s.legacy -= 3)
+	# v2 migration: old files are all Threat 0 and their fixed +10/+3 ledger becomes Legacy earned.
+	var v2_fresh := CampaignState.restore(state_as_v2(state_json(CampaignState.capture(campaign_running(), 0).state)))
+	check(v2_fresh.outcome == CampaignState.Outcome.VALID and v2_fresh.campaign.threat == 0
+		and v2_fresh.campaign.best_threat == -1 and v2_fresh.campaign.legacy_earned == 0,
+		"Threat migration: v2 dynasty 1 running loads Threat 0 with no best")
+	var legacy_run := state_secured()
+	legacy_run.train_drill()
+	legacy_run.found_dynasty()
+	threat_secure(legacy_run)
+	var v2_secured: Dictionary = state_as_v2(state_json(CampaignState.capture(legacy_run, 0).state))
+	var migrated := CampaignState.restore(v2_secured)
+	check(not v2_secured.has("threat") and v2_secured.version == 2
+		and migrated.outcome == CampaignState.Outcome.VALID and migrated.campaign.dynasty == 2
+		and migrated.campaign.legacy == 3 and migrated.campaign.legacy_earned == 13
+		and migrated.campaign.threat == 0 and migrated.campaign.best_threat == 0
+		and migrated.campaign.max_selectable_threat() == 1,
+		"Threat migration: v2 secured dynasty 2 loads Threat 0, best 0, earned 13 and unlocks Threat 1")
+	state_rejects(v2_secured, "v2 hand-edited Legacy", CORRUPT, func(s: Dictionary) -> void: s.legacy = 4)
+	state_rejects(v2_secured, "v2 dynasty without its Legacy", CORRUPT, func(s: Dictionary) -> void: s.dynasty = 3)
+	check(migrated.campaign.found_dynasty(1) != null and migrated.campaign.battle.enemies[0].max_health == 90,
+		"Threat migration: migrated v2 dynasty can found at Threat 1")
+	# On disk: a v2 file loads unchanged; the next save writes v3 that reloads exactly.
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Threat migration: isolated directory owned")
+	if not fixture.owned:
+		return
+	check(fixture.put(JSON.stringify(v2_secured)) == OK, "Threat migration: v2 file written")
+	var store := CampaignSave.new(fixture.path)
+	var loaded := store.load_campaign()
+	check(loaded.outcome == CampaignSave.Outcome.LOADED and not loaded.has("recovered")
+		and loaded.campaign.legacy == 3 and loaded.campaign.legacy_earned == 13
+		and FileAccess.get_file_as_string(fixture.path) == JSON.stringify(v2_secured),
+		"Threat migration: v2 file loads through the store without being rewritten")
+	check(store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 3
+		and CampaignSave.new(fixture.path).load_campaign().campaign.legacy_earned == 13,
+		"Threat migration: next save writes v3 that reloads exactly")
+	check(fixture.cleanup() == OK, "Threat migration: directory cleaned")
+
 func campaign_finish(campaign: Campaign) -> Combat:
 	var completed := campaign.battle
 	for i in range(60):
@@ -2402,7 +2617,8 @@ func campaign_snapshot(campaign: Campaign, identity: bool = true) -> Array:
 		combat if identity else null, balance_snapshot(combat), combat.commander_queued,
 		combat.commander_damage, squads, campaign.gate_level, combat.is_defense,
 		combat.gate_max_health, combat.gate_health, combat.defeat_reason,
-		campaign.dynasty, campaign.legacy, campaign.drill_rank, campaign._battle_drill_rank]
+		campaign.dynasty, campaign.legacy, campaign.drill_rank, campaign._battle_drill_rank,
+		campaign.threat, campaign.best_threat, campaign.legacy_earned]
 
 func campaign_fresh(campaign: Campaign, previous: Combat, encounter: int) -> void:
 	var combat := campaign.battle

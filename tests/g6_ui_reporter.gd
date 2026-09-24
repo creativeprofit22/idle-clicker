@@ -6,8 +6,8 @@ extends Node
 # window-scoped clicks, and saves window-only captures at key UI transitions.
 
 const LABELS: Array[String] = ["CampaignStatus", "DynastyStatus", "SaveStatus", "LastResult",
-	"Gold", "Round", "Army", "Enemies", "PendingNavigation", "DynastyLosses"]
-const BUTTONS: Array[String] = ["TrainDrill", "FoundDynasty", "CancelDynasty", "ConfirmDynasty",
+	"Gold", "Round", "Army", "Enemies", "PendingNavigation", "DynastyLosses", "ThreatStatus", "ThreatChoice"]
+const BUTTONS: Array[String] = ["TrainDrill", "FoundDynasty", "CancelDynasty", "ConfirmDynasty", "ThreatUp", "ThreatDown",
 	"StartDefense", "FarmBorder", "FarmArcher", "Frontier", "GateUpgrade",
 	"ShieldUpgrade", "FootUpgrade", "HorseUpgrade"]
 

@@ -59,6 +59,11 @@ unique_name_in_owner = true
 layout_mode = 2
 autowrap_mode = 2
 
+[node name="ThreatStatus" type="Label" parent="Margin/Scroll/Column"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 2
+
 [node name="TrainDrill" type="Button" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 layout_mode = 2
@@ -81,6 +86,23 @@ layout_mode = 2
 unique_name_in_owner = true
 layout_mode = 2
 autowrap_mode = 2
+
+[node name="ThreatChoice" type="Label" parent="Margin/Scroll/Column/DynastyPreview"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 2
+
+[node name="ThreatDown" type="Button" parent="Margin/Scroll/Column/DynastyPreview"]
+unique_name_in_owner = true
+layout_mode = 2
+action_mode = 0
+text = "Lower Threat"
+
+[node name="ThreatUp" type="Button" parent="Margin/Scroll/Column/DynastyPreview"]
+unique_name_in_owner = true
+layout_mode = 2
+action_mode = 0
+text = "Raise Threat"
 
 [node name="CancelDynasty" type="Button" parent="Margin/Scroll/Column/DynastyPreview"]
 unique_name_in_owner = true

@@ -324,6 +324,17 @@ def main() -> int:
         checks.check("Keep Legacy 0 and Drill rank 1" in s["labels"]["DynastyLosses"]
                      and s["buttons"]["ConfirmDynasty"]["text"] == "Confirm reset — start dynasty 2",
                      "preview discloses kept Legacy/Drill and targets dynasty 2")
+        checks.check(s["labels"]["ThreatChoice"].startswith("New dynasty Threat 0 (up to 1)")
+                     and "securing it earns 3 Legacy" in s["labels"]["ThreatChoice"]
+                     and s["buttons"]["ThreatDown"]["disabled"] and not s["buttons"]["ThreatUp"]["disabled"],
+                     "preview defaults to Threat 0 with Threat 1 unlocked")
+        session.click("ThreatUp")
+        s = session.wait(lambda s: "Threat 1 (up to 1)" in s["labels"]["ThreatChoice"], 3, "Raise Threat")
+        checks.check("securing it earns 6 Legacy" in s["labels"]["ThreatChoice"]
+                     and "Next secured campaign earns 6 Legacy" in s["labels"]["DynastyLosses"]
+                     and s["buttons"]["ThreatUp"]["disabled"], "Raise Threat previews Threat 1 paying 6 Legacy")
+        session.click("ThreatDown")
+        session.wait(lambda s: "Threat 0 (up to 1)" in s["labels"]["ThreatChoice"], 3, "Lower Threat")
         session.click("CancelDynasty")
         s = session.wait(lambda s: not s["preview_open"], 3, "preview cancel")
         session.pump(0.5)
@@ -339,6 +350,10 @@ def main() -> int:
                      and data["gold"] == 0 and data["levels"] == [1, 1, 1] and data["gate_level"] == 1
                      and data["cleared"] == [False, False, False] and data["current_encounter"] == 0,
                      f"Confirm starts dynasty 2 once with Legacy/Drill kept: {data}")
+        checks.check(data["version"] == 3 and data["threat"] == 0 and data["best_threat"] == 0
+                     and data["legacy_earned"] == 10
+                     and s["labels"]["ThreatStatus"].startswith("Threat 0 (enemies +0% health and damage)"),
+                     "dynasty 2 saved as v3 at the default Threat 0 with best 0 and 10 Legacy earned")
         army = s["labels"]["Army"]
         checks.check(all(f"Damage {d}" in army for d in (8, 16, 12)),
                      "dynasty 2 squads deal ×2 damage (8/16/12)")
@@ -385,11 +400,18 @@ def main() -> int:
         s = session.wait(lambda s: s["preview_open"], 3, "second preview")
         checks.check(s["buttons"]["ConfirmDynasty"]["text"] == "Confirm reset — start dynasty 3",
                      "second preview targets dynasty 3")
+        session.click("ThreatUp")
+        s = session.wait(lambda s: "Threat 1 (up to 1)" in s["labels"]["ThreatChoice"], 3, "Raise Threat for dynasty 3")
         session.click("ConfirmDynasty")
-        session.wait(lambda s: dynasty_line(s).startswith("Dynasty 3"), 3, "dynasty 3")
+        s = session.wait(lambda s: dynasty_line(s).startswith("Dynasty 3"), 3, "dynasty 3")
         data = save()
         checks.check(data["dynasty"] == 3 and data["legacy"] == 3 and data["drill_rank"] == 1,
                      f"Confirm reaches dynasty 3 keeping Legacy 3 and Drill rank 1: dynasty={data['dynasty']}")
+        checks.check(data["threat"] == 1 and data["best_threat"] == 0 and data["legacy_earned"] == 13
+                     and s["labels"]["ThreatStatus"].startswith("Threat 1 (enemies +25% health and damage)")
+                     and "/ 90" in s["labels"]["Enemies"]
+                     and dynasty_line(s).endswith("Securing this campaign earns 6 Legacy"),
+                     f"dynasty 3 starts at chosen Threat 1 with scaled enemies (72 → 90 HP) and a 6-Legacy payout: {data}")
         session.pump(0.5)
         session.close(checks)
         progress_same("end")

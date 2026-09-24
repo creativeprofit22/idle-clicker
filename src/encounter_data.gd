@@ -23,7 +23,22 @@ static func players() -> Array[Squad]:
 		Squad.new(Role.FOOT, "Foot archers", 40, 8),
 		Squad.new(Role.HORSE, "Horse archers", 60, 6)]
 
-static func enemies(encounter: Encounter = Encounter.BORDER_SKIRMISH) -> Array[Squad]:
+# Threat scales authored enemy health and damage by +THREAT_STEP_PERCENT% per level, rounded half up.
+const THREAT_STEP_PERCENT: int = 25
+
+static func threat_scaled(value: int, threat: int) -> int:
+	return (value * (100 + THREAT_STEP_PERCENT * threat) + 50) / 100
+
+static func enemies(encounter: Encounter = Encounter.BORDER_SKIRMISH, threat: int = 0) -> Array[Squad]:
+	var authored := _authored_enemies(encounter)
+	if threat > 0:
+		for squad in authored:
+			squad.max_health = threat_scaled(squad.max_health, threat)
+			squad.health = squad.max_health
+			squad.damage = threat_scaled(squad.damage, threat)
+	return authored
+
+static func _authored_enemies(encounter: Encounter) -> Array[Squad]:
 	if encounter == Encounter.COUNTERATTACK:
 		return [Squad.new(Role.SHIELD, "Enemy shield", 180, 12),
 			Squad.new(Role.FOOT, "Enemy foot archers", 80, 10),

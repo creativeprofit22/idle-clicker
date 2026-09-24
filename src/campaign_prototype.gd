@@ -24,6 +24,8 @@ var focus_lost: bool = false
 var application_paused: bool = false
 var skip_resume_frame: bool = false
 var dynasty_preview_open: bool = false
+# Threat chosen in the open preview; resets to the safe 0 each time the preview opens.
+var preview_threat: int = 0
 
 @onready var upgrades: Array[Button] = [%ShieldUpgrade, %FootUpgrade, %HorseUpgrade]
 
@@ -37,6 +39,8 @@ func _ready() -> void:
 	%FoundDynasty.pressed.connect(_open_dynasty_preview)
 	%CancelDynasty.pressed.connect(_cancel_dynasty_preview)
 	%ConfirmDynasty.pressed.connect(_confirm_dynasty)
+	%ThreatDown.pressed.connect(_change_threat.bind(-1))
+	%ThreatUp.pressed.connect(_change_threat.bind(1))
 	for role in range(upgrades.size()):
 		upgrades[role].pressed.connect(_purchase.bind(role))
 	_load_campaign()
@@ -183,6 +187,7 @@ func _open_dynasty_preview() -> void:
 	if suspended or dynasty_preview_open or not campaign.can_found_dynasty():
 		return
 	dynasty_preview_open = true
+	preview_threat = 0
 	_refresh()
 	%CancelDynasty.grab_focus()
 
@@ -194,11 +199,19 @@ func _cancel_dynasty_preview() -> void:
 	_refresh()
 	%FoundDynasty.grab_focus()
 
+# Preview-only choice: nothing changes or saves until Confirm.
+func _change_threat(step: int) -> void:
+	_sync_suspension()
+	if suspended or not dynasty_preview_open:
+		return
+	preview_threat = clampi(preview_threat + step, 0, campaign.max_selectable_threat())
+	_refresh()
+
 func _confirm_dynasty() -> void:
 	_sync_suspension()
 	if suspended or not dynasty_preview_open or not campaign.can_found_dynasty():
 		return
-	if campaign.found_dynasty() == null:
+	if campaign.found_dynasty(preview_threat) == null:
 		return
 	dynasty_preview_open = false
 	elapsed_usec = 0
@@ -271,6 +284,9 @@ func _refresh() -> void:
 		campaign.dynasty, campaign.legacy, campaign.drill_rank, 1 + campaign.drill_rank]
 	if not secured:
 		%DynastyStatus.text += " · Securing this campaign earns %d Legacy" % campaign.secure_legacy()
+	%ThreatStatus.text = "Threat %d (enemies +%d%% health and damage) · Best secured Threat %s" % [
+		campaign.threat, Data.THREAT_STEP_PERCENT * campaign.threat,
+		"none yet" if campaign.best_threat < 0 else str(campaign.best_threat)]
 	var drill_cost: int = campaign.drill_cost()
 	%TrainDrill.text = "Drill at maximum rank" if drill_cost == 0 else "Train Drill rank %d — %d Legacy" % [
 		campaign.drill_rank + 1, drill_cost]
@@ -280,13 +296,19 @@ func _refresh() -> void:
 	%CancelDynasty.disabled = suspended
 	%ConfirmDynasty.disabled = suspended or not dynasty_preview_open or not campaign.can_found_dynasty()
 	%ConfirmDynasty.text = "Confirm reset — start dynasty %d" % (campaign.dynasty + 1)
+	var threat_max: int = campaign.max_selectable_threat()
+	%ThreatChoice.text = ("New dynasty Threat %d (up to %d): enemies +%d%% health and damage; securing it earns %d Legacy.\n"
+		+ "Secure a Threat to unlock the next one. Threat 0 is always available.") % [
+		preview_threat, threat_max, Data.THREAT_STEP_PERCENT * preview_threat, Campaign.threat_legacy(preview_threat)]
+	%ThreatDown.disabled = suspended or not dynasty_preview_open or preview_threat <= 0
+	%ThreatUp.disabled = suspended or not dynasty_preview_open or preview_threat >= threat_max
 	%DynastyLosses.text = ("Lose all current gold: %d gold. Shield infantry Lv.%d, Foot archers Lv.%d, Horse archers Lv.%d and Gate Lv.%d all return to level 1.\n"
 		+ "Lose all conquered territory and security; restart Border Skirmish in Advance mode with fresh full-health troops.\n"
 		+ "Clear battle progress, pending commands, farming/navigation choices and fractional round time.\n"
-		+ "Keep access to the same three troop types. Keep Legacy %d and Drill rank %d (×%d squad damage after level additions); health, gold rewards and round frequency are unchanged.\n"
+		+ "Keep access to the same three troop types. Keep Legacy %d and Drill rank %d (×%d squad damage after level additions); troop health, gold rewards and round frequency are unchanged.\n"
 		+ "Next secured campaign earns %d Legacy. Legacy and Drill rank are kept in the campaign save; main-game saves are untouched.") % [
 		campaign.gold, campaign.levels[0], campaign.levels[1], campaign.levels[2], campaign.gate_level,
-		campaign.legacy, campaign.drill_rank, 1 + campaign.drill_rank, Campaign.REPEAT_SECURE_LEGACY]
+		campaign.legacy, campaign.drill_rank, 1 + campaign.drill_rank, Campaign.threat_legacy(preview_threat)]
 	var checkpoint: bool = campaign.phase == Campaign.Phase.CONQUEST_CLEARED
 	var defending: bool = campaign.phase == Campaign.Phase.DEFENDING
 	match campaign.phase:
