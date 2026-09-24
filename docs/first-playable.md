@@ -66,13 +66,13 @@ queued farming, retains the winning battle/gate and stops timing/navigation at
 `CAMPAIGN_SECURED`. Affordable purchases remain ownership-only outside the reset preview.
 
 A **settled defensive victory with a surviving gate** plus all clearances secures the
-campaign and pays **Legacy**, a permanent currency: **10** in dynasty 1 and **3** in every
-later dynasty. It is credited once, in the same saved settlement transition. The secured
+campaign and pays **Legacy**, a permanent currency: **10** in dynasty 1 and
+**3 × (1 + Threat)** (3/6/9…) in every later dynasty. It is credited once, in the same saved settlement transition. The secured
 status reads **Campaign secured · Counterattack defeated · +X Legacy earned**.
 
 **Train Drill** spends Legacy: ranks 1/2/3 cost **10/20/40** and multiply squad damage by
-**1 + rank** (2×/3×/4×), applied after level additions. Health, enemies, gold rewards and
-one-second rounds are unchanged. Like troop purchases it applies from the next battle, so
+**1 + rank** (2×/3×/4×), applied after level additions. Drill changes nothing else: troop
+health, enemy stats, gold rewards and one-second rounds are unaffected by it. Like troop purchases it applies from the next battle, so
 rank 1 bought before a reset makes the passive opening take two rounds rather than four.
 Commander snapshot strength derives from damage, but the campaign UI has no commander
 control. Training is blocked while suspended, with the preview open, when unaffordable or
@@ -80,10 +80,16 @@ at rank 3.
 
 **Found a Dynasty** is available at every secured campaign, without limit. The native
 preview shows actual gold, troop and gate losses, the Legacy and Drill rank that are kept,
-and that the next secured campaign earns 3 Legacy. Cancel or Escape changes no gameplay
+and the Legacy the next secured campaign earns at the chosen Threat. Cancel or Escape changes no gameplay
 state and returns focus; preview-open purchase/navigation handlers are blocked.
 Confirmation requires an open preview, fresh model eligibility and no suspension, and
 applies once per secured campaign.
+
+**Threat.** Lower/Raise Threat in the preview picks the new dynasty's Threat: default 0 each
+time the preview opens, up to one above the best secured Threat (max 10), with Threat 0 always
+available. Each level gives enemies +25% health and damage (rounded half up), fixed for the
+dynasty; troops, gold, costs and round timing are unchanged. The status line shows
+"Threat N … · Best secured Threat M".
 
 **Confirm reset — start dynasty N** (N = current dynasty + 1) loses all gold and
 territory/security, returns all troop/gate levels to 1, clears battle progress, queued

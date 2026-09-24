@@ -106,24 +106,33 @@ There is no Fortified frontier, export or release approval.
 ### Legacy, Drill ranks and repeatable dynasty resets
 
 A **settled Counterattack victory with a surviving gate** plus all three clearances secures
-the campaign and pays **Legacy**, a permanent currency: **10** in dynasty 1 and **3** in
-every later dynasty. Legacy is credited in the same saved transition, so it can't be paid
-twice. The dynasty line shows the dynasty, Legacy, Drill rank and multiplier, and what securing
-the current campaign would earn. Stronghold alone is not enough.
+the campaign and pays **Legacy**, a permanent currency: **10** in dynasty 1 and
+**3 × (1 + Threat)** in every later dynasty (3/6/9… at Threat 0/1/2…). Legacy is credited in
+the same saved transition, so it can't be paid twice. The dynasty line shows the dynasty,
+Legacy, Drill rank and multiplier, and what securing the current campaign would earn; below it,
+"Threat N (enemies +X% health and damage) · Best secured Threat M" ("none yet" before the
+first secure). Stronghold alone is not enough.
 
 **Train Drill** spends Legacy: ranks 1/2/3 cost **10/20/40** and multiply squad damage by
-**2×/3×/4×**, applied once **after level additions**. Health, enemies, gold rewards and the
-one-second round frequency are unchanged. Like troop purchases it applies from the next
+**2×/3×/4×**, applied once **after level additions**. Drill changes nothing else: troop health,
+enemy stats, gold rewards and the one-second round frequency are unaffected by it (enemies
+change only with Threat). Like troop purchases it applies from the next
 battle, so buy rank 1 before resetting to start the successor at 2×: the passive opening
 Border then takes two rounds instead of four. Training is blocked while suspended, with the
 preview open, when unaffordable, or at rank 3. Every successful purchase autosaves.
 
 **Found a Dynasty** is available at every secured campaign, without limit. Opening the native
-preview shows actual gold/troop/gate losses, the Legacy and Drill rank that are kept, and that
-the next secured campaign earns 3 Legacy. **Cancel** or Escape changes no gameplay state and
+preview shows actual gold/troop/gate losses, the Legacy and Drill rank that are kept, and the
+Legacy the next secured campaign earns at the chosen Threat. **Cancel** or Escape changes no gameplay state and
 returns focus to Found a Dynasty. Purchases and navigation are blocked while the preview is
 open; suspension also rejects reset inputs. **Confirm reset — start dynasty N** rechecks
 eligibility and applies once.
+
+**Threat.** The preview's **Lower/Raise Threat** buttons pick the new dynasty's Threat. It
+defaults to 0 each time the preview opens and can go up to one above your best secured Threat
+(maximum **10**); Threat 0 is always available. Each level gives every enemy **+25%** max health
+and damage (rounded half up), fixed for the whole dynasty. Troops, gold rewards, costs and
+round timing don't change. Changing Threat in the preview writes nothing until Confirm.
 
 Confirmation loses all gold, troop/gate upgrades (levels return to 1), territory and
 security. It clears battle progress, queued commands/navigation, farm selection and fractional
@@ -1738,7 +1747,7 @@ New coverage:
   trigger equal to the captured state, no save on rounds or preview open/cancel, failed-save
   retry, mid-session corruption, close-request and suspension saves, and purchase/settlement/
   dynasty interruptions before write, between rotate and commit, and after commit.
-- `tests/campaign_persistence_smoke.gd`: eight fresh engine processes with a 1.2 s absence
+- `tests/campaign_persistence_smoke.gd`: fresh engine processes (ten since the Threat follow-up) with a 1.2 s absence
   between launches: damaged mid-round battle, fractional time, snapshot vs owned upgrade, queued
   navigation, checkpoint and damaged gate restore exactly; an interrupted dynasty confirm restores
   from backup and can be confirmed once; drill stays exactly 2×; dynasty 2 cannot reset again;
@@ -1859,6 +1868,85 @@ The screenshots `dynasty-secured` (+10 Legacy, rank 1 bought, settled battle sti
 `dynasty-fresh-successor` (dynasty 2 at ×2, "earns 3 Legacy") were inspected and are readable,
 with no overlap or clipping. CI had not run at the time of these runs (nothing was committed yet). The physical manual gate for
 this flow stays **pending**.
+
+### Threat levels for later dynasties — verified locally 23 Sep 2026 (uncommitted tree on `d41e980`)
+
+After dynasty 1, every run had been the same short loop for +3 Legacy. Now each new dynasty picks
+a **Threat** level in the Found a Dynasty preview. Each level adds +25% to enemy health and damage
+(troops are unchanged), and securing the dynasty pays `3 × (1 + Threat)` Legacy instead of a flat
+3. You can pick up to one level above your best secured Threat, and Threat 0 is always available,
+so a player can't get stuck. The campaign save is now **v3**, and v1/v2 saves still load (see the v3
+amendment in `docs/campaign-save-contract.md`). An earlier idea of automatic scaling was
+dropped: hand calculations showed a fully upgraded army could lose the dynasty-3 defense, and an
+unwinnable dynasty can never be refounded.
+
+Balance check: a headless greedy bot (not a person) played a Drill rank × Threat grid. It buys the
+cheapest troop, farms, and buys the gate twice before the defense. Real play time, 2 rounds per
+second; FAIL = not secured within 3000 rounds:
+
+| Drill rank | T0 | T1 | T2 | T3 | T4 | T5 | T6 |
+|---|---|---|---|---|---|---|---|
+| 0 | 77 s | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL |
+| 1 | 23 s | 56 s | 58 s | FAIL | FAIL | FAIL | FAIL |
+| 2 | 16 s | 23 s | 46 s | 48 s | FAIL | FAIL | FAIL |
+| 3 | 13 s | 17 s | 19 s | 39 s | 44 s | 46 s | FAIL |
+
+Each Drill rank opens one or two more winnable Threat levels, so Legacy has somewhere to go.
+A "FAIL" is this bot's limit, not proof a person can't win.
+
+| Check | Result |
+|---|---|
+| Import | exit 0, 0 errors |
+| Headless normal / forced | 3763/0, exit 0 · 3764/1 (only `FAIL forced runner failure`), exit 1 |
+| Native `campaign` / `defense` | 57/0 · 64/0, child/driver exits 0, `native_observations_complete=True`, child reaped, reader joined |
+| `windows_g6_driver.py` | 27/0, exit 0, both launches reaped with reader joined; dynasty 1 secured in 125.8 s, dynasty 2 (Threat 0) in 20.3 s |
+
+**Follow-up verification (same day, after the preview gained Threat controls).** Earlier the
+graphical checks below hadn't been rerun, and no relaunch covered a Threat > 0 dynasty.
+
+| Check | Result |
+|---|---|
+| Import (after all edits) | exit 0, 0 errors |
+| Headless normal / forced / normal | 3763/0, exit 0 · 3764/1 (only `FAIL forced runner failure`), exit 1 · 3763/0, exit 0 |
+| `campaign_persistence_smoke.gd`, headless and graphical (`--path .`) | all 11 process summaries 0 failures (`threat` 7, `resume-threat` 9, `two-process` 14), exit 0 both ways |
+| `scene_smoke.gd` | `SUMMARY: 105 graphical checks, 0 failures`, exit 0 |
+| Native `dynasty`, run 1 and diagnostic run 2 | **FAILED** (59 printed checks, 5 failures, no smoke SUMMARY; retained): "mouse target enabled and fully visible" on Found a Dynasty after Escape, then the 4 dependent checks; child exit 1, `native_observations_complete=False`; child reaped, reader joined |
+| Native `dynasty`, after test fix | 66/0, child/driver exit 0, `native_observations_complete=True`, child reaped, reader joined |
+| Native `focus-only` / `campaign` / `defense` (after test fix) | 14/0 · 57/0 · 64/0, all child/driver exits 0, observations complete, child reaped, reader joined |
+
+Root cause of the dynasty failure: the smoke reopened the preview with Space and pressed Escape
+in the **same frame**. The focus-follow scroll queued for Cancel then ran against Cancel's stale
+(now hidden) position, which is lower since the Threat controls made the preview taller. That
+left Found a Dynasty 64 px above the view (diagnostic: `rect y=-64, scroll=329/985`). A person
+can't press both keys in one frame, so the smoke now waits two frames, **asserts the preview
+really reopened with Cancel focused** (previously unchecked), presses Escape, and adds a new check
+that the scene's own focus-follow keeps Found a Dynasty visible after Escape. No assertion,
+deadline or focus/suspension gate was weakened; a failure-only `CLICK_DIAG` line now prints rect
+and scroll data when a click target is off-screen. The narrow Cancel/Confirm focus-follow checks
+passed in every run, including the failed ones.
+
+New relaunch coverage: `campaign_persistence_smoke.gd` phase `threat` opens the dynasty-3
+preview, presses Raise Threat and Confirm, and stops after one round; `resume-threat` relaunches
+and confirms Threat 1, best Threat 0, 13 Legacy earned, the Border enemy shield at 90 max health
+(72 +25%) and damaged mid-fight, `Threat 1 (enemies +25% health and damage)…` and
+`…Securing this campaign earns 6 Legacy`. CI checks both new phase summaries.
+
+Inspected captures: `dynasty-preview` (540×480; Threat 0 "up to 1", Lower disabled, Raise,
+Cancel, and focused Confirm all visible, no overlap), `dynasty-secured`, `dynasty-fresh-successor`
+(Threat 0 line, 3-Legacy payout), `campaign-secured`, `defense-damaged` and
+`small-defense-controls`. All readable with no clipping or overlap.
+
+The G6 driver checks that dynasties now use v3 save fields. It confirms the preview defaults to
+Threat 0, and that Raise/Lower update the payout (3 → 6) without saving. Dynasty 2 saves as
+Threat 0 with best 0 and 10 earned, and dynasty 3, founded at Threat 1, shows enemies at 90 HP
+and a 6-Legacy payout. Every existing check, deadline and focus/suspension gate was kept.
+Inspected screenshots: the secured-dynasty-2 preview (Threat controls, "up to 1", 3-Legacy
+payout), dynasty 3 at Threat 1 (Enemy shield 90/90, damage 4), and the campaign `initial`,
+`defense-damaged` and `campaign-secured` captures. All are readable, with the new Threat line
+fitting without overlap. (The follow-up above reran `scene_smoke.gd`,
+`campaign_persistence_smoke.gd` and native `focus-only`.) CI hasn't run (nothing committed). These are
+window-driven results, not physical (hand-operated) acceptance: the physical gate stays
+**pending**. No art, export or Android claim is made.
 
 ## Boundaries
 

@@ -1,7 +1,8 @@
-# Campaign save contract — v1, with v2 amendment (Legacy)
+# Campaign save contract — v1, with v2 (Legacy) and v3 (Threat) amendments
 
-The current file format is **v2**; see "v2 amendment (Legacy)" at the end. The v1 sections
-below are kept as history and still govern every rule the amendment does not change.
+The current file format is **v3**; see "v3 amendment (Threat)" at the end, which builds on
+"v2 amendment (Legacy)". The earlier sections are kept as history and still govern every rule
+the amendments do not change.
 
 **Status: APPROVED 23 September 2026 — implemented.** In-memory state capture, validation
 and restoration exist in `src/campaign_state.gd`; isolated storage and D11 recovery exist in
@@ -306,11 +307,13 @@ then mapped in memory:
 - `snapshot_drill_rank` = rank
 
 The file isn't rewritten on load; the next ordinary save writes v2. Any version other than 1 or 2
-is UNSUPPORTED.
+is UNSUPPORTED. *(Superseded by v3: the next save writes v3; versions other than 1, 2 or 3 are
+unsupported.)*
 
 **D5 change.** Confirm is repeatable, and the successor keeps Legacy and Drill rank. The preview
 discloses what is kept and that the next secured campaign earns 3 Legacy. The secured status
-shows the Legacy earned instead of "Slice complete".
+shows the Legacy earned instead of "Slice complete". *(Superseded by v3: the preview shows the
+chosen Threat's payout, 3 × (1 + Threat).)*
 
 **D6 addition.** A successful **Train Drill** purchase is an accepted mutation and autosaves.
 Rejected training (unaffordable, at max, suspended or preview open) writes nothing.
@@ -325,5 +328,64 @@ and `tests/campaign_scene_smoke.gd`):
 4. Mid-battle training: the active battle keeps its snapshot rank across capture/restore, and the
    next battle uses the new rank.
 5. A tampered Legacy, rank, dynasty or snapshot rank, or missing v2 keys, are corrupt; version 3
-   is unsupported.
+   is unsupported. *(Superseded by v3: version 3 is current; version 4 is unsupported.)*
 6. v1 dynasty-1/2, running/secured files migrate exactly, and the next save writes v2.
+   *(Superseded by v3: the next save writes v3.)*
+
+## v3 amendment (Threat)
+
+**Status: implemented 23 September 2026** (not committed at time of writing). Gives later
+dynasties a goal and a choice: each new dynasty picks a Threat level that makes enemies stronger
+and pays more Legacy.
+
+**Rules.**
+- Dynasty 1 is always Threat 0. When founding a dynasty, the preview picks a Threat from 0 up to
+  `best_threat + 1` (capped at `THREAT_MAX` = 10). It defaults to 0 each time the preview opens;
+  Lower/Raise Threat change only the preview and write nothing. Threat 0 is always available, so
+  a player can never be locked out.
+- Threat is fixed for the whole dynasty. Every enemy squad in every battle (conquest, farm and
+  defense) gets `round_half_up(authored * (100 + 25 * threat) / 100)` for max health and damage.
+  Player troops, gold rewards, costs and round timing are unchanged.
+- Securing dynasty 1 still pays 10. Securing a later dynasty pays `3 * (1 + threat)` (3, 6, 9 …)
+  and raises `best_threat` to at least this Threat.
+
+**New keys.** Top level, after `drill_rank`: `threat` (0..10), `best_threat` (-1..10, -1 = never
+secured) and `legacy_earned` (0..MAX_GOLD, total Legacy ever paid). `version` is `3`. Key order
+matches `KEYS` in `src/campaign_state.gd`; the battle key set is unchanged from v2.
+
+**Cross-field validation (v3).**
+- Dynasty 1 has `threat` 0; `best_threat` is -1 unless dynasty 1 is secured; later dynasties
+  have `best_threat >= 0`.
+- `best_threat <= dynasty - 1` when secured, else `<= dynasty - 2`; a secured dynasty has
+  `best_threat >= threat`; an unsecured one has `threat <= best_threat + 1`.
+- `legacy_earned` is bounded, because Threat history is not stored: the lowest possible value has
+  every later secure at Threat 0 except one at each Threat 1..best. The highest has the j-th
+  later secure at Threat `min(j, best)`. Values outside that range are corrupt.
+- The ledger is exact: `legacy + spent(drill_rank) == legacy_earned`.
+- Stored enemy health is capped by the Threat-scaled max health.
+
+Limitation: inside the allowed range, a hand edit that raises `legacy_earned` and `legacy`
+together by a feasible amount is accepted, because there is no per-dynasty history to check it
+against. v2's exact ledger could reject every such edit.
+
+**v2 migration.** A v2 file is parsed under the exact v2 key set and v2 rules (including the
+exact +10/+3 ledger), then gets `threat` 0, `best_threat` 0 if it has ever been secured (dynasty
+> 1, or dynasty 1 secured), else -1, and `legacy_earned` set to the v2 ledger total. v1 files migrate
+the same way after their v1 migration. Files are not rewritten on load; the next ordinary save
+writes v3. Any version other than 1, 2 or 3 is unsupported.
+
+**v3 acceptance cases** (covered in `tests/run_tests.gd`, tests `test_threat`,
+`test_threat_state` and `test_campaign_scene_dynasty`):
+
+1. Scaling rounds half up at +25% per level, applies to every encounter's enemies only, and
+   survives restart, farming, defense and save/restore.
+2. Payouts are 10 for dynasty 1, then 3/6/… by Threat; a secure raises the best Threat, and
+   dropping back to Threat 0 never lowers it.
+3. Choosing more than one above the best, or a negative Threat, is rejected with no change.
+4. v3 round-trips exactly. Threat above the unlocked level, out-of-range or missing keys, an
+   inconsistent best, earned outside the feasible range, an unbalanced ledger, or enemy health
+   above the scaled max are all corrupt. Version 4 is unsupported.
+5. v2 dynasty-1 running and dynasty-2 secured files migrate (Threat 0, best -1/0, earned 0/13),
+   still reject a tampered v2 ledger, can then found at Threat 1, and the next save writes v3.
+6. The preview defaults to Threat 0, clamps Raise/Lower, shows the payout, ignores input while
+   suspended, and confirming founds the dynasty at the chosen Threat.
