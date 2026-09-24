@@ -33,6 +33,21 @@ const REPEAT_SECURE_LEGACY: int = 3
 const DRILL_COSTS: Array[int] = [10, 20, 40]
 const DRILL_MAX: int = 3
 const THREAT_MAX: int = 10
+# Closed-app reward: capped gold from the best farmable cleared territory, never simulated combat.
+const AWAY_CAP_SECONDS: int = 28800
+const AWAY_MINUTES_PER_VICTORY: int = 2
+
+# Gold for `seconds` of closed-app absence: one victory of the best farmable cleared stage every
+# AWAY_MINUTES_PER_VICTORY minutes, capped at AWAY_CAP_SECONDS. Integer math; negative time pays 0.
+func away_reward(seconds: int) -> int:
+	if seconds <= 0:
+		return 0
+	var territory: int = Data.Encounter.ARCHER_POSITION if archer_cleared else (
+		Data.Encounter.BORDER_SKIRMISH if border_cleared else -1)
+	if territory == -1:
+		return 0
+	@warning_ignore("integer_division")
+	return mini(seconds, AWAY_CAP_SECONDS) * encounter_reward(territory) / (AWAY_MINUTES_PER_VICTORY * 60)
 
 # Legacy paid for securing a later dynasty at the given Threat.
 static func threat_legacy(level: int) -> int:

@@ -562,9 +562,11 @@ func test_native_resume(expected_phase: Campaign.Phase = Campaign.Phase.RUNNING)
 	check(Time.get_ticks_usec() - frozen_start >= 1200000,
 		"native frozen interval covers at least 1.2s of monotonic time")
 	check(true, "native minimized interval freezes same active battle, rounds, accumulated time and gate")
-	var captured := CampaignState.capture(scene.campaign, scene.elapsed_usec)
+	# The save stamp is wall-clock time, not campaign state: compare with the loaded stamp passed through.
+	var on_disk := CampaignSave.new(fixture.path).load_campaign()
+	var captured := CampaignState.capture(scene.campaign, scene.elapsed_usec, on_disk.get("saved_at", -1))
 	check(scene.get_node("%SaveStatus").text == "Saved" and captured.outcome == CampaignState.Outcome.VALID
-		and CampaignSave._state_of(CampaignSave.new(fixture.path).load_campaign()) == captured.state,
+		and on_disk.get("saved_at", 0) > 0 and CampaignSave._state_of(on_disk) == captured.state,
 		"native suspension autosaved the exact frozen campaign to the isolated file")
 	if native_driver:
 		native_driver_request("restore")

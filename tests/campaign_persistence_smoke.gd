@@ -18,8 +18,13 @@ const ABSENCE_MSEC: int = 1200
 
 # Commit seam: every move onto the primary fails, so the failed confirmation leaves the
 # previous primary rotated to .bak and no restored primary (interrupted between rotate and commit).
+# Its clock is pinned so every process stamps and reads the same time: the closed-app reward
+# (covered in run_tests.gd) stays 0, keeping relaunches comparable to the uninterrupted reference.
 class CommitFailingSave extends CampaignSave:
+	const PINNED_NOW: int = 1800000000
 	var fail_commit: bool = false
+	func _now() -> int:
+		return PINNED_NOW
 	func _move(source: String, destination: String) -> Error:
 		if fail_commit and destination == path:
 			return ERR_FILE_CANT_WRITE
@@ -58,6 +63,14 @@ func run() -> void:
 func state_of(scene: Presentation) -> Variant:
 	var captured := CampaignState.capture(scene.campaign, scene.elapsed_usec)
 	return captured.state if captured.outcome == CampaignState.Outcome.VALID else null
+
+# The state as this smoke's store writes it: stamped with the pinned clock.
+func stamped(state: Variant) -> Variant:
+	if typeof(state) != TYPE_DICTIONARY:
+		return state
+	var copy: Dictionary = (state as Dictionary).duplicate(true)
+	copy.saved_at = CommitFailingSave.PINNED_NOW
+	return copy
 
 func press(scene: Presentation, name: String) -> void:
 	scene.get_node("%" + name).pressed.emit()
@@ -267,14 +280,14 @@ func child(phase: String, path: String) -> void:
 		# Hard stop right after the terminal settlement: no close-request save, so only the
 		# settlement's own write can have recorded the reward, clearance and routing.
 		var settled := CampaignSave.new(path).load_campaign()
-		check(CampaignSave._state_of(settled) == final and scene.get_node("%SaveStatus").text == "Saved",
+		check(CampaignSave._state_of(settled) == stamped(final) and scene.get_node("%SaveStatus").text == "Saved",
 			"%s: settlement saved before any close request" % phase)
 		finish(phase)
 		return
 	# Close like the window manager does: best-effort save, then quit.
 	root.propagate_notification(Node.NOTIFICATION_WM_CLOSE_REQUEST)
 	var saved := CampaignSave.new(path).load_campaign()
-	check(CampaignSave._state_of(saved) == final and not saved.get("recovered", false),
+	check(CampaignSave._state_of(saved) == stamped(final) and not saved.get("recovered", false),
 		"%s: close request leaves exact state on disk" % phase)
 	finish(phase)
 

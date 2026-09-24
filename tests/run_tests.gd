@@ -74,6 +74,12 @@ class PreflightFailingCampaignSave extends CampaignSave:
 				return {"outcome": Outcome.IO_FAILURE}
 		return super._read(source)
 
+# Wall-clock seam only: storage, validation and the scene are real; `now` is the Unix second.
+class ClockCampaignSave extends FailingCampaignSave:
+	var now: int = 0
+	func _now() -> int:
+		return now
+
 var checks: int = 0
 var failures: int = 0
 # When set, state round trips go through real files in an isolated fixture directory.
@@ -198,6 +204,9 @@ func run() -> void:
 	test_campaign_save_isolation()
 	test_campaign_scene_saves()
 	test_campaign_scene_interruptions()
+	test_away_reward_rule()
+	test_away_reward_format()
+	test_away_reward_scene()
 	check(player_campaign_snapshot() == player_campaign_files,
 		"Campaign save isolation: player campaign save files unchanged by the whole run")
 	if "--force-failure" in OS.get_cmdline_user_args():
@@ -209,14 +218,26 @@ func state_json(state: Dictionary) -> Variant:
 	if state_store != null:
 		# Disk mode: save through the store, then return the parsed bytes actually on disk.
 		var source := CampaignState.restore(state)
+		var before := int(Time.get_unix_time_from_system())
 		var saved: bool = source.outcome == CampaignState.Outcome.VALID \
 			and state_store.save_campaign(source.campaign, source.round_progress_usec) == OK
+		var after := int(Time.get_unix_time_from_system())
 		var loaded := CampaignSave.new(state_store.path).load_campaign()
-		check(saved and loaded.outcome == CampaignSave.Outcome.LOADED and CampaignSave._state_of(loaded) == state,
+		check(saved and loaded.outcome == CampaignSave.Outcome.LOADED and loaded.saved_at >= before and loaded.saved_at <= after
+			and unstamped(CampaignSave._state_of(loaded)) == unstamped(state),
 			"Campaign save: state saved and reloaded exactly from disk")
 		return JSON.parse_string(FileAccess.get_file_as_string(state_store.path))
 	# In-memory JSON round trip only: integers come back as floats, nothing touches disk.
 	return JSON.parse_string(JSON.stringify(state))
+
+# The save stamp is wall-clock time, not campaign state: exact-state comparisons zero it on
+# both sides; the stamp itself is checked separately against an injected or bracketing clock.
+func unstamped(state: Variant) -> Variant:
+	if typeof(state) != TYPE_DICTIONARY or not (state as Dictionary).has("saved_at"):
+		return state
+	var copy: Dictionary = (state as Dictionary).duplicate(true)
+	copy.saved_at = 0
+	return copy
 
 func state_scene(campaign: Campaign, elapsed: int = 0) -> CampaignPresentation:
 	var scene := campaign_scene_new()
@@ -550,8 +571,8 @@ func test_campaign_state_rejection() -> void:
 	state_rejects(base, "battle not object", CORRUPT, func(s: Dictionary) -> void: s.battle = [])
 	state_rejects(base, "wrong format", CORRUPT, func(s: Dictionary) -> void: s.format = "idle-clicker-progress")
 	state_rejects(base, "missing format", CORRUPT, func(s: Dictionary) -> void: s.erase("format"))
-	state_rejects(base, "future version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 4)
-	state_rejects(base, "future version float", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 4.0)
+	state_rejects(base, "future version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 5)
+	state_rejects(base, "future version float", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 5.0)
 	state_rejects(base, "version zero", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 0)
 	state_rejects(base, "negative version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = -1)
 	state_rejects(base, "huge version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 1e20)
@@ -687,16 +708,23 @@ func test_campaign_state_rejection() -> void:
 		"Campaign state: capture refuses an unpaid Drill rank unchanged")
 	check(player_campaign_snapshot() == player_campaign_files, "Campaign state: player campaign save files unchanged")
 
-# Build a contract-v2 state from a v3 capture (drop the Threat keys) as older builds wrote it.
-func state_as_v2(state: Dictionary) -> Dictionary:
+# Build a contract-v3 state from a v4 capture (drop the save stamp) as older builds wrote it.
+func state_as_v3(state: Dictionary) -> Dictionary:
 	var old: Dictionary = state.duplicate(true)
+	old.version = 3
+	old.erase("saved_at")
+	return old
+
+# Build a contract-v2 state from a v4 capture (drop the stamp and Threat keys) as older builds wrote it.
+func state_as_v2(state: Dictionary) -> Dictionary:
+	var old: Dictionary = state_as_v3(state)
 	old.version = 2
 	old.erase("threat")
 	old.erase("best_threat")
 	old.erase("legacy_earned")
 	return old
 
-# Build a contract-v1 state from a v3 capture (drop the Threat and Legacy keys) as older builds wrote it.
+# Build a contract-v1 state from a v4 capture (drop the Threat and Legacy keys) as older builds wrote it.
 func state_as_v1(state: Dictionary) -> Dictionary:
 	var old: Dictionary = state_as_v2(state)
 	old.version = 1
@@ -748,7 +776,7 @@ func test_campaign_state_migration() -> void:
 	state_rejects(v1, "v1 with v2 Legacy key", CORRUPT, func(s: Dictionary) -> void: s["legacy"] = 3)
 	state_rejects(v1, "v1 with v2 snapshot rank", CORRUPT, func(s: Dictionary) -> void: s.battle["snapshot_drill_rank"] = 1)
 	state_rejects(v1, "v2 without Legacy keys", CORRUPT, func(s: Dictionary) -> void: s.version = 2)
-	# On disk: a v1 file loads through the real store, and the next ordinary save writes v3.
+	# On disk: a v1 file loads through the real store, and the next ordinary save writes v4.
 	var fixture := ProgressFixture.new("campaign.json")
 	check(fixture.owned, "Campaign migration: isolated directory owned")
 	if not fixture.owned:
@@ -761,9 +789,9 @@ func test_campaign_state_migration() -> void:
 		and FileAccess.get_file_as_string(fixture.path) == JSON.stringify(v1),
 		"Campaign migration: v1 file loads through the store without being rewritten")
 	check(store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK
-		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 3
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 4
 		and CampaignSave.new(fixture.path).load_campaign().campaign.legacy == 3,
-		"Campaign migration: next save writes v3 that reloads exactly")
+		"Campaign migration: next save writes v4 that reloads exactly")
 	check(fixture.cleanup() == OK, "Campaign migration: directory cleaned")
 
 func campaign_running(rounds: int = 2, gold: int = 7) -> Campaign:
@@ -775,7 +803,7 @@ func campaign_running(rounds: int = 2, gold: int = 7) -> Campaign:
 	return campaign
 
 func campaign_state_of(path: String) -> Variant:
-	return CampaignSave._state_of(CampaignSave.new(path).load_campaign())
+	return unstamped(CampaignSave._state_of(CampaignSave.new(path).load_campaign()))
 
 func test_campaign_save_round_trips() -> void:
 	var fixture := ProgressFixture.new("campaign.json")
@@ -821,7 +849,7 @@ func test_campaign_save_format() -> void:
 		return
 	var base: Dictionary = CampaignState.capture(campaign_running(), 250000).state
 	var valid: String = JSON.stringify(base)
-	check(valid.contains('"gold":7') and valid.ends_with('"version":3}'), "Campaign save format: canonical integer text")
+	check(valid.contains('"gold":7') and valid.ends_with('"version":4}'), "Campaign save format: canonical integer text")
 	var backup: String = JSON.stringify(CampaignState.capture(campaign_running(1), 0).state)
 	check(fixture.put(backup, ".bak") == OK, "Campaign save format: valid backup beside every primary")
 	var mutated := func(mutate: Callable) -> String:
@@ -844,7 +872,7 @@ func test_campaign_save_format() -> void:
 		mutated.call(func(s: Dictionary) -> void: s.battle.player_health[0] = 121),
 		mutated.call(func(s: Dictionary) -> void: s.settled = true)]
 	check(corrupt[7].length() == 4097, "Campaign save format: oversize fixture is 4097 bytes")
-	var unsupported: Array[String] = [mutated.call(func(s: Dictionary) -> void: s.version = 4),
+	var unsupported: Array[String] = [mutated.call(func(s: Dictionary) -> void: s.version = 5),
 		'{"format":"idle-clicker-campaign","version":99,"gold":"future payload"}']
 	var replacement := campaign_running(3)
 	for expected in [CampaignSave.Outcome.CORRUPT, CampaignSave.Outcome.UNSUPPORTED]:
@@ -901,7 +929,7 @@ func test_campaign_save_failures() -> void:
 		"Campaign save failures: failed commit and restore retain last-good backup")
 	var recovered := CampaignSave.new(path).load_campaign()
 	check(recovered.outcome == CampaignSave.Outcome.LOADED and recovered.get("recovered", false)
-		and CampaignSave._state_of(recovered) == good_state, "Campaign save failures: missing primary recovered from validated backup")
+		and unstamped(CampaignSave._state_of(recovered)) == good_state, "Campaign save failures: missing primary recovered from validated backup")
 	store.fail_move_to = ""
 	check(store.save_campaign(next, 500000) == OK and campaign_state_of(path) == next_state
 		and FileAccess.get_file_as_bytes(path + ".bak") == before, "Campaign save failures: retry saves full state, backup retained")
@@ -956,7 +984,7 @@ func test_campaign_save_failures() -> void:
 	founder.fail_move_to = dynasty.path
 	check(secured.dynasty == 2 and founder.save_campaign(secured, 0) != OK, "Campaign save dynasty: confirmation save failed")
 	var relaunch := CampaignSave.new(dynasty.path).load_campaign()
-	check(relaunch.outcome == CampaignSave.Outcome.LOADED and CampaignSave._state_of(relaunch) == secured_state
+	check(relaunch.outcome == CampaignSave.Outcome.LOADED and unstamped(CampaignSave._state_of(relaunch)) == secured_state
 		and relaunch.campaign.dynasty == 1 and relaunch.campaign.can_found_dynasty() and relaunch.campaign.drill_rank == 1,
 		"Campaign save dynasty: unacknowledged confirm reloads pre-confirm security")
 	var successor: Campaign = relaunch.campaign
@@ -982,7 +1010,7 @@ func test_campaign_save_failures() -> void:
 	check(CampaignSave.new(dynasty.path).save_campaign(paused, 750000) == OK, "Campaign save absence: battle saved")
 	OS.delay_msec(1200)
 	var resumed := CampaignSave.new(dynasty.path).load_campaign()
-	check(CampaignSave._state_of(resumed) == paused_state and resumed.campaign.battle.rounds == 2
+	check(unstamped(CampaignSave._state_of(resumed)) == paused_state and resumed.campaign.battle.rounds == 2
 		and resumed.round_progress_usec == 750000, "Campaign save absence: elapsed time adds no rounds, damage or progress")
 	check(dynasty.cleanup() == OK, "Campaign save dynasty: directory cleaned")
 
@@ -1096,7 +1124,7 @@ func test_campaign_scene_saves() -> void:
 	recovered.free()
 	# Unusable primaries: fresh session, saving disabled, file preserved.
 	var unsupported_state: Dictionary = (expected as Dictionary).duplicate(true)
-	unsupported_state.version = 4
+	unsupported_state.version = 5
 	var backup_bytes := FileAccess.get_file_as_bytes(path + ".bak")
 	for case in [["{", "damaged"], [JSON.stringify(unsupported_state), "from an unsupported version"], ["", "unreadable"]]:
 		if case[1] == "unreadable":
@@ -1256,6 +1284,197 @@ func campaign_interruption(action: String, boundary: String) -> void:
 	check(scene_state(final) == applied, title + "final relaunch matches the single applied transition")
 	final.free()
 	check(fixture.cleanup() == OK, title + "directory cleaned")
+
+func away_campaign(border: bool, archer: bool) -> Campaign:
+	var campaign := Campaign.new()
+	campaign.border_cleared = border # Pure rule fixture: only the clearance flags matter.
+	campaign.archer_cleared = archer
+	return campaign
+
+func test_away_reward_rule() -> void:
+	check(away_campaign(false, false).away_reward(3600) == 0, "Away reward: nothing cleared pays 0")
+	check(away_campaign(true, false).away_reward(60) == 5, "Away reward: Border only, 60 s pays 5")
+	check(away_campaign(true, true).away_reward(60) == 15, "Away reward: Archer, 60 s pays 15")
+	check(away_campaign(true, true).away_reward(3) == 0 and away_campaign(true, true).away_reward(4) == 1,
+		"Away reward: whole-gold floor (3 s pays 0, 4 s pays 1)")
+	check(away_campaign(true, true).away_reward(Campaign.AWAY_CAP_SECONDS) == 7200
+		and away_campaign(true, true).away_reward(30 * 3600) == 7200, "Away reward: 8 h and 30 h both cap at 7200")
+	check(away_campaign(true, false).away_reward(30 * 3600) == 2400, "Away reward: Border cap is 2400")
+	check(away_campaign(true, true).away_reward(-60) == 0 and away_campaign(true, true).away_reward(0) == 0,
+		"Away reward: negative or zero time pays 0")
+
+func test_away_reward_format() -> void:
+	var CORRUPT := CampaignState.Outcome.CORRUPT
+	var stamped: Dictionary = CampaignState.capture(campaign_running(), 250000, 1700000000).state
+	var restored := CampaignState.restore(state_json(stamped))
+	check(stamped.version == 4 and restored.outcome == CampaignState.Outcome.VALID and restored.saved_at == 1700000000
+		and CampaignState.capture(restored.campaign, restored.round_progress_usec, restored.saved_at).state == stamped,
+		"Away save: v4 round trip keeps saved_at exactly")
+	state_rejects(stamped, "missing saved_at", CORRUPT, func(s: Dictionary) -> void: s.erase("saved_at"))
+	state_rejects(stamped, "negative saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = -1)
+	state_rejects(stamped, "fractional saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = 1.5)
+	state_rejects(stamped, "string saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = "1700000000")
+	state_rejects(stamped, "huge saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = ProgressSave.MAX_GOLD + 1)
+	state_rejects(stamped, "v3 carrying saved_at", CORRUPT, func(s: Dictionary) -> void: s.version = 3)
+	state_rejects(stamped, "version 5", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 5)
+	# v1-v3 files migrate with an unknown (0) stamp, so they never pay an away reward.
+	var secured: Dictionary = state_json(CampaignState.capture(state_secured(), 0, 1700000000).state)
+	for old: Dictionary in [state_as_v3(secured), state_as_v2(secured), state_as_v1(secured)]:
+		var migrated := CampaignState.restore(old)
+		check(not old.has("saved_at") and migrated.outcome == CampaignState.Outcome.VALID and migrated.saved_at == 0,
+			"Away save: v%d migrates with saved_at 0" % old.version)
+	# On disk: a v3 file loads with stamp 0; the next save writes v4 with the store's clock.
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Away save: isolated directory owned")
+	if not fixture.owned:
+		return
+	var v3_text := JSON.stringify(state_as_v3(secured))
+	var store := ClockCampaignSave.new(fixture.path)
+	store.now = 1700000500
+	check(fixture.put(v3_text) == OK and store.load_campaign().get("saved_at", -1) == 0
+		and FileAccess.get_file_as_string(fixture.path) == v3_text, "Away save: v3 file loads with saved_at 0, not rewritten")
+	var loaded := store.load_campaign()
+	var written: Variant = null
+	if loaded.outcome == CampaignSave.Outcome.LOADED and store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK:
+		written = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
+	var reloaded := CampaignSave.new(fixture.path).load_campaign()
+	check(written != null and written.version == 4 and written.saved_at == 1700000500
+		and reloaded.outcome == CampaignSave.Outcome.LOADED and reloaded.saved_at == 1700000500,
+		"Away save: store with injected clock stamps and reloads saved_at exactly")
+	check(fixture.cleanup() == OK, "Away save: directory cleaned")
+
+# Archer and Border cleared by real battles, then one round into the Stronghold.
+func away_archer_campaign() -> Campaign:
+	var campaign := Campaign.new()
+	campaign.gold = 240 # Isolated funds; every owned level uses production purchases.
+	for role in range(3):
+		campaign.purchase(role)
+		campaign.purchase(role)
+	campaign.restart_battle()
+	campaign_finish(campaign)
+	campaign_finish(campaign)
+	campaign.battle.step_round()
+	return campaign
+
+func test_away_reward_scene() -> void:
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Away scene: isolated directory owned")
+	if not fixture.owned:
+		return
+	var path: String = fixture.path
+	var T: int = 1700003600
+	var source := away_archer_campaign()
+	var writer := ClockCampaignSave.new(path)
+	writer.now = T - 3600
+	check(source.archer_cleared and source.battle.result == Combat.Result.ONGOING
+		and writer.save_campaign(source, 400000) == OK, "Away scene: Archer-cleared campaign saved an hour before launch")
+	var before: Array = campaign_snapshot(source, false)
+	var fixture_bytes := FileAccess.get_file_as_bytes(path)
+	# Failing save: the grant is reverted and the file is untouched, so nothing can pay twice.
+	var failing := ClockCampaignSave.new(path)
+	failing.now = T
+	failing.fail_write = true
+	var refused := campaign_scene_new(CampaignPresentation, failing)
+	check(refused.campaign.gold == source.gold and campaign_snapshot(refused.campaign, false) == before
+		and refused.elapsed_usec == 400000
+		and refused.get_node("%LastResult").text == "Away reward waits for a successful save"
+		and FileAccess.get_file_as_bytes(path) == fixture_bytes,
+		"Away scene: failed save reverts the grant and leaves the file byte-identical")
+	refused.free()
+	# Successful grant: +900 gold (3600 s at 30 gold per 120 s), battle untouched, file re-stamped.
+	var clock := ClockCampaignSave.new(path)
+	clock.now = T
+	var scene := campaign_scene_new(CampaignPresentation, clock)
+	var on_disk := CampaignSave.new(path).load_campaign()
+	var granted: Array = campaign_snapshot(scene.campaign, false)
+	granted[0] -= 900 # Gold is the only field the reward may change.
+	check(scene.campaign.gold == source.gold + 900 and granted == before
+		and scene.elapsed_usec == 400000 and scene.skip_resume_frame
+		and scene.get_node("%LastResult").text == "Away 1h 0m · +900 gold from secured territory (cap 8h)"
+		and scene.get_node("%SaveStatus").text == "Saved",
+		"Away scene: an hour away grants 900 gold with the welcome-back line, combat untouched")
+	check(on_disk.outcome == CampaignSave.Outcome.LOADED and on_disk.saved_at == T
+		and on_disk.campaign.gold == source.gold + 900 and on_disk.round_progress_usec == 400000,
+		"Away scene: granted gold committed with the new stamp")
+	scene.advance_usec(9000000)
+	check(scene.campaign.battle.rounds == 1, "Away scene: first frame after load still adds no rounds")
+	scene.free()
+	# Relaunch at the same time: no double grant.
+	var again := campaign_scene_new(CampaignPresentation, clock)
+	check(again.campaign.gold == source.gold + 900 and again.get_node("%LastResult").text == "Resumed saved campaign",
+		"Away scene: relaunch at the same time grants nothing more")
+	again.free()
+	# Clock moved backwards: nothing granted.
+	clock.now = T - 7200
+	var backwards := campaign_scene_new(CampaignPresentation, clock)
+	check(backwards.campaign.gold == source.gold + 900 and backwards.get_node("%LastResult").text == "Resumed saved campaign",
+		"Away scene: clock moved backwards grants nothing")
+	backwards.free()
+	# Transient failure, then retry: the pending reward rides the next ordinary save with the new stamp.
+	var stamped_text := fixture_bytes.get_string_from_utf8()
+	var retry := ClockCampaignSave.new(path)
+	retry.now = T
+	retry.fail_write = true
+	check(fixture.put(stamped_text) == OK, "Away scene: hour-old save restored for retry")
+	var pending := campaign_scene_new(CampaignPresentation, retry)
+	check(pending.campaign.gold == source.gold and pending.pending_away_reward == 900 and pending.saving_enabled
+		and pending.get_node("%LastResult").text == "Away reward waits for a successful save"
+		and FileAccess.get_file_as_bytes(path) == fixture_bytes,
+		"Away scene: first failed write keeps the reward pending, gold and file unchanged")
+	check(not pending._save_campaign() and pending.campaign.gold == source.gold and pending.pending_away_reward == 900
+		and FileAccess.get_file_as_bytes(path) == fixture_bytes,
+		"Away scene: a further failed save neither writes nor pays the pending reward")
+	retry.fail_write = false
+	var retried: bool = pending._save_campaign()
+	var retried_disk := CampaignSave.new(path).load_campaign()
+	check(retried and pending.campaign.gold == source.gold + 900 and pending.pending_away_reward == 0
+		and pending.get_node("%LastResult").text == "Away 1h 0m · +900 gold from secured territory (cap 8h)"
+		and retried_disk.outcome == CampaignSave.Outcome.LOADED and retried_disk.saved_at == T
+		and retried_disk.campaign.gold == source.gold + 900 and retried_disk.round_progress_usec == 400000,
+		"Away scene: next successful save commits +900 gold with the new stamp")
+	check(pending._save_campaign() and pending.campaign.gold == source.gold + 900
+		and CampaignSave.new(path).load_campaign().campaign.gold == source.gold + 900,
+		"Away scene: later saves do not add the reward again")
+	pending.free()
+	var after_retry := campaign_scene_new(CampaignPresentation, retry)
+	check(after_retry.campaign.gold == source.gold + 900 and after_retry.pending_away_reward == 0
+		and after_retry.get_node("%LastResult").text == "Resumed saved campaign",
+		"Away scene: relaunch after the retried grant pays nothing more")
+	after_retry.free()
+	# Saving disabled after a failed grant: the pending reward is dropped, never written.
+	var doomed := ClockCampaignSave.new(path)
+	doomed.now = T
+	doomed.fail_write = true
+	check(fixture.put(stamped_text) == OK, "Away scene: hour-old save restored for disabled case")
+	var dropped := campaign_scene_new(CampaignPresentation, doomed)
+	check(dropped.pending_away_reward == 900, "Away scene: disabled case starts with the reward pending")
+	doomed.fail_write = false
+	check(fixture.put("{") == OK, "Away scene: campaign file damaged mid-session")
+	check(not dropped._save_campaign() and not dropped.saving_enabled and dropped.pending_away_reward == 0
+		and dropped.campaign.gold == source.gold
+		and dropped.get_node("%LastResult").text == "Away reward cannot be kept this session"
+		and FileAccess.get_file_as_string(path) == "{",
+		"Away scene: saving disabled drops the pending reward and says it cannot be kept")
+	dropped.free()
+	# Backup-only launch: the grant's save must not hide that the backup was restored.
+	check(fixture.put(stamped_text) == OK, "Away scene: hour-old save restored for backup case")
+	if FileAccess.file_exists(path + ".bak"):
+		DirAccess.remove_absolute(path + ".bak")
+	check(DirAccess.rename_absolute(path, path + ".bak") == OK and not FileAccess.file_exists(path),
+		"Away scene: only the hour-old backup exists")
+	var backup_clock := ClockCampaignSave.new(path)
+	backup_clock.now = T
+	var from_backup := campaign_scene_new(CampaignPresentation, backup_clock)
+	var backup_disk := CampaignSave.new(path).load_campaign()
+	check(from_backup.campaign.gold == source.gold + 900 and from_backup.pending_away_reward == 0
+		and from_backup.get_node("%LastResult").text == "Away 1h 0m · +900 gold from secured territory (cap 8h)"
+		and from_backup.get_node("%SaveStatus").text == "Restored from backup · Saved",
+		"Away scene: backup restore stays visible after the grant's save")
+	check(backup_disk.outcome == CampaignSave.Outcome.LOADED and not backup_disk.get("recovered", false)
+		and backup_disk.saved_at == T and backup_disk.campaign.gold == source.gold + 900,
+		"Away scene: backup grant writes a new primary with the new stamp")
+	from_backup.free()
+	check(fixture.cleanup() == OK, "Away scene: directory cleaned")
 
 func campaign_scene_new(script: GDScript = CampaignPresentation, store: CampaignSave = null) -> CampaignPresentation:
 	var scene: CampaignPresentation = CampaignScene.instantiate()
@@ -2495,18 +2714,18 @@ func test_threat() -> void:
 
 func test_threat_state() -> void:
 	var CORRUPT := CampaignState.Outcome.CORRUPT
-	# v3 round trip: Threat, best and earned are persisted and battles restore scaled.
+	# v4 round trip: Threat, best and earned are persisted and battles restore scaled.
 	var campaign := state_secured()
 	campaign.train_drill()
 	campaign.found_dynasty(1)
 	campaign.battle.step_round()
 	var state: Dictionary = state_json(CampaignState.capture(campaign, 0).state)
 	var restored := CampaignState.restore(state)
-	check(restored.outcome == CampaignState.Outcome.VALID and state.version == 3 and state.threat == 1
+	check(restored.outcome == CampaignState.Outcome.VALID and state.version == 4 and state.threat == 1
 		and state.best_threat == 0 and state.legacy_earned == 10
 		and restored.campaign.threat == 1 and restored.campaign.best_threat == 0 and restored.campaign.legacy_earned == 10
 		and campaign_snapshot(restored.campaign, false) == campaign_snapshot(campaign, false),
-		"Threat save: v3 round trip keeps Threat, best, earned and the scaled battle exactly")
+		"Threat save: v4 round trip keeps Threat, best, earned and the scaled battle exactly")
 	state_rejects(state, "Threat above unlocked", CORRUPT, func(s: Dictionary) -> void: s.threat = 2)
 	state_rejects(state, "negative Threat", CORRUPT, func(s: Dictionary) -> void: s.threat = -1)
 	state_rejects(state, "Threat over max", CORRUPT, func(s: Dictionary) -> void: s.threat = Campaign.THREAT_MAX + 1)
@@ -2537,7 +2756,7 @@ func test_threat_state() -> void:
 	state = state_json(CampaignState.capture(campaign, 0).state)
 	check(CampaignState.validate(state).outcome == CampaignState.Outcome.VALID and state.legacy_earned == 19
 		and state.best_threat == 1 and state.dynasty == 3,
-		"Threat save: mixed-Threat history saves as a valid v3 ledger")
+		"Threat save: mixed-Threat history saves as a valid v4 ledger")
 	# Earned is a range check: with best Threat 1 over two later secures it lies in 19..22 (10 + 6 + 6).
 	var richest: Dictionary = state.duplicate(true)
 	richest.legacy_earned = 22
@@ -2574,7 +2793,7 @@ func test_threat_state() -> void:
 	state_rejects(v2_secured, "v2 dynasty without its Legacy", CORRUPT, func(s: Dictionary) -> void: s.dynasty = 3)
 	check(migrated.campaign.found_dynasty(1) != null and migrated.campaign.battle.enemies[0].max_health == 90,
 		"Threat migration: migrated v2 dynasty can found at Threat 1")
-	# On disk: a v2 file loads unchanged; the next save writes v3 that reloads exactly.
+	# On disk: a v2 file loads unchanged; the next save writes v4 that reloads exactly.
 	var fixture := ProgressFixture.new("campaign.json")
 	check(fixture.owned, "Threat migration: isolated directory owned")
 	if not fixture.owned:
@@ -2587,9 +2806,9 @@ func test_threat_state() -> void:
 		and FileAccess.get_file_as_string(fixture.path) == JSON.stringify(v2_secured),
 		"Threat migration: v2 file loads through the store without being rewritten")
 	check(store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK
-		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 3
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 4
 		and CampaignSave.new(fixture.path).load_campaign().campaign.legacy_earned == 13,
-		"Threat migration: next save writes v3 that reloads exactly")
+		"Threat migration: next save writes v4 that reloads exactly")
 	check(fixture.cleanup() == OK, "Threat migration: directory cleaned")
 
 func campaign_finish(campaign: Campaign) -> Combat:

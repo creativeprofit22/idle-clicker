@@ -26,6 +26,12 @@ var skip_resume_frame: bool = false
 var dynasty_preview_open: bool = false
 # Threat chosen in the open preview; resets to the safe 0 each time the preview opens.
 var preview_threat: int = 0
+# Away reward not yet committed; added only inside a save so gold and stamp land together.
+var pending_away_reward: int = 0
+var pending_away_seconds: int = 0
+const AWAY_WAIT_TEXT: String = "Away reward waits for a successful save"
+const RESUMED_TEXT: String = "Resumed saved campaign"
+const RESTORED_TEXT: String = "Restored from backup"
 
 @onready var upgrades: Array[Button] = [%ShieldUpgrade, %FootUpgrade, %HorseUpgrade]
 
@@ -64,10 +70,11 @@ func _load_campaign() -> void:
 			elapsed_usec = loaded.round_progress_usec
 			# No absence progress: the first frame after load is excluded from timing.
 			skip_resume_frame = true
-			%LastResult.text = "Resumed saved campaign"
+			%LastResult.text = RESUMED_TEXT
 			set_process(campaign.phase in [Campaign.Phase.RUNNING, Campaign.Phase.DEFENDING])
 			saving_enabled = true
-			%SaveStatus.text = "Restored from backup" if loaded.get("recovered", false) else "Autosave on"
+			%SaveStatus.text = RESTORED_TEXT if loaded.get("recovered", false) else "Autosave on"
+			_grant_away_reward(loaded.saved_at)
 		CampaignSave.Outcome.MISSING:
 			campaign.restart_battle()
 			saving_enabled = true
@@ -85,16 +92,63 @@ func _show_preservation_status() -> void:
 		CampaignSave.Outcome.UNSUPPORTED:
 			reason = "from an unsupported version"
 	%SaveStatus.text = "Saving disabled: campaign save %s, preserved. This session will not be kept." % reason
+	if pending_away_reward > 0:
+		# No save can commit this session, so the reward can never be kept.
+		pending_away_reward = 0
+		pending_away_seconds = 0
+		%LastResult.text = "Away reward cannot be kept this session"
+
+# Closed-app reward, across launches only: gold from secured territory, no simulated combat.
+# The grant is kept only once a save commits it with a new stamp, so it can never pay twice.
+# If that save fails but saving stays enabled, the next committed save carries it.
+func _grant_away_reward(saved_at: int) -> void:
+	var away: int = campaign_save._now() - saved_at if saved_at > 0 else 0
+	var reward: int = campaign.away_reward(away)
+	if reward <= 0:
+		return
+	pending_away_reward = reward
+	pending_away_seconds = away
+	# Contract: a backup restore must stay visible even when the grant's save commits.
+	var restored: bool = %SaveStatus.text == RESTORED_TEXT
+	if _save_campaign() and restored:
+		%SaveStatus.text = RESTORED_TEXT + " · Saved"
+	if pending_away_reward > 0:
+		%LastResult.text = AWAY_WAIT_TEXT
+
+static func _away_text(seconds: int) -> String:
+	@warning_ignore("integer_division")
+	var minutes: int = seconds / 60
+	if minutes < 60:
+		return "%dm" % minutes
+	@warning_ignore("integer_division")
+	return "%dh %dm" % [minutes / 60, minutes % 60]
 
 # Contract D6/D7: the in-memory transition is already applied; "Saved" only after commit.
-func _save_campaign() -> void:
+# Returns true only when the snapshot committed.
+func _save_campaign() -> bool:
 	if not saving_enabled:
-		return
+		return false
+	# A pending away reward rides in this snapshot so it commits atomically with the new stamp.
+	var pending: int = pending_away_reward
+	campaign.gold += pending
 	var error := campaign_save.save_campaign(campaign, elapsed_usec)
 	if campaign_save.get_preservation_outcome() not in [CampaignSave.Outcome.MISSING, CampaignSave.Outcome.LOADED]:
+		campaign.gold -= pending
 		_show_preservation_status()
-		return
+		return false
+	if error != OK:
+		campaign.gold -= pending
+	elif pending > 0:
+		pending_away_reward = 0
+		@warning_ignore("integer_division")
+		var line: String = "Away %s · +%d gold from secured territory (cap %dh)" % [
+			_away_text(pending_away_seconds), pending, Campaign.AWAY_CAP_SECONDS / 3600]
+		pending_away_seconds = 0
+		# Keep any battle result shown since launch; replace only the launch/waiting lines.
+		var last: Label = %LastResult
+		last.text = line if last.text in [AWAY_WAIT_TEXT, RESUMED_TEXT] else last.text + " · " + line
 	%SaveStatus.text = "Saved" if error == OK else "Progress not saved — will retry"
+	return error == OK
 
 func _process(_delta: float) -> void:
 	advance_foreground(Time.get_ticks_usec())

@@ -1,6 +1,6 @@
 extends RefCounted
 
-# In-memory campaign state capture, validation and restoration (contract v3; v1 and v2 migrate on load). No I/O.
+# In-memory campaign state capture, validation and restoration (contract v4; v1-v3 migrate on load). No I/O.
 const Campaign = preload("res://src/campaign.gd")
 const Combat = preload("res://src/combat.gd")
 const Data = preload("res://src/encounter_data.gd")
@@ -8,7 +8,7 @@ const ProgressSave = preload("res://src/progress_save.gd")
 
 enum Outcome { VALID, CORRUPT, UNSUPPORTED, UNSAVABLE }
 const FORMAT: String = "idle-clicker-campaign"
-const VERSION: int = 3
+const VERSION: int = 4
 const ROUND_USEC: int = roundi(Data.ROUND_SECONDS * 1000000)
 const KEYS_V1: Array[String] = ["format", "version", "gold", "levels", "gate_level", "dynasty",
 	"cleared", "phase", "mode", "farm_encounter", "pending_navigation", "pending_farm",
@@ -18,10 +18,15 @@ const BATTLE_KEYS_V1: Array[String] = ["snapshot_levels", "player_health", "enem
 const KEYS_V2: Array[String] = ["format", "version", "gold", "levels", "gate_level", "dynasty",
 	"legacy", "drill_rank", "cleared", "phase", "mode", "farm_encounter", "pending_navigation",
 	"pending_farm", "current_encounter", "settled", "round_progress_usec", "battle"]
-const KEYS: Array[String] = ["format", "version", "gold", "levels", "gate_level", "dynasty",
+const KEYS_V3: Array[String] = ["format", "version", "gold", "levels", "gate_level", "dynasty",
 	"legacy", "drill_rank", "threat", "best_threat", "legacy_earned", "cleared", "phase", "mode",
 	"farm_encounter", "pending_navigation", "pending_farm", "current_encounter", "settled",
 	"round_progress_usec", "battle"]
+# v4 adds the whole-second Unix save time used only for the closed-app reward (0 = unknown).
+const KEYS: Array[String] = ["format", "version", "gold", "levels", "gate_level", "dynasty",
+	"legacy", "drill_rank", "threat", "best_threat", "legacy_earned", "cleared", "phase", "mode",
+	"farm_encounter", "pending_navigation", "pending_farm", "current_encounter", "settled",
+	"round_progress_usec", "saved_at", "battle"]
 const BATTLE_KEYS: Array[String] = ["snapshot_levels", "snapshot_drill_rank", "player_health",
 	"enemy_health", "snapshot_gate_level", "gate_health", "rounds", "result", "defeat_reason"]
 const ENCOUNTERS: Array[int] = [Data.Encounter.BORDER_SKIRMISH, Data.Encounter.ARCHER_POSITION,
@@ -83,7 +88,7 @@ static func _fingerprint(campaign: Campaign) -> Array:
 		combat.gate_health, combat.rounds, combat.result, combat.defeat_reason,
 		combat.commander_queued, combat.commander_damage]
 
-static func capture(campaign: Campaign, round_progress_usec: int) -> Dictionary:
+static func capture(campaign: Campaign, round_progress_usec: int, saved_at: int = 0) -> Dictionary:
 	if campaign == null or campaign.battle == null or campaign.battle.commander_queued:
 		return {"outcome": Outcome.UNSAVABLE}
 	var combat: Combat = campaign.battle
@@ -134,6 +139,7 @@ static func capture(campaign: Campaign, round_progress_usec: int) -> Dictionary:
 		"current_encounter": campaign.current_encounter,
 		"settled": campaign._settled,
 		"round_progress_usec": round_progress_usec,
+		"saved_at": saved_at,
 		"battle": {
 			"snapshot_levels": snapshot_levels,
 			"snapshot_drill_rank": campaign._battle_drill_rank,
@@ -193,13 +199,21 @@ static func _parse(state: Variant) -> Dictionary:
 	# D10: any finite whole-number version is a version; only its value decides support.
 	if not data.has("version") or not _whole_number(data.version):
 		return corrupt
-	# v1/v2 files are parsed under their own exact key sets and migrated in memory (no separate write).
+	# v1-v3 files are parsed under their own exact key sets and migrated in memory (no separate write).
 	var v1: bool = data.version == 1
 	var v2: bool = data.version == 2
-	if not v1 and not v2 and data.version != VERSION:
+	var v3: bool = data.version == 3
+	if not v1 and not v2 and not v3 and data.version != VERSION:
 		return {"outcome": Outcome.UNSUPPORTED}
-	if not _keys_exact(data, KEYS_V1 if v1 else (KEYS_V2 if v2 else KEYS)) or typeof(data.battle) != TYPE_DICTIONARY:
+	var keys: Array[String] = KEYS_V1 if v1 else (KEYS_V2 if v2 else (KEYS_V3 if v3 else KEYS))
+	if not _keys_exact(data, keys) or typeof(data.battle) != TYPE_DICTIONARY:
 		return corrupt
+	# Older files carry no save time: 0 means unknown, so they grant no closed-app reward.
+	var saved_at: int = 0
+	if data.has("saved_at"):
+		if not ProgressSave._integer(data.saved_at, 0, ProgressSave.MAX_GOLD):
+			return corrupt
+		saved_at = int(data.saved_at)
 	var battle: Dictionary = data.battle
 	if not _keys_exact(battle, BATTLE_KEYS_V1 if v1 else BATTLE_KEYS):
 		return corrupt
@@ -395,7 +409,7 @@ static func _parse(state: Variant) -> Dictionary:
 		"threat": threat, "best": best, "earned": earned,
 		"cleared": cleared, "phase": phase, "mode": mode, "farm": farm,
 		"navigation": navigation, "pending_farm": pending_farm, "encounter": encounter,
-		"settled": settled, "progress": progress, "snapshot_levels": snapshot_levels,
+		"settled": settled, "progress": progress, "saved_at": saved_at, "snapshot_levels": snapshot_levels,
 		"player_health": player_health, "enemy_health": enemy_health,
 		"snapshot_gate": snapshot_gate, "gate_health": gate_health, "rounds": rounds,
 		"result": result, "reason": reason}
@@ -441,4 +455,5 @@ static func restore(state: Variant) -> Dictionary:
 	campaign.battle = combat
 	campaign._settled = parsed.settled
 	campaign._battle_reward = campaign.encounter_reward(parsed.encounter)
-	return {"outcome": Outcome.VALID, "campaign": campaign, "round_progress_usec": parsed.progress}
+	return {"outcome": Outcome.VALID, "campaign": campaign, "round_progress_usec": parsed.progress,
+		"saved_at": parsed.saved_at}

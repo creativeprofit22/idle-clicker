@@ -1,6 +1,6 @@
 extends RefCounted
 
-# Campaign storage (contract v3 (v1/v2 files migrate on load in CampaignState), D9/D11). Mirrors Save-v1's stage/verify/rotate algorithm
+# Campaign storage (contract v4 (v1-v3 files migrate on load in CampaignState), D9/D11). Mirrors Save-v1's stage/verify/rotate algorithm
 # in a separate file; Save-v1 (progress_save.gd) is reused only for static helpers.
 const Campaign = preload("res://src/campaign.gd")
 const CampaignState = preload("res://src/campaign_state.gd")
@@ -18,6 +18,10 @@ func _init(trusted_path: String = "user://campaign.json") -> void:
 
 func get_preservation_outcome() -> Outcome:
 	return _preservation_outcome
+
+# Wall-clock seam (whole Unix seconds) stamped into each save; tests override it.
+func _now() -> int:
+	return int(Time.get_unix_time_from_system())
 
 # Isolation guard: this store may only ever touch campaign.json{,.tmp,.bak}.
 func _path_allowed() -> bool:
@@ -49,14 +53,14 @@ func _read(source: String) -> Dictionary:
 			if not ProgressSave._exact_numbers(text):
 				return {"outcome": Outcome.CORRUPT}
 			return {"outcome": Outcome.LOADED, "campaign": restored.campaign,
-				"round_progress_usec": restored.round_progress_usec}
+				"round_progress_usec": restored.round_progress_usec, "saved_at": restored.saved_at}
 	return {"outcome": Outcome.CORRUPT}
 
 # The canonical state of a loaded result, for exact comparisons.
 static func _state_of(result: Dictionary) -> Variant:
 	if result.outcome != Outcome.LOADED:
 		return null
-	var captured := CampaignState.capture(result.campaign, result.round_progress_usec)
+	var captured := CampaignState.capture(result.campaign, result.round_progress_usec, result.saved_at)
 	return captured.state if captured.outcome == CampaignState.Outcome.VALID else null
 
 # D11: a missing primary falls back to the backup; any other primary failure is reported
@@ -101,7 +105,7 @@ func save_campaign(campaign: Campaign, round_progress_usec: int) -> Error:
 		load_campaign()
 	if _preservation_outcome not in [Outcome.MISSING, Outcome.LOADED]:
 		return ERR_UNAUTHORIZED
-	var captured := CampaignState.capture(campaign, round_progress_usec)
+	var captured := CampaignState.capture(campaign, round_progress_usec, maxi(_now(), 0))
 	if captured.outcome != CampaignState.Outcome.VALID:
 		return ERR_INVALID_DATA
 	var state: Dictionary = captured.state
