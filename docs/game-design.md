@@ -30,7 +30,7 @@ The proposed ordinary loop is automatic combat through campaign stages, victorie
 
 Each region would culminate in an enemy stronghold. Defeating the stronghold triggers a counterattack against the camp, and surviving that assault secures the region and its reward. The resulting rhythm is advance, defeat the stronghold, withstand retaliation, and secure the milestone. Conquest is therefore not complete merely because the player can deal enough damage to win an offensive battle; the army must also hold its gains.
 
-When the next obstacle cannot be cleared, the army can farm the last secured stage. This fallback gives the player time to accumulate an upgrade without requiring repeated manual attempts at a battle they cannot yet win. The exact handling of an unsuccessful counterattack, including retry placement and interim rewards, remains undecided. The productive fallback and non-destructive defeat principles should constrain that decision.
+When the next obstacle cannot be cleared, the army can farm the last secured stage. This fallback gives the player time to accumulate an upgrade without requiring repeated manual attempts at a battle they cannot yet win. An unsuccessful counterattack pays nothing, keeps all progress, and returns the army to farming; the player retries by reaching the checkpoint again and starting the defense explicitly. There is no loss reward, so losing on purpose never pays. The result names the cause and the upgrade that addresses it: a broken gate points to the Gate or Shield infantry, and a round-60 timeout points to troop damage. The cause stays visible, including after relaunch, until the next defense starts (see first-playable.md).
 
 ## Active versus idle play
 

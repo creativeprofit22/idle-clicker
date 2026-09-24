@@ -32,6 +32,15 @@ var pending_away_seconds: int = 0
 const AWAY_WAIT_TEXT: String = "Away reward waits for a successful save"
 const RESUMED_TEXT: String = "Resumed saved campaign"
 const RESTORED_TEXT: String = "Restored from backup"
+# Defense-loss cause and upgrade hint (text only; nothing is bought automatically).
+const LOSS_RESULT_TEXT: Dictionary = {
+	Combat.DefeatReason.GATE_DESTROYED: "The gate broke. Upgrade the Gate or your Shield infantry to hold longer.",
+	Combat.DefeatReason.TIMEOUT: "Time ran out at round 60. Level up your troops for more damage to finish sooner.",
+}
+const LOSS_STATUS_TEXT: Dictionary = {
+	Combat.DefeatReason.GATE_DESTROYED: "Last defense: the gate broke — upgrade Gate or Shield",
+	Combat.DefeatReason.TIMEOUT: "Last defense: time ran out at round 60 — level up troop damage",
+}
 
 @onready var upgrades: Array[Button] = [%ShieldUpgrade, %FootUpgrade, %HorseUpgrade]
 
@@ -190,8 +199,8 @@ func advance_usec(usec: int) -> void:
 				"Victory" if completed.result == Combat.Result.VICTORY else "Defeat",
 				campaign.gold - gold_before]
 			if completed.is_defense and completed.result == Combat.Result.DEFEAT:
-				%LastResult.text += " · %s. Farm to recover, return to the checkpoint after battle, then Start Defense to retry." % (
-					"Gate destroyed" if completed.defeat_reason == Combat.DefeatReason.GATE_DESTROYED else "Timeout")
+				%LastResult.text += " · %s Farm to recover, return to the checkpoint after battle, then Start Defense to retry." % (
+					LOSS_RESULT_TEXT[campaign.last_defense_loss])
 			# Campaign already routed: never restart or tick its fresh successor here.
 			elapsed_usec = 0
 			# Reward, clearance and routing are one write (D6/D8).
@@ -396,6 +405,9 @@ func _refresh() -> void:
 			%CampaignStatus.text = "Counterattack · Defending the Stronghold"
 		Campaign.Phase.CAMPAIGN_SECURED:
 			%CampaignStatus.text = "Campaign secured · Counterattack defeated · +%d Legacy earned" % campaign.secure_legacy()
+	if campaign.phase in [Campaign.Phase.RUNNING, Campaign.Phase.CONQUEST_CLEARED] \
+			and LOSS_STATUS_TEXT.has(campaign.last_defense_loss):
+		%CampaignStatus.text += " · " + LOSS_STATUS_TEXT[campaign.last_defense_loss]
 	if suspended:
 		%CampaignStatus.text += " · Paused"
 	match campaign.pending_navigation:

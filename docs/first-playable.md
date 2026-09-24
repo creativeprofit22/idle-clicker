@@ -236,6 +236,15 @@ Conquest victory requires all enemies dead and at least one player squad alive a
 
 Every new encounter, replay, or retry begins at full health, with a fresh stat snapshot, zero elapsed rounds, and no queued strike. Defeat pays nothing and charges nothing. Owned troop levels, gate level, gold, and earlier clearances remain intact. Results identify army defeat, gate destruction, or timeout, allowing the player to understand what happened rather than infer it from a generic loss.
 
+**Defense loss cause and hint (user-approved 24 Sep 2026).** A lost Counterattack records one cause, decided in combat order: gate at zero first (even when the last enemy died that round), then the round-60 timeout. A victory records no cause. The hint is text only and never buys anything.
+
+| Cause | Result text after `Counterattack: Defeat · +0 gold ·` | Status line while stored |
+| --- | --- | --- |
+| Gate destroyed | The gate broke. Upgrade the Gate or your Shield infantry to hold longer. | Last defense: the gate broke — upgrade Gate or Shield |
+| Timeout | Time ran out at round 60. Level up your troops for more damage to finish sooner. | Last defense: time ran out at round 60 — level up troop damage |
+
+The result text ends with `Farm to recover, return to the checkpoint after battle, then Start Defense to retry.` The cause is saved (campaign save v6) and shown on the campaign status line while conquest is running or at the defense checkpoint, including after relaunch, until the next Start Defense clears it. Rules are unchanged: +0 gold, all progress kept, routing to the queued or default farm, and no loss reward.
+
 ## Conquest, rewards, and encounter transitions — provisional
 
 Enemies use the same three types with authored stats rather than player upgrade levels. A dash denotes an absent squad. These four definitions are the proposed campaign-loop content, not a list of all current fixtures. The separate main-game Fortified encounter is implemented but is not part of this campaign sequence.

@@ -29,6 +29,9 @@ var threat: int = 0
 # Highest Threat ever secured (-1 before the first secure) and total Legacy ever paid out.
 var best_threat: int = -1
 var legacy_earned: int = 0
+# Cause of the last lost Counterattack (Combat.DefeatReason: NONE, GATE_DESTROYED or TIMEOUT).
+# Kept until the next defense starts; shown as a hint only, never changes rewards or state.
+var last_defense_loss: int = Combat.DefeatReason.NONE
 
 const FIRST_SECURE_LEGACY: int = 10
 const REPEAT_SECURE_LEGACY: int = 3
@@ -121,6 +124,8 @@ func found_dynasty(next_threat: int = 0) -> Combat:
 	farm_encounter = -1
 	pending_navigation = Navigation.NONE
 	pending_farm = -1
+	# Founding requires a won defense, which already cleared this; reset anyway for safety.
+	last_defense_loss = Combat.DefeatReason.NONE
 	return _begin_encounter(Data.Encounter.BORDER_SKIRMISH)
 
 func gate_purchase_cost() -> int:
@@ -138,6 +143,7 @@ func start_defense() -> Combat:
 	if phase != Phase.CONQUEST_CLEARED or not stronghold_cleared:
 		return null
 	var assault := _begin_encounter(Data.Encounter.COUNTERATTACK)
+	last_defense_loss = Combat.DefeatReason.NONE
 	phase = Phase.DEFENDING
 	mode = Mode.ADVANCE
 	farm_encounter = -1
@@ -232,6 +238,8 @@ func settle(completed: Combat) -> bool:
 			legacy_earned += secure_legacy()
 			best_threat = maxi(best_threat, threat)
 			return true
+		# Combat already decided the cause (gate at zero before the round-60 timeout).
+		last_defense_loss = completed.defeat_reason
 		phase = Phase.RUNNING
 	if victory and current_encounter == Data.Encounter.STRONGHOLD:
 		phase = Phase.CONQUEST_CLEARED

@@ -1,6 +1,6 @@
 extends RefCounted
 
-# In-memory campaign state capture, validation and restoration (contract v5; v1-v4 migrate on load). No I/O.
+# In-memory campaign state capture, validation and restoration (contract v6; v1-v5 migrate on load). No I/O.
 const Campaign = preload("res://src/campaign.gd")
 const Combat = preload("res://src/combat.gd")
 const Data = preload("res://src/encounter_data.gd")
@@ -8,7 +8,7 @@ const ProgressSave = preload("res://src/progress_save.gd")
 
 enum Outcome { VALID, CORRUPT, UNSUPPORTED, UNSAVABLE }
 const FORMAT: String = "idle-clicker-campaign"
-const VERSION: int = 5
+const VERSION: int = 6
 const ROUND_USEC: int = roundi(Data.ROUND_SECONDS * 1000000)
 const KEYS_V1: Array[String] = ["format", "version", "gold", "levels", "gate_level", "dynasty",
 	"cleared", "phase", "mode", "farm_encounter", "pending_navigation", "pending_farm",
@@ -28,10 +28,15 @@ const KEYS_V4: Array[String] = ["format", "version", "gold", "levels", "gate_lev
 	"farm_encounter", "pending_navigation", "pending_farm", "current_encounter", "settled",
 	"round_progress_usec", "saved_at", "battle"]
 # v5 adds the permanent Veteran Cadre flag (bool).
-const KEYS: Array[String] = ["format", "version", "gold", "levels", "gate_level", "dynasty",
+const KEYS_V5: Array[String] = ["format", "version", "gold", "levels", "gate_level", "dynasty",
 	"legacy", "drill_rank", "veteran_cadre", "threat", "best_threat", "legacy_earned", "cleared",
 	"phase", "mode", "farm_encounter", "pending_navigation", "pending_farm", "current_encounter",
 	"settled", "round_progress_usec", "saved_at", "battle"]
+# v6 adds the cause of the last lost Counterattack (Combat.DefeatReason NONE/GATE_DESTROYED/TIMEOUT).
+const KEYS: Array[String] = ["format", "version", "gold", "levels", "gate_level", "dynasty",
+	"legacy", "drill_rank", "veteran_cadre", "threat", "best_threat", "legacy_earned", "cleared",
+	"phase", "mode", "farm_encounter", "pending_navigation", "pending_farm", "current_encounter",
+	"settled", "round_progress_usec", "saved_at", "last_defense_loss", "battle"]
 const BATTLE_KEYS: Array[String] = ["snapshot_levels", "snapshot_drill_rank", "player_health",
 	"enemy_health", "snapshot_gate_level", "gate_health", "rounds", "result", "defeat_reason"]
 const ENCOUNTERS: Array[int] = [Data.Encounter.BORDER_SKIRMISH, Data.Encounter.ARCHER_POSITION,
@@ -88,7 +93,7 @@ static func _fingerprint(campaign: Campaign) -> Array:
 		campaign.best_threat, campaign.legacy_earned, campaign.border_cleared,
 		campaign.archer_cleared, campaign.stronghold_cleared, campaign.phase, campaign.mode,
 		campaign.farm_encounter, campaign.pending_navigation, campaign.pending_farm,
-		campaign.current_encounter, campaign._settled, campaign._battle_reward, rows,
+		campaign.current_encounter, campaign._settled, campaign._battle_reward, campaign.last_defense_loss, rows,
 		combat.players.size(), combat.enemies.size(), combat.is_defense, combat.gate_max_health,
 		combat.gate_health, combat.rounds, combat.result, combat.defeat_reason,
 		combat.commander_queued, combat.commander_damage]
@@ -146,6 +151,7 @@ static func capture(campaign: Campaign, round_progress_usec: int, saved_at: int 
 		"settled": campaign._settled,
 		"round_progress_usec": round_progress_usec,
 		"saved_at": saved_at,
+		"last_defense_loss": campaign.last_defense_loss,
 		"battle": {
 			"snapshot_levels": snapshot_levels,
 			"snapshot_drill_rank": campaign._battle_drill_rank,
@@ -205,14 +211,16 @@ static func _parse(state: Variant) -> Dictionary:
 	# D10: any finite whole-number version is a version; only its value decides support.
 	if not data.has("version") or not _whole_number(data.version):
 		return corrupt
-	# v1-v4 files are parsed under their own exact key sets and migrated in memory (no separate write).
+	# v1-v5 files are parsed under their own exact key sets and migrated in memory (no separate write).
 	var v1: bool = data.version == 1
 	var v2: bool = data.version == 2
 	var v3: bool = data.version == 3
 	var v4: bool = data.version == 4
-	if not v1 and not v2 and not v3 and not v4 and data.version != VERSION:
+	var v5: bool = data.version == 5
+	if not v1 and not v2 and not v3 and not v4 and not v5 and data.version != VERSION:
 		return {"outcome": Outcome.UNSUPPORTED}
-	var keys: Array[String] = KEYS_V1 if v1 else (KEYS_V2 if v2 else (KEYS_V3 if v3 else (KEYS_V4 if v4 else KEYS)))
+	var keys: Array[String] = KEYS_V1 if v1 else (KEYS_V2 if v2 else (KEYS_V3 if v3 else (
+		KEYS_V4 if v4 else (KEYS_V5 if v5 else KEYS))))
 	if not _keys_exact(data, keys) or typeof(data.battle) != TYPE_DICTIONARY:
 		return corrupt
 	# Files older than v5 predate Veteran Cadre: it loads unowned.
@@ -227,6 +235,13 @@ static func _parse(state: Variant) -> Dictionary:
 		if not ProgressSave._integer(data.saved_at, 0, ProgressSave.MAX_GOLD):
 			return corrupt
 		saved_at = int(data.saved_at)
+	# Files older than v6 predate the stored defense-loss cause: it loads as NONE.
+	var last_loss: int = Combat.DefeatReason.NONE
+	if data.has("last_defense_loss"):
+		if not ProgressSave._integer(data.last_defense_loss, 0, Combat.DefeatReason.TIMEOUT) \
+				or int(data.last_defense_loss) == Combat.DefeatReason.ARMY_DEFEAT:
+			return corrupt
+		last_loss = int(data.last_defense_loss)
 	var battle: Dictionary = data.battle
 	if not _keys_exact(battle, BATTLE_KEYS_V1 if v1 else BATTLE_KEYS):
 		return corrupt
@@ -417,12 +432,17 @@ static func _parse(state: Variant) -> Dictionary:
 				return corrupt
 	if progress != 0 and phase not in [Campaign.Phase.RUNNING, Campaign.Phase.DEFENDING]:
 		return corrupt
+	# A stored loss cause exists only after a lost defense and before the next one starts.
+	if last_loss != Combat.DefeatReason.NONE and (not cleared[2]
+			or phase not in [Campaign.Phase.RUNNING, Campaign.Phase.CONQUEST_CLEARED]):
+		return corrupt
 	return {"outcome": Outcome.VALID, "gold": gold, "levels": levels, "gate_level": gate_level,
 		"dynasty": dynasty, "legacy": legacy, "rank": rank, "cadre": cadre, "snapshot_rank": snapshot_rank,
 		"threat": threat, "best": best, "earned": earned,
 		"cleared": cleared, "phase": phase, "mode": mode, "farm": farm,
 		"navigation": navigation, "pending_farm": pending_farm, "encounter": encounter,
-		"settled": settled, "progress": progress, "saved_at": saved_at, "snapshot_levels": snapshot_levels,
+		"settled": settled, "progress": progress, "saved_at": saved_at, "last_loss": last_loss,
+		"snapshot_levels": snapshot_levels,
 		"player_health": player_health, "enemy_health": enemy_health,
 		"snapshot_gate": snapshot_gate, "gate_health": gate_health, "rounds": rounds,
 		"result": result, "reason": reason}
@@ -453,6 +473,7 @@ static func restore(state: Variant) -> Dictionary:
 	campaign.pending_navigation = parsed.navigation as Campaign.Navigation
 	campaign.pending_farm = parsed.pending_farm
 	campaign.current_encounter = parsed.encounter
+	campaign.last_defense_loss = parsed.last_loss
 	# Snapshot stats and commander damage are re-derived; the snapshot Drill rank applies exactly once.
 	var combat := Combat.new(parsed.encounter as Data.Encounter, _army(parsed.snapshot_levels, parsed.snapshot_rank),
 		parsed.threat)

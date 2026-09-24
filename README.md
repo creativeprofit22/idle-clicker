@@ -131,7 +131,7 @@ starts at level 1. Drill still applies once on top of the starting levels, and T
 payouts, gold rewards, the away reward and round timing are unchanged. When owned, the button
 reads "Veteran Cadre owned — new dynasties start troops at level 2" and the dynasty line ends in
 "· Veteran Cadre". Buying is blocked while suspended, with the preview open, below 50 Legacy, or
-once owned, and autosaves. The campaign save stores it as `veteran_cadre` (save v5); older saves
+once owned, and autosaves. The campaign save stores it as `veteran_cadre` (added in save v5); older saves
 load with it unowned.
 
 **Found a Dynasty** is available at every secured campaign, without limit. Opening the native
@@ -2014,6 +2014,30 @@ Inspected captures (copy `%LOCALAPPDATA%\Temp\bs-g6-df9ebce-002059`): `21` (dyna
 8/16/12), `31` (dynasty-2 preview targeting dynasty 3) and `32` (dynasty 3 at Threat 1, Enemy
 shield 90/90). All are readable with no overlap. This first run passed, so there were no failed runs
 to keep. This is window-driven evidence only; the physical gate stays **pending**.
+
+**Explained defense losses (24 Sep 2026, uncommitted tree on `9436c37`).** A lost Counterattack now
+names its cause and the upgrade that addresses it: "The gate broke. Upgrade the Gate or your Shield
+infantry to hold longer." or "Time ran out at round 60. Level up your troops for more damage to
+finish sooner." The status line keeps a short hint ("Last defense: …") while farming and at the
+checkpoint, including after relaunch, until Start Defense clears it. Rules are unchanged (+0 gold,
+progress kept, same recovery routing, no loss reward); the hint is text only. The campaign save is
+now v6 with `last_defense_loss`; v1–v5 load with no cause (see the v6 amendment in
+`docs/campaign-save-contract.md`).
+
+| Check | Result |
+|---|---|
+| Import | exit 0, no errors or warnings |
+| `run_tests.gd` | 4281 checks, 0 failures, exit 0; forced failure 4282/1 (only "forced runner failure"), exit 1; normal rerun 4281/0, exit 0 |
+| `campaign_persistence_smoke.gd` | all 11 phase summaries 0 failures, exit 0 |
+| `scene_smoke.gd` | 105 graphical checks, 0 failures, exit 0 |
+| `windows_campaign_driver.py defense` | 71/0, child exit 0, driver exit 0, `native_observations_complete=True`, child reaped and reader joined |
+| `windows_campaign_driver.py campaign` | 57/0, child exit 0, driver exit 0, `native_observations_complete=True`, child reaped and reader joined |
+| `windows_g6_driver.py` | 27/0, driver exit 0, both launches reaped with reader joined; saves were v6 with `last_defense_loss` 0 |
+
+Inspected captures: `defense-recovery` (720×720: full cause and hint in the result line, status line
+hint) and `small-defense-loss` (540×480: both lines wrap fully inside the window, no overlap). All
+runs passed first time, so there were no failed runs to keep. CI hasn't run because nothing is
+committed. The physical gate stays **pending**, and there's no art, export, Android or release claim.
 
 ## Boundaries
 

@@ -380,7 +380,7 @@ func test_veteran_cadre(secured: Dictionary) -> bool:
 		and button.text == "Veteran Cadre owned — new dynasties start troops at level 2"
 		and scene.get_node("%DynastyStatus").text.ends_with(" · Veteran Cadre")
 		and scene.get_node("%SaveStatus").text == "Saved" and on_disk is Dictionary
-		and on_disk.veteran_cadre == true and on_disk.legacy == 13 and on_disk.version == 5,
+		and on_disk.veteran_cadre == true and on_disk.legacy == 13 and on_disk.version == 6,
 		"native Veteran Cadre click spends 50 Legacy once, shows owned and saves v5")
 	await click(scene.get_node("%FoundDynasty"))
 	await process_frame
@@ -504,13 +504,63 @@ func test_defense() -> bool:
 	await next_battle()
 	check(campaign.mode == Campaign.Mode.FARM and campaign.current_encounter == Data.Encounter.ARCHER_POSITION
 		and campaign.gold == 10 and campaign.gate_level == 3 and not scene.get_node("%GateHealth").visible
-		and scene.get_node("%LastResult").text.contains("Defeat · +0 gold · Gate destroyed"),
-		"real defeat routes ordinary recovery with retained zero-gold reason")
+		and campaign.last_defense_loss == Presentation.Combat.DefeatReason.GATE_DESTROYED
+		and scene.get_node("%LastResult").text == "Counterattack: Defeat · +0 gold · The gate broke. Upgrade the Gate or your Shield infantry to hold longer. Farm to recover, return to the checkpoint after battle, then Start Defense to retry."
+		and scene.get_node("%CampaignStatus").text.ends_with(" · Last defense: the gate broke — upgrade Gate or Shield"),
+		"real defeat routes ordinary recovery with retained zero-gold cause and upgrade hint")
 	await capture("defense-recovery")
+	# Narrow layout: the wrapped cause and hint stay inside the viewport and buy nothing.
+	var hint_gold: int = campaign.gold
+	var hint_levels: Array = [campaign.levels.duplicate(), campaign.gate_level]
+	root.size = Vector2i(540, 480)
+	root.content_scale_size = Vector2i(540, 480)
+	await process_frame
+	await process_frame
+	var scroll: ScrollContainer = scene.get_node("Margin/Scroll")
+	for name in ["CampaignStatus", "LastResult"]:
+		var label: Label = scene.get_node("%" + name)
+		scroll.ensure_control_visible(label)
+		await process_frame
+		await process_frame
+		check(label.get_line_count() > 1 and label.get_visible_line_count() == label.get_line_count()
+			and root.get_visible_rect().encloses(label.get_global_rect()),
+			"narrow loss text wraps fully inside the viewport: " + name)
+	await capture("small-defense-loss")
+	var frontier: Button = scene.get_node("%Frontier")
+	frontier.grab_focus()
+	await process_frame
+	await process_frame
+	check(frontier.has_focus() and root.get_visible_rect().encloses(frontier.get_global_rect())
+		and campaign.gold == hint_gold and [campaign.levels, campaign.gate_level] == hint_levels,
+		"narrow focus-follow still exposes Frontier below the loss text; the hint bought nothing")
+	root.size = Vector2i(720, 720)
+	root.content_scale_size = Vector2i(720, 720)
+	await process_frame
+	await process_frame
 	await keyboard(scene.get_node("%Frontier"))
 	await next_battle()
 	check(campaign.phase == Campaign.Phase.CONQUEST_CLEARED and campaign.gold == 40
-		and not scene.get_node("%StartDefense").disabled, "keyboard return settles farm before explicit retry")
+		and not scene.get_node("%StartDefense").disabled
+		and scene.get_node("%CampaignStatus").text.ends_with("Start Defense; ordinary farming remains available · Last defense: the gate broke — upgrade Gate or Shield"),
+		"keyboard return settles farm before explicit retry and keeps the loss hint")
+	root.size = Vector2i(540, 480)
+	root.content_scale_size = Vector2i(540, 480)
+	await process_frame
+	await process_frame
+	for name in ["StartDefense", "GateUpgrade"]:
+		var button: Button = scene.get_node("%" + name)
+		if button.disabled:
+			check(name == "GateUpgrade" and campaign.gate_level == 3, "capped Gate stays unfocusable at the hinted checkpoint")
+			continue
+		button.grab_focus()
+		await process_frame
+		await process_frame
+		check(button.has_focus() and root.get_visible_rect().encloses(button.get_global_rect()),
+			"narrow focus-follow exposes %s with the loss hint shown" % name)
+	root.size = Vector2i(720, 720)
+	root.content_scale_size = Vector2i(720, 720)
+	await process_frame
+	await process_frame
 	await click(scene.get_node("%StartDefense"))
 	assault = campaign.battle
 	check(assault.rounds == 0 and assault.gate_health == 200 and assault.gate_max_health == 200,

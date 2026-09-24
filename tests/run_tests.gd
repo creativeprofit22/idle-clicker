@@ -177,6 +177,8 @@ func run() -> void:
 	test_defensive_combat()
 	test_defense_preparation()
 	test_defense_routing()
+	test_defense_loss_cause()
+	test_defense_loss_cause_state()
 	test_defense_snapshots()
 	test_campaign_progression()
 	test_campaign_navigation()
@@ -194,6 +196,7 @@ func run() -> void:
 	test_campaign_scene_lifecycle()
 	test_campaign_scene_defense()
 	test_campaign_scene_defense_lifecycle()
+	test_campaign_scene_defense_loss_cause()
 	test_campaign_scene_conflicting_suspension()
 	test_campaign_scene_dynasty()
 	test_campaign_scene_veteran_cadre()
@@ -574,8 +577,8 @@ func test_campaign_state_rejection() -> void:
 	state_rejects(base, "battle not object", CORRUPT, func(s: Dictionary) -> void: s.battle = [])
 	state_rejects(base, "wrong format", CORRUPT, func(s: Dictionary) -> void: s.format = "idle-clicker-progress")
 	state_rejects(base, "missing format", CORRUPT, func(s: Dictionary) -> void: s.erase("format"))
-	state_rejects(base, "future version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 6)
-	state_rejects(base, "future version float", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 6.0)
+	state_rejects(base, "future version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 7)
+	state_rejects(base, "future version float", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 7.0)
 	state_rejects(base, "version zero", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 0)
 	state_rejects(base, "negative version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = -1)
 	state_rejects(base, "huge version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 1e20)
@@ -733,15 +736,15 @@ func test_veteran_cadre_state() -> void:
 	var campaign: Campaign = loaded.campaign
 	check(campaign.buy_veteran_cadre() and campaign.legacy == 5, "Veteran Cadre save: purchase from loaded fixture")
 	var captured := CampaignState.capture(campaign, 0)
-	check(captured.outcome == CampaignState.Outcome.VALID and captured.state.version == 5
+	check(captured.outcome == CampaignState.Outcome.VALID and captured.state.version == 6
 		and captured.state.veteran_cadre == true and captured.state.legacy == 5 and captured.state.legacy_earned == 55,
-		"Veteran Cadre save: v5 capture keeps the flag and the spend")
+		"Veteran Cadre save: v6 capture keeps the flag and the spend")
 	var owned: Dictionary = state_json(captured.state)
 	var restored := CampaignState.restore(owned)
 	check(restored.outcome == CampaignState.Outcome.VALID and restored.campaign.veteran_cadre
 		and CampaignState.capture(restored.campaign, 0).state == captured.state
 		and campaign_snapshot(restored.campaign, false) == campaign_snapshot(campaign, false),
-		"Veteran Cadre save: v5 round trip is exact")
+		"Veteran Cadre save: v6 round trip is exact")
 	check(restored.campaign.found_dynasty() != null and restored.campaign.levels == [2, 2, 2]
 		and restored.campaign.gate_level == 1 and restored.campaign.dynasty == 7
 		and CampaignState.capture(restored.campaign, 0).outcome == CampaignState.Outcome.VALID,
@@ -768,7 +771,11 @@ func test_veteran_cadre_state() -> void:
 		check(result.outcome == CampaignState.Outcome.VALID and not result.campaign.veteran_cadre
 			and result.campaign.legacy == 10 and result.campaign.dynasty_start_level() == 1,
 			"Veteran Cadre save: v%d loads unowned with its Legacy" % old.version)
-	# On disk: a v4 file loads unowned without rewrite; the next save writes v5 with the flag.
+	# A v5 file (before the defense-loss cause) keeps its owned flag.
+	var v5_owned := CampaignState.restore(state_as_v5(owned))
+	check(v5_owned.outcome == CampaignState.Outcome.VALID and v5_owned.campaign.veteran_cadre and v5_owned.campaign.legacy == 5,
+		"Veteran Cadre save: v5 file keeps the owned flag and spend")
+	# On disk: a v4 file loads unowned without rewrite; the next save writes v6 with the flag.
 	var fixture := ProgressFixture.new("campaign.json")
 	check(fixture.owned, "Veteran Cadre save: isolated directory owned")
 	if not fixture.owned:
@@ -783,26 +790,33 @@ func test_veteran_cadre_state() -> void:
 		check(from_disk.campaign.buy_veteran_cadre() and store.save_campaign(from_disk.campaign, 0) == OK, "Veteran Cadre save: bought and saved")
 		var written: Variant = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
 		var relaunched := CampaignSave.new(fixture.path).load_campaign()
-		check(written.version == 5 and written.veteran_cadre == true and relaunched.outcome == CampaignSave.Outcome.LOADED
+		check(written.version == 6 and written.veteran_cadre == true and relaunched.outcome == CampaignSave.Outcome.LOADED
 			and relaunched.campaign.veteran_cadre and relaunched.campaign.legacy == 5,
-			"Veteran Cadre save: next save writes v5 that relaunches owned")
+			"Veteran Cadre save: next save writes v6 that relaunches owned")
 	check(fixture.cleanup() == OK, "Veteran Cadre save: directory cleaned")
 
-# Build a contract-v4 state from a v5 capture (drop the Veteran Cadre flag) as older builds wrote it.
-func state_as_v4(state: Dictionary) -> Dictionary:
+# Build a contract-v5 state from a v6 capture (drop the defense-loss cause) as older builds wrote it.
+func state_as_v5(state: Dictionary) -> Dictionary:
 	var old: Dictionary = state.duplicate(true)
+	old.version = 5
+	old.erase("last_defense_loss")
+	return old
+
+# Build a contract-v4 state from a v6 capture (drop the cause and Veteran Cadre flag) as older builds wrote it.
+func state_as_v4(state: Dictionary) -> Dictionary:
+	var old: Dictionary = state_as_v5(state)
 	old.version = 4
 	old.erase("veteran_cadre")
 	return old
 
-# Build a contract-v3 state from a v5 capture (drop the flag and save stamp) as older builds wrote it.
+# Build a contract-v3 state from a v6 capture (drop the flag and save stamp) as older builds wrote it.
 func state_as_v3(state: Dictionary) -> Dictionary:
 	var old: Dictionary = state_as_v4(state)
 	old.version = 3
 	old.erase("saved_at")
 	return old
 
-# Build a contract-v2 state from a v5 capture (drop the stamp and Threat keys) as older builds wrote it.
+# Build a contract-v2 state from a v6 capture (drop the stamp and Threat keys) as older builds wrote it.
 func state_as_v2(state: Dictionary) -> Dictionary:
 	var old: Dictionary = state_as_v3(state)
 	old.version = 2
@@ -811,7 +825,7 @@ func state_as_v2(state: Dictionary) -> Dictionary:
 	old.erase("legacy_earned")
 	return old
 
-# Build a contract-v1 state from a v5 capture (drop the Threat and Legacy keys) as older builds wrote it.
+# Build a contract-v1 state from a v6 capture (drop the Threat and Legacy keys) as older builds wrote it.
 func state_as_v1(state: Dictionary) -> Dictionary:
 	var old: Dictionary = state_as_v2(state)
 	old.version = 1
@@ -863,7 +877,7 @@ func test_campaign_state_migration() -> void:
 	state_rejects(v1, "v1 with v2 Legacy key", CORRUPT, func(s: Dictionary) -> void: s["legacy"] = 3)
 	state_rejects(v1, "v1 with v2 snapshot rank", CORRUPT, func(s: Dictionary) -> void: s.battle["snapshot_drill_rank"] = 1)
 	state_rejects(v1, "v2 without Legacy keys", CORRUPT, func(s: Dictionary) -> void: s.version = 2)
-	# On disk: a v1 file loads through the real store, and the next ordinary save writes v5.
+	# On disk: a v1 file loads through the real store, and the next ordinary save writes v6.
 	var fixture := ProgressFixture.new("campaign.json")
 	check(fixture.owned, "Campaign migration: isolated directory owned")
 	if not fixture.owned:
@@ -876,9 +890,9 @@ func test_campaign_state_migration() -> void:
 		and FileAccess.get_file_as_string(fixture.path) == JSON.stringify(v1),
 		"Campaign migration: v1 file loads through the store without being rewritten")
 	check(store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK
-		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 5
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 6
 		and CampaignSave.new(fixture.path).load_campaign().campaign.legacy == 3,
-		"Campaign migration: next save writes v5 that reloads exactly")
+		"Campaign migration: next save writes v6 that reloads exactly")
 	check(fixture.cleanup() == OK, "Campaign migration: directory cleaned")
 
 func campaign_running(rounds: int = 2, gold: int = 7) -> Campaign:
@@ -936,7 +950,8 @@ func test_campaign_save_format() -> void:
 		return
 	var base: Dictionary = CampaignState.capture(campaign_running(), 250000).state
 	var valid: String = JSON.stringify(base)
-	check(valid.contains('"gold":7') and valid.ends_with('"version":5,"veteran_cadre":false}'), "Campaign save format: canonical integer text")
+	check(valid.contains('"gold":7') and valid.contains('"last_defense_loss":0,')
+		and valid.ends_with('"version":6,"veteran_cadre":false}'), "Campaign save format: canonical integer text")
 	var backup: String = JSON.stringify(CampaignState.capture(campaign_running(1), 0).state)
 	check(fixture.put(backup, ".bak") == OK, "Campaign save format: valid backup beside every primary")
 	var mutated := func(mutate: Callable) -> String:
@@ -959,7 +974,7 @@ func test_campaign_save_format() -> void:
 		mutated.call(func(s: Dictionary) -> void: s.battle.player_health[0] = 121),
 		mutated.call(func(s: Dictionary) -> void: s.settled = true)]
 	check(corrupt[7].length() == 4097, "Campaign save format: oversize fixture is 4097 bytes")
-	var unsupported: Array[String] = [mutated.call(func(s: Dictionary) -> void: s.version = 6),
+	var unsupported: Array[String] = [mutated.call(func(s: Dictionary) -> void: s.version = 7),
 		'{"format":"idle-clicker-campaign","version":99,"gold":"future payload"}']
 	var replacement := campaign_running(3)
 	for expected in [CampaignSave.Outcome.CORRUPT, CampaignSave.Outcome.UNSUPPORTED]:
@@ -1211,7 +1226,7 @@ func test_campaign_scene_saves() -> void:
 	recovered.free()
 	# Unusable primaries: fresh session, saving disabled, file preserved.
 	var unsupported_state: Dictionary = (expected as Dictionary).duplicate(true)
-	unsupported_state.version = 6
+	unsupported_state.version = 7
 	var backup_bytes := FileAccess.get_file_as_bytes(path + ".bak")
 	for case in [["{", "damaged"], [JSON.stringify(unsupported_state), "from an unsupported version"], ["", "unreadable"]]:
 		if case[1] == "unreadable":
@@ -1394,23 +1409,23 @@ func test_away_reward_format() -> void:
 	var CORRUPT := CampaignState.Outcome.CORRUPT
 	var stamped: Dictionary = CampaignState.capture(campaign_running(), 250000, 1700000000).state
 	var restored := CampaignState.restore(state_json(stamped))
-	check(stamped.version == 5 and restored.outcome == CampaignState.Outcome.VALID and restored.saved_at == 1700000000
+	check(stamped.version == 6 and restored.outcome == CampaignState.Outcome.VALID and restored.saved_at == 1700000000
 		and CampaignState.capture(restored.campaign, restored.round_progress_usec, restored.saved_at).state == stamped,
-		"Away save: v5 round trip keeps saved_at exactly")
+		"Away save: v6 round trip keeps saved_at exactly")
 	state_rejects(stamped, "missing saved_at", CORRUPT, func(s: Dictionary) -> void: s.erase("saved_at"))
 	state_rejects(stamped, "negative saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = -1)
 	state_rejects(stamped, "fractional saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = 1.5)
 	state_rejects(stamped, "string saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = "1700000000")
 	state_rejects(stamped, "huge saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = ProgressSave.MAX_GOLD + 1)
 	state_rejects(stamped, "v3 carrying saved_at", CORRUPT, func(s: Dictionary) -> void: s.version = 3)
-	state_rejects(stamped, "version 6", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 6)
+	state_rejects(stamped, "version 7", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 7)
 	# v1-v3 files migrate with an unknown (0) stamp, so they never pay an away reward.
 	var secured: Dictionary = state_json(CampaignState.capture(state_secured(), 0, 1700000000).state)
 	for old: Dictionary in [state_as_v3(secured), state_as_v2(secured), state_as_v1(secured)]:
 		var migrated := CampaignState.restore(old)
 		check(not old.has("saved_at") and migrated.outcome == CampaignState.Outcome.VALID and migrated.saved_at == 0,
 			"Away save: v%d migrates with saved_at 0" % old.version)
-	# On disk: a v3 file loads with stamp 0; the next save writes v5 with the store's clock.
+	# On disk: a v3 file loads with stamp 0; the next save writes v6 with the store's clock.
 	var fixture := ProgressFixture.new("campaign.json")
 	check(fixture.owned, "Away save: isolated directory owned")
 	if not fixture.owned:
@@ -1425,7 +1440,7 @@ func test_away_reward_format() -> void:
 	if loaded.outcome == CampaignSave.Outcome.LOADED and store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK:
 		written = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
 	var reloaded := CampaignSave.new(fixture.path).load_campaign()
-	check(written != null and written.version == 5 and written.saved_at == 1700000500
+	check(written != null and written.version == 6 and written.saved_at == 1700000500
 		and reloaded.outcome == CampaignSave.Outcome.LOADED and reloaded.saved_at == 1700000500,
 		"Away save: store with injected clock stamps and reloads saved_at exactly")
 	check(fixture.cleanup() == OK, "Away save: directory cleaned")
@@ -2151,8 +2166,9 @@ func test_campaign_scene_defense() -> void:
 			and campaign.gold == 10 and campaign.gate_level == 3 and campaign.levels == [3, 3, 3]
 			and campaign.border_cleared and campaign.archer_cleared and campaign.stronghold_cleared
 			and not scene.get_node("%GateHealth").visible
-			and scene.get_node("%LastResult").text.contains("Counterattack: Defeat · +0 gold · Gate destroyed")
-			and scene.get_node("%LastResult").text.contains("return to the checkpoint"),
+			and campaign.last_defense_loss == Combat.DefeatReason.GATE_DESTROYED
+			and scene.get_node("%LastResult").text == "Counterattack: Defeat · +0 gold · The gate broke. Upgrade the Gate or your Shield infantry to hold longer. Farm to recover, return to the checkpoint after battle, then Start Defense to retry."
+			and scene.get_node("%CampaignStatus").text.ends_with(" · Running · Last defense: the gate broke — upgrade Gate or Shield"),
 			"Defense scene: real defeat pays zero, preserves progress and routes one fresh recovery battle")
 		var recovery := campaign.battle
 		scene.get_node("%StartDefense").pressed.emit()
@@ -2160,9 +2176,13 @@ func test_campaign_scene_defense() -> void:
 			"Defense scene: farming cannot directly start defense")
 		scene.get_node("%Frontier").pressed.emit()
 		campaign_scene_finish(scene)
-		check(campaign.phase == Campaign.Phase.CONQUEST_CLEARED and not scene.get_node("%StartDefense").disabled,
-			"Defense scene: settled frontier return enables explicit retry")
+		check(campaign.phase == Campaign.Phase.CONQUEST_CLEARED and not scene.get_node("%StartDefense").disabled
+			and scene.get_node("%CampaignStatus").text == "Conquest cleared — prepare upgrades, then Start Defense; ordinary farming remains available · Last defense: the gate broke — upgrade Gate or Shield",
+			"Defense scene: settled frontier return enables explicit retry and keeps the loss cause")
 		scene.get_node("%StartDefense").pressed.emit()
+		check(campaign.last_defense_loss == Combat.DefeatReason.NONE
+			and scene.get_node("%CampaignStatus").text == "Counterattack · Defending the Stronghold",
+			"Defense scene: retry start clears the stored loss cause")
 		assault = campaign.battle
 		check(assault != recovery and assault.rounds == 0 and assault.gate_health == 200
 			and assault.gate_max_health == 200, "Defense scene: retry snapshots full upgraded gate")
@@ -2189,7 +2209,9 @@ func test_campaign_scene_defense() -> void:
 	timeout.get_node("%StartDefense").pressed.emit()
 	timeout.campaign.battle.rounds = 59
 	timeout.advance_time(1.0)
-	check(timeout.get_node("%LastResult").text.contains("Defeat · +0 gold · Timeout")
+	check(timeout.campaign.last_defense_loss == Combat.DefeatReason.TIMEOUT
+		and timeout.get_node("%LastResult").text == "Counterattack: Defeat · +0 gold · Time ran out at round 60. Level up your troops for more damage to finish sooner. Farm to recover, return to the checkpoint after battle, then Start Defense to retry."
+		and timeout.get_node("%CampaignStatus").text.ends_with(" · Last defense: time ran out at round 60 — level up troop damage")
 		and not timeout.get_node("%GateHealth").visible, "Defense scene: timeout reason survives recovery routing")
 	timeout.free()
 	var terminal := campaign_scene_defense_ready()
@@ -2453,6 +2475,188 @@ func test_defense_routing() -> void:
 		and secured.start_defense() == null and secured.restart_battle() == null
 		and secured.restart_battle(4) == null and campaign_snapshot(secured) == before,
 		"Defense: secured navigation and all duplicate settlements inert")
+
+# Play the real assault to its end with a scripted last stand; outcome is one of
+# "gate" (gate broken over time), "mutual" (gate hits zero the round the last enemy dies),
+# "timeout" (round 60 with enemies alive) or "sixty_win" (last enemy dies on round 60).
+func defense_loss_campaign(outcome: String, queued: bool) -> Campaign:
+	var campaign := defense_ready()
+	var assault := campaign.start_defense()
+	if queued:
+		campaign.request_farm(Data.Encounter.BORDER_SKIRMISH)
+	if outcome != "gate":
+		assault.players.assign([Data.Squad.new(Data.Role.FOOT, "Last archer", 1, 0)])
+		assault.enemies.assign([Data.Squad.new(Data.Role.HORSE, "Last enemy", 1, 0)])
+		if outcome != "mutual":
+			for i in range(59):
+				assault.step_round()
+		if outcome != "timeout":
+			assault.players[0].damage = 1
+		if outcome == "mutual":
+			assault.enemies[0].damage = assault.gate_health
+	else:
+		for squad in assault.players:
+			squad.health = 0
+	campaign_finish(campaign)
+	check(assault.result == (Combat.Result.VICTORY if outcome == "sixty_win" else Combat.Result.DEFEAT)
+		and (outcome == "gate" or outcome == "mutual" or assault.rounds == 60)
+		and (outcome != "mutual" or assault.enemies[0].health == 0),
+		"Defense loss cause: real %s assault ends as scripted" % outcome)
+	return campaign
+
+func test_defense_loss_cause() -> void:
+	check(Campaign.new().last_defense_loss == Combat.DefeatReason.NONE, "Defense loss cause: fresh campaign has none")
+	var expected := {"gate": Combat.DefeatReason.GATE_DESTROYED, "mutual": Combat.DefeatReason.GATE_DESTROYED,
+		"timeout": Combat.DefeatReason.TIMEOUT}
+	for queued in [false, true]:
+		var baseline := defense_ready()
+		for outcome: String in expected:
+			var campaign := defense_loss_campaign(outcome, queued)
+			check(campaign.last_defense_loss == expected[outcome] and campaign.phase == Campaign.Phase.RUNNING
+				and campaign.gold == baseline.gold and campaign.levels == baseline.levels
+				and campaign.gate_level == baseline.gate_level and campaign.border_cleared
+				and campaign.archer_cleared and campaign.stronghold_cleared
+				and campaign.current_encounter == (Data.Encounter.BORDER_SKIRMISH if queued else Data.Encounter.ARCHER_POSITION)
+				and campaign.mode == Campaign.Mode.FARM and campaign.pending_farm == -1
+				and campaign.dynasty == baseline.dynasty and campaign.legacy == baseline.legacy
+				and campaign.legacy_earned == baseline.legacy_earned and campaign.best_threat == baseline.best_threat,
+				"Defense loss cause: %s loss records its cause with +0 gold and all progress kept (queued %s)" % [outcome, queued])
+			# Only the recorded cause differs from the same loss without the new field.
+			var with_cause := campaign_snapshot(campaign, false)
+			var reference := campaign_snapshot(defense_loss_campaign("gate", queued), false)
+			with_cause[-1] = Combat.DefeatReason.GATE_DESTROYED
+			check(with_cause == reference, "Defense loss cause: %s leaves identical rewards and routing (queued %s)" % [outcome, queued])
+			# Farming and returning keep the cause; only an explicit Start Defense clears it.
+			campaign_finish(campaign)
+			campaign.request_frontier()
+			campaign_finish(campaign)
+			check(campaign.phase == Campaign.Phase.CONQUEST_CLEARED and campaign.last_defense_loss == expected[outcome],
+				"Defense loss cause: kept through recovery farming back to the checkpoint")
+			check(campaign.start_defense() != null and campaign.last_defense_loss == Combat.DefeatReason.NONE,
+				"Defense loss cause: explicit retry start clears it")
+		var won := defense_loss_campaign("sixty_win", queued)
+		check(won.phase == Campaign.Phase.CAMPAIGN_SECURED and won.last_defense_loss == Combat.DefeatReason.NONE
+			and won.gold == baseline.gold, "Defense loss cause: round-60 win records none (queued %s)" % queued)
+	# A win after a loss: the retry start already cleared the cause, and founding keeps it clear.
+	var retried := defense_loss_campaign("timeout", false)
+	retried.request_frontier()
+	campaign_finish(retried)
+	retried.purchase_gate()
+	retried.purchase_gate()
+	retried.start_defense()
+	campaign_finish(retried)
+	check(retried.phase == Campaign.Phase.CAMPAIGN_SECURED and retried.last_defense_loss == Combat.DefeatReason.NONE
+		and retried.found_dynasty() != null and retried.last_defense_loss == Combat.DefeatReason.NONE,
+		"Defense loss cause: victory after retry and the next dynasty record none")
+	# Ordinary farm losses never record a defense cause.
+	var farm := campaign_running(0)
+	for squad in farm.battle.players:
+		squad.health = 0
+	campaign_finish(farm)
+	check(farm.last_defense_loss == Combat.DefeatReason.NONE, "Defense loss cause: ordinary battle loss records none")
+
+func test_defense_loss_cause_state() -> void:
+	var CORRUPT := CampaignState.Outcome.CORRUPT
+	for outcome in ["gate", "timeout"]:
+		var campaign := defense_loss_campaign(outcome, true)
+		var captured := CampaignState.capture(campaign, 250000)
+		var state: Dictionary = state_json(captured.state)
+		var restored := CampaignState.restore(state)
+		var cause: int = Combat.DefeatReason.GATE_DESTROYED if outcome == "gate" else Combat.DefeatReason.TIMEOUT
+		check(captured.outcome == CampaignState.Outcome.VALID and state.version == 6 and state.last_defense_loss == cause
+			and restored.outcome == CampaignState.Outcome.VALID and restored.campaign.last_defense_loss == cause
+			and CampaignState.capture(restored.campaign, restored.round_progress_usec).state == captured.state
+			and campaign_snapshot(restored.campaign, false) == campaign_snapshot(campaign, false),
+			"Defense loss save: %s cause round-trips exactly in v6" % outcome)
+		state_rejects(state, "missing loss cause", CORRUPT, func(s: Dictionary) -> void: s.erase("last_defense_loss"))
+		state_rejects(state, "boolean loss cause", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = true)
+		state_rejects(state, "string loss cause", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = "2")
+		state_rejects(state, "null loss cause", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = null)
+		state_rejects(state, "fractional loss cause", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = 2.5)
+		state_rejects(state, "army-defeat loss cause", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = Combat.DefeatReason.ARMY_DEFEAT)
+		state_rejects(state, "negative loss cause", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = -1)
+		state_rejects(state, "out-of-range loss cause", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = 4)
+		state_rejects(state, "v5 carrying the loss cause", CORRUPT, func(s: Dictionary) -> void: s.version = 5)
+		state_rejects(state, "version 7 with a loss cause", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 7)
+		# Older files load with no cause.
+		for old: Dictionary in [state_as_v5(state), state_as_v4(state), state_as_v3(state)]:
+			var migrated := CampaignState.restore(old)
+			check(not old.has("last_defense_loss") and migrated.outcome == CampaignState.Outcome.VALID
+				and migrated.campaign.last_defense_loss == Combat.DefeatReason.NONE
+				and migrated.campaign.gold == campaign.gold and migrated.campaign.levels == campaign.levels
+				and migrated.campaign.stronghold_cleared,
+				"Defense loss save: v%d loads with no cause and nothing else lost" % old.version)
+	# A cause is only valid after a lost defense and before the next one starts.
+	var ready: Dictionary = state_json(CampaignState.capture(defense_ready(), 0).state)
+	check(CampaignState.validate(ready.merged({"last_defense_loss": 2}, true)).outcome == CampaignState.Outcome.VALID,
+		"Defense loss save: cause at the checkpoint is valid")
+	var defending_campaign := defense_ready()
+	defending_campaign.start_defense()
+	var defending: Dictionary = state_json(CampaignState.capture(defending_campaign, 0).state)
+	state_rejects(defending, "loss cause while defending", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = 2)
+	var secured: Dictionary = state_json(CampaignState.capture(state_secured(), 0).state)
+	state_rejects(secured, "loss cause once secured", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = 3)
+	var early: Dictionary = state_json(CampaignState.capture(campaign_running(), 0).state)
+	state_rejects(early, "loss cause before the stronghold is cleared", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = 2)
+	# On disk: a v5 file loads without rewrite; the next save writes v6 with the recorded cause.
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Defense loss save: isolated directory owned")
+	if not fixture.owned:
+		return
+	var v5_text := JSON.stringify(state_as_v5(state_json(CampaignState.capture(defense_loss_campaign("gate", false), 0).state)))
+	check(fixture.put(v5_text) == OK, "Defense loss save: v5 file written")
+	var store := CampaignSave.new(fixture.path)
+	var loaded := store.load_campaign()
+	check(loaded.outcome == CampaignSave.Outcome.LOADED and loaded.campaign.last_defense_loss == Combat.DefeatReason.NONE
+		and FileAccess.get_file_as_string(fixture.path) == v5_text,
+		"Defense loss save: v5 file loads with no cause and is not rewritten")
+	var lost := defense_loss_campaign("timeout", false)
+	var written: Variant = null
+	if store.save_campaign(lost, 0) == OK:
+		written = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
+	var relaunched := CampaignSave.new(fixture.path).load_campaign()
+	check(written != null and written.version == 6 and written.last_defense_loss == Combat.DefeatReason.TIMEOUT
+		and relaunched.outcome == CampaignSave.Outcome.LOADED
+		and relaunched.campaign.last_defense_loss == Combat.DefeatReason.TIMEOUT,
+		"Defense loss save: next save writes v6 and the cause survives relaunch")
+	check(fixture.cleanup() == OK, "Defense loss save: directory cleaned")
+
+func test_campaign_scene_defense_loss_cause() -> void:
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Defense loss scene: isolated directory owned")
+	if not fixture.owned:
+		return
+	var statuses := {
+		"gate": "Last defense: the gate broke — upgrade Gate or Shield",
+		"timeout": "Last defense: time ran out at round 60 — level up troop damage"}
+	for outcome: String in statuses:
+		var store := CampaignSave.new(fixture.path)
+		check(store.save_campaign(defense_loss_campaign(outcome, false), 0) == OK, "Defense loss scene: lost campaign saved")
+		var scene := campaign_scene_new(CampaignPresentation, CampaignSave.new(fixture.path))
+		scene.set_process(false)
+		var gold: int = scene.campaign.gold
+		check(scene.get_node("%LastResult").text == "Resumed saved campaign"
+			and scene.get_node("%CampaignStatus").text == "Archer Position · Farm · Running · " + statuses[outcome]
+			and scene.get_node("%GateUpgrade").text.begins_with("Gate Lv.1") and scene.campaign.gold == gold,
+			"Defense loss scene: relaunch shows the %s cause and hint without buying anything" % outcome)
+		scene.get_node("%Frontier").pressed.emit()
+		campaign_scene_finish(scene)
+		check(scene.campaign.phase == Campaign.Phase.CONQUEST_CLEARED
+			and scene.get_node("%CampaignStatus").text.ends_with("ordinary farming remains available · " + statuses[outcome]),
+			"Defense loss scene: checkpoint status keeps the %s hint" % outcome)
+		scene.get_node("%StartDefense").pressed.emit()
+		scene.notification(Node.NOTIFICATION_WM_CLOSE_REQUEST)
+		check(scene.campaign.last_defense_loss == Combat.DefeatReason.NONE
+			and not scene.get_node("%CampaignStatus").text.contains("Last defense"),
+			"Defense loss scene: Start Defense clears the %s hint" % outcome)
+		scene.free()
+		var again := campaign_scene_new(CampaignPresentation, CampaignSave.new(fixture.path))
+		again.set_process(false)
+		check(again.campaign.phase == Campaign.Phase.DEFENDING and again.campaign.last_defense_loss == Combat.DefeatReason.NONE
+			and not again.get_node("%CampaignStatus").text.contains("Last defense"),
+			"Defense loss scene: cleared cause stays cleared after relaunch")
+		again.free()
+	check(fixture.cleanup() == OK, "Defense loss scene: directory cleaned")
 
 func defense_ready() -> Campaign:
 	var campaign := Campaign.new()
@@ -2933,18 +3137,18 @@ func test_threat() -> void:
 
 func test_threat_state() -> void:
 	var CORRUPT := CampaignState.Outcome.CORRUPT
-	# v5 round trip: Threat, best and earned are persisted and battles restore scaled.
+	# v6 round trip: Threat, best and earned are persisted and battles restore scaled.
 	var campaign := state_secured()
 	campaign.train_drill()
 	campaign.found_dynasty(1)
 	campaign.battle.step_round()
 	var state: Dictionary = state_json(CampaignState.capture(campaign, 0).state)
 	var restored := CampaignState.restore(state)
-	check(restored.outcome == CampaignState.Outcome.VALID and state.version == 5 and state.threat == 1
+	check(restored.outcome == CampaignState.Outcome.VALID and state.version == 6 and state.threat == 1
 		and state.best_threat == 0 and state.legacy_earned == 10
 		and restored.campaign.threat == 1 and restored.campaign.best_threat == 0 and restored.campaign.legacy_earned == 10
 		and campaign_snapshot(restored.campaign, false) == campaign_snapshot(campaign, false),
-		"Threat save: v5 round trip keeps Threat, best, earned and the scaled battle exactly")
+		"Threat save: v6 round trip keeps Threat, best, earned and the scaled battle exactly")
 	state_rejects(state, "Threat above unlocked", CORRUPT, func(s: Dictionary) -> void: s.threat = 2)
 	state_rejects(state, "negative Threat", CORRUPT, func(s: Dictionary) -> void: s.threat = -1)
 	state_rejects(state, "Threat over max", CORRUPT, func(s: Dictionary) -> void: s.threat = Campaign.THREAT_MAX + 1)
@@ -2975,7 +3179,7 @@ func test_threat_state() -> void:
 	state = state_json(CampaignState.capture(campaign, 0).state)
 	check(CampaignState.validate(state).outcome == CampaignState.Outcome.VALID and state.legacy_earned == 19
 		and state.best_threat == 1 and state.dynasty == 3,
-		"Threat save: mixed-Threat history saves as a valid v5 ledger")
+		"Threat save: mixed-Threat history saves as a valid v6 ledger")
 	# Earned is a range check: with best Threat 1 over two later secures it lies in 19..22 (10 + 6 + 6).
 	var richest: Dictionary = state.duplicate(true)
 	richest.legacy_earned = 22
@@ -3012,7 +3216,7 @@ func test_threat_state() -> void:
 	state_rejects(v2_secured, "v2 dynasty without its Legacy", CORRUPT, func(s: Dictionary) -> void: s.dynasty = 3)
 	check(migrated.campaign.found_dynasty(1) != null and migrated.campaign.battle.enemies[0].max_health == 90,
 		"Threat migration: migrated v2 dynasty can found at Threat 1")
-	# On disk: a v2 file loads unchanged; the next save writes v5 that reloads exactly.
+	# On disk: a v2 file loads unchanged; the next save writes v6 that reloads exactly.
 	var fixture := ProgressFixture.new("campaign.json")
 	check(fixture.owned, "Threat migration: isolated directory owned")
 	if not fixture.owned:
@@ -3025,9 +3229,9 @@ func test_threat_state() -> void:
 		and FileAccess.get_file_as_string(fixture.path) == JSON.stringify(v2_secured),
 		"Threat migration: v2 file loads through the store without being rewritten")
 	check(store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK
-		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 5
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 6
 		and CampaignSave.new(fixture.path).load_campaign().campaign.legacy_earned == 13,
-		"Threat migration: next save writes v5 that reloads exactly")
+		"Threat migration: next save writes v6 that reloads exactly")
 	check(fixture.cleanup() == OK, "Threat migration: directory cleaned")
 
 func campaign_finish(campaign: Campaign) -> Combat:
@@ -3056,7 +3260,8 @@ func campaign_snapshot(campaign: Campaign, identity: bool = true) -> Array:
 		combat.commander_damage, squads, campaign.gate_level, combat.is_defense,
 		combat.gate_max_health, combat.gate_health, combat.defeat_reason,
 		campaign.dynasty, campaign.legacy, campaign.drill_rank, campaign._battle_drill_rank,
-		campaign.threat, campaign.best_threat, campaign.legacy_earned, campaign.veteran_cadre]
+		campaign.threat, campaign.best_threat, campaign.legacy_earned, campaign.veteran_cadre,
+		campaign.last_defense_loss]
 
 func campaign_fresh(campaign: Campaign, previous: Combat, encounter: int) -> void:
 	var combat := campaign.battle

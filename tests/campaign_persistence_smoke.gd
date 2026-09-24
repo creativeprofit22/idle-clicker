@@ -202,13 +202,17 @@ func child(phase: String, path: String) -> void:
 				"resume-conquest: damaged battle, fractional time, level-1 snapshot vs owned level 2, queued farm")
 		"checkpoint":
 			check(campaign.phase == Campaign.Phase.CONQUEST_CLEARED and not processing
-				and not scene.get_node("%StartDefense").disabled and not campaign.battle.is_defense,
-				"checkpoint: restored checkpoint idle, Start Defense enabled, not auto-started")
+				and not scene.get_node("%StartDefense").disabled and not campaign.battle.is_defense
+				and campaign.last_defense_loss == Combat.DefeatReason.NONE
+				and not scene.get_node("%CampaignStatus").text.contains("Last defense"),
+				"checkpoint: restored checkpoint idle, Start Defense enabled, not auto-started, no loss hint before any defense")
 		"resume-defense":
 			check(campaign.phase == Campaign.Phase.DEFENDING and campaign.gate_level == 2
 				and campaign.battle.gate_max_health == 80 and campaign.battle.gate_health < 80
 				and scene.elapsed_usec == 750000 and campaign.pending_navigation == Campaign.Navigation.FARM
-				and processing, "resume-defense: damaged gate snapshot vs owned level, queued recovery, time")
+				and processing and campaign.last_defense_loss == Combat.DefeatReason.NONE
+				and scene.get_node("%CampaignStatus").text == "Counterattack · Defending the Stronghold",
+				"resume-defense: damaged gate snapshot vs owned level, queued recovery, time, no loss hint while defending")
 		"reset-interrupt":
 			check(campaign.phase == Campaign.Phase.CAMPAIGN_SECURED and campaign.can_found_dynasty(),
 				"reset-interrupt: secured campaign restored with reset available")

@@ -1,7 +1,7 @@
-# Campaign save contract — v1, with v2 (Legacy), v3 (Threat), v4 (away reward) and v5 (Veteran Cadre) amendments
+# Campaign save contract — v1, with v2 (Legacy), v3 (Threat), v4 (away reward), v5 (Veteran Cadre) and v6 (defense loss cause) amendments
 
-The current file format is **v5**; see "v5 amendment (Veteran Cadre)" at the end, which builds on
-"v4 amendment (away reward)", "v3 amendment (Threat)" and "v2 amendment (Legacy)". The earlier sections are kept as history and still govern every rule
+The current file format is **v6**; see "v6 amendment (defense loss cause)" at the end, which builds on
+"v5 amendment (Veteran Cadre)", "v4 amendment (away reward)", "v3 amendment (Threat)" and "v2 amendment (Legacy)". The earlier sections are kept as history and still govern every rule
 the amendments do not change.
 
 **Status: APPROVED 23 September 2026 — implemented.** In-memory state capture, validation
@@ -455,7 +455,7 @@ troop types at level 2; the gate still starts at 1. The purchase changes only `l
 
 **Field.** v5 adds `veteran_cadre`, a JSON boolean. The key set is the v4 set plus `veteran_cadre`;
 a missing key or any non-boolean value (number, string, null) is corrupt. Version 6 or higher is
-unsupported.
+unsupported. *(Superseded by v6: version 7 or higher is unsupported.)*
 
 **Ledger.** The exact Legacy ledger becomes
 `legacy + drill_spent(drill_rank) + (50 if veteran_cadre else 0) == legacy_earned`, so a flag set
@@ -464,7 +464,7 @@ no starting-level coupling: the dynasty that makes the purchase legitimately hol
 
 **Migration.** v1–v4 files are parsed under their own exact key sets and load with Veteran Cadre
 unowned; a v4 file carrying `veteran_cadre` is corrupt. Files are not rewritten on load; the next
-save writes v5.
+save writes v5. *(Superseded by v6: the next save writes v6.)*
 
 **v5 acceptance cases** (covered in `tests/run_tests.gd`, tests `test_veteran_cadre`,
 `test_veteran_cadre_state` and `test_campaign_scene_veteran_cadre`):
@@ -476,3 +476,38 @@ save writes v5.
 3. v1–v4 files load unowned with their Legacy intact; a v4 file loads without being rewritten and
    the next save writes v5 with the flag.
 4. The scene purchase saves immediately; suspended or preview-open purchases change nothing.
+
+## v6 amendment (defense loss cause)
+
+Approved 24 September 2026. When the Counterattack is lost, the campaign records why so the player
+is told the cause and the upgrade that addresses it, including after relaunch. The cause is only a
+hint: it changes no reward, level, clearance, routing or Legacy.
+
+**Field.** v6 adds `last_defense_loss`, a JSON integer holding a `Combat.DefeatReason` value:
+`0` (NONE), `2` (GATE_DESTROYED) or `3` (TIMEOUT). The key set is the v5 set plus
+`last_defense_loss`. A missing key, a non-integer, a boolean, `1` (ARMY_DEFEAT, impossible in
+defense) or any out-of-range value is corrupt. Version 7 or higher is unsupported.
+
+**Lifecycle.** A lost defense sets the cause from the battle's own defeat reason (gate at zero is
+decided before the round-60 timeout). `Start Defense` clears it; a victory can only follow that
+start, so it records NONE. Founding a dynasty also resets it.
+
+**Cross-field.** A non-NONE cause is corrupt unless all three stages are cleared and the phase is
+RUNNING or CONQUEST_CLEARED (never DEFENDING or CAMPAIGN_SECURED).
+
+**Migration.** v1–v5 files are parsed under their own exact key sets and load with NONE; a v5 file
+carrying `last_defense_loss` is corrupt. Files are not rewritten on load; the next save writes v6.
+
+**v6 acceptance cases** (covered in `tests/run_tests.gd`, tests `test_defense_loss_cause`,
+`test_defense_loss_cause_state` and `test_campaign_scene_defense_loss_cause`):
+
+1. Gate-broken and timeout losses record their cause; a gate at zero on the round the last enemy
+   dies records the gate cause; a round-60 win records NONE; Start Defense clears the cause.
+2. Gold, levels, gate level, clearances, queued farm and Legacy match a run without the field.
+3. A state holding either cause round-trips exactly through save and restore.
+4. Missing, boolean, string, float-fraction, ARMY_DEFEAT and out-of-range values, a v5 file carrying
+   the key, and a non-NONE cause while defending, secured or before the stronghold is cleared are
+   corrupt; version 7 is unsupported.
+5. v1–v5 files load with NONE and are not rewritten on load; the next save writes v6.
+6. The scene shows the cause and hint in the result and status text, and the status text again
+   after relaunch.
