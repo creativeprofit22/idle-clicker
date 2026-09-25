@@ -2101,6 +2101,45 @@ left", disabled, under the enemy line) and `campaign-rally-cooldown` ("Rally rec
 20 battle rounds (20 s)" after Border's early win). All are readable with no overlap. The physical gate stays **pending**, and there's no art, export,
 Android or release claim.
 
+### Shield Wall tactical ability — verified locally 25 Sep 2026 (uncommitted tree on `7cf07f4`)
+
+Shield Wall (−25% incoming damage per target for 5 rounds, then a 20-round cooldown; rules in
+`docs/first-playable.md`) mirrors Rally in the combat and campaign layers. The campaign save is now
+**v8** (`shield_wall_rounds`, `shield_wall_cooldown`); v1–v7 load with Shield Wall ready and are
+not rewritten on load, a v7 file carrying the keys is corrupt, and v9 is unsupported. The away
+reward is untouched. Godot ran from the pinned GUI executable; the console wrapper failed to
+start from this shell.
+
+| Check | Actual result |
+| --- | --- |
+| Import | exit 0, no errors or warnings |
+| Headless normal / forced / rerun | 4696/0 exit 0 · 4697/1 (only `FAIL forced runner failure`) exit 1 · 4696/0 exit 0 |
+| `scene_smoke` | 105/0, exit 0 |
+| Native `focus-only` | 14/0, child exit 0, observations complete, child reaped, reader joined |
+| Native `campaign` | **FAILED** (incomplete, 66/1): "native minimized window retained focus" after all three Shield Wall checks passed; child reaped, reader joined |
+| Native `defense` (twice) | **FAILED** (incomplete, 55/1 both times), same gate, before the Shield Wall step; child reaped, reader joined |
+| `windows_g6_driver.py` | **FAILED** 19/1: "game paused (focus lost or minimized)"; its v8 check passed (dynasty 2 saved as v8 with Rally and Shield Wall ready); both launches reaped |
+| Rerun, desktop left untouched: native `campaign` | 73/0, child and driver exit 0, observations complete, child reaped, reader joined |
+| Rerun: native `defense` | 83/0, child and driver exit 0, observations complete, child reaped, reader joined |
+| Rerun: `windows_g6_driver.py` | 27/0, exit 0, both launches reaped with reader joined; dynasty-2 save v8 with Rally and Shield Wall ready |
+
+Diagnosis: in all three failed native runs Windows already reported the window as **not
+foreground** at the minimize request (`foreground_equal=False`), before the game asked to
+minimize. A clean worktree of the unchanged `7cf07f4` baseline, run in the same
+session, passed `defense` (77/0) once but then failed `campaign` (58/1) at the identical gate.
+This matches the known foreground-contention flake recorded on 10, 23 and 24 Sep, not a
+Shield Wall regression. No test, deadline or focus gate was changed and no further unchanged
+retries were made while the desktop was in use. After the user agreed to leave the desktop untouched, the
+same unchanged code passed all three on the first try; the earlier failures are kept above.
+
+Inspected captures from the campaign run: `campaign-shield-wall-active` ("Shield Wall active — 5
+rounds left" directly under "Rally active — 5 rounds left", both disabled, no overlap) and
+`campaign-shield-wall-cooldown` ("Shield Wall recovering — ready in 20 battle rounds (20 s)"
+under Rally's matching line after Border's early win). `defense-shield-wall-active` (540×480,
+from the rerun) shows "Shield Wall active — 5 rounds left" with its keyboard focus outline directly
+under "Rally active — 5 rounds left", both fully visible with no overlap. The physical gate stays **pending**, and there's no art, export,
+Android or release claim.
+
 ## Boundaries
 
 Combat rules live only in `src/combat.gd`; `src/economy.gd` owns gold, troop
