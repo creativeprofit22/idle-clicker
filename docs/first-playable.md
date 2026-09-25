@@ -104,9 +104,29 @@ start of every dynasty with no purchase or unlock state.
 | Commander strike | Not boosted; still added separately with its fixed snapshot damage |
 | Never changes | Gold rewards, Legacy, health (troops, enemies, gate), gate, Threat, round frequency, away reward |
 | Dynasty reset | Found a Dynasty makes Rally ready |
-| Save | Saved (campaign save v7) and restored exactly, so relaunching cannot skip a cooldown |
+| Save | Saved (campaign save v7 and later) and restored exactly, so relaunching cannot skip a cooldown |
 
 A run that never presses Rally gives exactly the same results as before Rally existed.
+
+**Shield Wall** (approved 25 Sep 2026) is the defensive counterpart to Rally: a campaign-only
+tactical ability, available from the start of every dynasty with no purchase or unlock state.
+
+| Rule | Value |
+| --- | --- |
+| Cut | −25% incoming enemy damage: each round's total incoming damage `d` per target becomes `(d × 75 + 50) / 100` (integer, rounded half up). In the Counterattack the target is the shield squad or the gate; elsewhere each player squad's round total. Examples: 34→26, 16→12, 6→5, 3→2, 2→2, 1→1, 0→0 |
+| Duration | 5 resolved battle rounds |
+| Cooldown | 20 resolved battle rounds, starting after the last shielded round (fastest cycle 25 rounds) |
+| Modes | Any ongoing campaign battle: conquest (Advance), farming and the Counterattack. Refused at the cleared checkpoint, once secured and on a finished battle |
+| Timing | May be pressed mid-round; like Rally and the commander strike it applies from the next round boundary |
+| Refusal | While active, while cooling down, with no ongoing battle, while suspended and with the reset preview open |
+| Battle ends while active | Remaining shielded rounds are dropped and the full 20-round cooldown starts (also on any battle restart) |
+| Cooldown clock | Only resolved battle rounds count; not the checkpoint, suspension, minimizing or closed-app time |
+| Rally | Separate duration and cooldown; both can be active in the same round |
+| Never changes | Commander strike, Drill, player damage, gold rewards, Legacy, Threat, gate max health, round frequency, away reward. Gate-loss and timeout keep their meaning |
+| Dynasty reset | Found a Dynasty makes Shield Wall ready |
+| Save | Saved (campaign save v8) and restored exactly |
+
+A run that never presses Shield Wall gives exactly the same results as before Shield Wall existed.
 
 **Found a Dynasty** is available at every secured campaign, without limit. The native
 preview shows actual gold, troop and gate losses, the Legacy, Drill rank and Veteran Cadre state that are kept,

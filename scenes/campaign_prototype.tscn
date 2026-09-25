@@ -167,6 +167,13 @@ action_mode = 0
 text = "Rally — +50% army damage for 5 rounds"
 autowrap_mode = 2
 
+[node name="ShieldWall" type="Button" parent="Margin/Scroll/Column"]
+unique_name_in_owner = true
+layout_mode = 2
+action_mode = 0
+text = "Shield Wall — −25% enemy damage for 5 rounds"
+autowrap_mode = 2
+
 [node name="StartDefense" type="Button" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 layout_mode = 2

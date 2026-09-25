@@ -1,7 +1,7 @@
-# Campaign save contract — v1, with v2 (Legacy), v3 (Threat), v4 (away reward), v5 (Veteran Cadre), v6 (defense loss cause) and v7 (Rally) amendments
+# Campaign save contract — v1, with v2 (Legacy), v3 (Threat), v4 (away reward), v5 (Veteran Cadre), v6 (defense loss cause), v7 (Rally) and v8 (Shield Wall) amendments
 
-The current file format is **v7**; see "v7 amendment (Rally)" at the end, which builds on
-"v6 amendment (defense loss cause)", "v5 amendment (Veteran Cadre)", "v4 amendment (away reward)", "v3 amendment (Threat)" and "v2 amendment (Legacy)". The earlier sections are kept as history and still govern every rule
+The current file format is **v8**; see "v8 amendment (Shield Wall)" at the end, which builds on
+"v7 amendment (Rally)", "v6 amendment (defense loss cause)", "v5 amendment (Veteran Cadre)", "v4 amendment (away reward)", "v3 amendment (Threat)" and "v2 amendment (Legacy)". The earlier sections are kept as history and still govern every rule
 the amendments do not change.
 
 **Status: APPROVED 23 September 2026 — implemented.** In-memory state capture, validation
@@ -524,7 +524,7 @@ advance it and the away reward is unchanged.
 **Fields.** v7 adds two JSON integers: `rally_rounds` (boosted rounds still to resolve, 0..5)
 and `rally_cooldown` (cooldown rounds left, 0..20). Both 0 means ready. The key set is the v6
 set plus both keys. A missing key, boolean, string, fractional or out-of-range value is corrupt.
-Version 8 or higher is unsupported.
+Version 8 or higher is unsupported. *(Superseded by v8: version 9 or higher is unsupported.)*
 
 **Cross-field.** Both nonzero is corrupt. `rally_rounds > 0` is corrupt unless the phase is
 RUNNING or DEFENDING (an ongoing battle) and the battle has resolved at least
@@ -532,6 +532,7 @@ RUNNING or DEFENDING (an ongoing battle) and the battle has resolved at least
 
 **Migration.** v1–v6 files are parsed under their own exact key sets and load with Rally ready;
 a v6 file carrying either key is corrupt. Files are not rewritten on load; the next save writes v7.
+*(Superseded by v8: the next save writes v8.)*
 
 **v7 acceptance cases** (covered in `tests/run_tests.gd`, tests `test_rally`, `test_rally_state`
 and `test_campaign_scene_rally`):
@@ -539,5 +540,37 @@ and `test_campaign_scene_rally`):
 1. Active, cooling and ready states round-trip exactly through save and restore.
 2. The corrupt values above, both nonzero, an active Rally outside a running battle or older than
    its battle, and a v6 file carrying a Rally key are corrupt; version 8 is unsupported.
+   *(Superseded by v8: version 9 is unsupported.)*
 3. v1–v6 files load with Rally ready and are not rewritten on load; the next save writes v7.
+   *(Superseded by v8: the next save writes v8.)*
 4. Pressing Rally in the scene saves immediately and relaunch restores the remaining cooldown.
+
+## v8 amendment (Shield Wall)
+
+Approved 25 September 2026. Shield Wall (−25% incoming enemy damage per target for 5 resolved
+rounds, then a 20-round cooldown; see `first-playable.md`) is **saved** exactly like Rally, so
+relaunching can never skip a cooldown or restart a cut. Its cooldown counts resolved battle rounds
+only, so closed-app time does not advance it and the away reward is unchanged. Rally and Shield
+Wall have separate fields and may both be active.
+
+**Fields.** v8 adds two JSON integers: `shield_wall_rounds` (shielded rounds still to resolve,
+0..5) and `shield_wall_cooldown` (cooldown rounds left, 0..20). Both 0 means ready. The key set is
+the v7 set plus both keys. A missing key, boolean, string, fractional or out-of-range value is
+corrupt. Version 9 or higher is unsupported.
+
+**Cross-field.** Both nonzero is corrupt. `shield_wall_rounds > 0` is corrupt unless the phase is
+RUNNING or DEFENDING (an ongoing battle) and the battle has resolved at least
+`5 - shield_wall_rounds` rounds. A cooldown may exist in any phase.
+
+**Migration.** v1–v7 files are parsed under their own exact key sets and load with Shield Wall
+ready; a v7 file carrying either key is corrupt. Files are not rewritten on load; the next save
+writes v8.
+
+**v8 acceptance cases** (covered in `tests/run_tests.gd`, tests `test_shield_wall`,
+`test_shield_wall_state` and `test_campaign_scene_shield_wall`):
+
+1. Active, cooling and ready states round-trip exactly through save and restore.
+2. The corrupt values above, both nonzero, an active Shield Wall outside a running battle or older
+   than its battle, and a v7 file carrying a Shield Wall key are corrupt; version 9 is unsupported.
+3. v1–v7 files load with Shield Wall ready and are not rewritten on load; the next save writes v8.
+4. Pressing Shield Wall in the scene saves immediately and relaunch restores the remaining cooldown.

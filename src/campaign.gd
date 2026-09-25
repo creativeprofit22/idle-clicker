@@ -36,6 +36,10 @@ var last_defense_loss: int = Combat.DefeatReason.NONE
 # (0..RALLY_COOLDOWN). Never both nonzero; both 0 means ready.
 var rally_rounds: int = 0
 var rally_cooldown: int = 0
+# Shield Wall: shielded rounds still to resolve (0..SHIELD_WALL_ROUNDS) and cooldown rounds left
+# (0..SHIELD_WALL_COOLDOWN). Never both nonzero; both 0 means ready. Independent of Rally.
+var shield_wall_rounds: int = 0
+var shield_wall_cooldown: int = 0
 
 const FIRST_SECURE_LEGACY: int = 10
 const REPEAT_SECURE_LEGACY: int = 3
@@ -46,6 +50,9 @@ const THREAT_MAX: int = 10
 const RALLY_PERCENT: int = Combat.RALLY_PERCENT
 const RALLY_ROUNDS: int = 5
 const RALLY_COOLDOWN: int = 20
+const SHIELD_WALL_PERCENT: int = Combat.SHIELD_WALL_PERCENT
+const SHIELD_WALL_ROUNDS: int = 5
+const SHIELD_WALL_COOLDOWN: int = 20
 # Closed-app reward: capped gold from the best farmable cleared territory, never simulated combat.
 const AWAY_CAP_SECONDS: int = 28800
 const AWAY_MINUTES_PER_VICTORY: int = 2
@@ -86,14 +93,36 @@ func rally() -> bool:
 	rally_rounds = RALLY_ROUNDS
 	return true
 
-# Resolves one round of the current battle with any Rally boost, then ticks Rally.
-# The cooldown clock advances only here, so it counts resolved battle rounds only.
+# Shield Wall is usable in any ongoing campaign battle when neither active nor cooling down.
+func can_shield_wall() -> bool:
+	return phase in [Phase.RUNNING, Phase.DEFENDING] and battle != null \
+		and battle.result == Combat.Result.ONGOING and shield_wall_rounds == 0 \
+		and shield_wall_cooldown == 0
+
+# Like Rally, the cut starts at the next resolved round.
+func shield_wall() -> bool:
+	if not can_shield_wall():
+		return false
+	shield_wall_rounds = SHIELD_WALL_ROUNDS
+	return true
+
+# Resolves one round of the current battle with any Rally boost and Shield Wall cut, then ticks
+# both. The cooldown clocks advance only here, so they count resolved battle rounds only.
 func resolve_round() -> void:
 	if battle == null or battle.result != Combat.Result.ONGOING:
 		return
 	battle.rally_active = rally_rounds > 0
+	battle.shield_wall_active = shield_wall_rounds > 0
 	battle.step_round()
 	battle.rally_active = false
+	battle.shield_wall_active = false
+	if shield_wall_rounds > 0:
+		shield_wall_rounds -= 1
+		if shield_wall_rounds == 0 or battle.result != Combat.Result.ONGOING:
+			shield_wall_rounds = 0
+			shield_wall_cooldown = SHIELD_WALL_COOLDOWN
+	elif shield_wall_cooldown > 0:
+		shield_wall_cooldown -= 1
 	if rally_rounds > 0:
 		rally_rounds -= 1
 		if rally_rounds == 0 or battle.result != Combat.Result.ONGOING:
@@ -107,6 +136,12 @@ func _drop_rally() -> void:
 	if rally_rounds > 0:
 		rally_rounds = 0
 		rally_cooldown = RALLY_COOLDOWN
+
+# Same transitions as Rally: the rest of an active Shield Wall is dropped and the full cooldown starts.
+func _drop_shield_wall() -> void:
+	if shield_wall_rounds > 0:
+		shield_wall_rounds = 0
+		shield_wall_cooldown = SHIELD_WALL_COOLDOWN
 
 func drill_cost() -> int:
 	return 0 if drill_rank >= DRILL_MAX else DRILL_COSTS[drill_rank]
@@ -169,6 +204,8 @@ func found_dynasty(next_threat: int = 0) -> Combat:
 	last_defense_loss = Combat.DefeatReason.NONE
 	rally_rounds = 0
 	rally_cooldown = 0
+	shield_wall_rounds = 0
+	shield_wall_cooldown = 0
 	return _begin_encounter(Data.Encounter.BORDER_SKIRMISH)
 
 func gate_purchase_cost() -> int:
@@ -221,6 +258,7 @@ func _begin_encounter(encounter: int) -> Combat:
 	if created != null:
 		_battle_drill_rank = drill_rank
 		_drop_rally()
+		_drop_shield_wall()
 	if created != null and created.is_defense:
 		created.gate_max_health = 80 + 60 * (gate_level - 1)
 		created.gate_health = created.gate_max_health
@@ -265,6 +303,7 @@ func settle(completed: Combat) -> bool:
 		return false
 	# Normally already dropped by resolve_round(); covers a battle ended by any other path.
 	_drop_rally()
+	_drop_shield_wall()
 	var victory: bool = completed.result == Combat.Result.VICTORY
 	if victory:
 		match current_encounter:

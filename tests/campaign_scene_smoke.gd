@@ -146,12 +146,33 @@ func run() -> void:
 		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).rally_rounds == campaign.rally_rounds,
 		"mouse Rally arms the boost, saves it and never moves focus to another control")
 	await capture("campaign-rally-active")
+	# Shield Wall by mouse next to Rally in the same Border: arms, saves, focus never moves elsewhere.
+	var shield_wall: Button = scene.get_node("%ShieldWall")
+	check(not shield_wall.disabled and shield_wall.text == "Shield Wall — −25% enemy damage for 5 rounds"
+		and campaign.can_shield_wall(), "Shield Wall ready during the first Border alongside active Rally")
+	var shield_focus_before: Control = root.gui_get_focus_owner()
+	await click(shield_wall)
+	check(campaign.battle.result == Presentation.Combat.Result.ONGOING and campaign.shield_wall_rounds > 0
+		and campaign.rally_rounds > 0 and shield_wall.disabled and shield_wall.text.begins_with("Shield Wall active — ")
+		and root.gui_get_focus_owner() in [shield_focus_before, shield_wall]
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).shield_wall_rounds == campaign.shield_wall_rounds,
+		"mouse Shield Wall arms the cut, saves it and never moves focus to another control")
+	await capture("campaign-shield-wall-active")
 	await next_battle()
 	check(campaign.rally_rounds == 0 and campaign.rally_cooldown > 0 and campaign.rally_cooldown <= 20
 		and rally.disabled and rally.text.begins_with("Rally recovering — ready in %d battle round" % campaign.rally_cooldown)
 		and rally.text.ends_with("(%d s)" % campaign.rally_cooldown),
 		"Border end drops Rally to a cooldown shown with rounds and seconds left")
 	await capture("campaign-rally-cooldown")
+	check(campaign.shield_wall_rounds == 0 and campaign.shield_wall_cooldown > 0 and campaign.shield_wall_cooldown <= 20
+		and shield_wall.disabled
+		and shield_wall.text.begins_with("Shield Wall recovering — ready in %d battle round" % campaign.shield_wall_cooldown)
+		and shield_wall.text.ends_with("(%d s)" % campaign.shield_wall_cooldown),
+		"Border end drops Shield Wall to a cooldown shown with rounds and seconds left")
+	scene.get_node("Margin/Scroll").ensure_control_visible(shield_wall)
+	await process_frame
+	await process_frame
+	await capture("campaign-shield-wall-cooldown")
 	check(campaign.border_cleared and campaign.current_encounter == Data.Encounter.ARCHER_POSITION
 		and campaign.gold == 10 and scene.get_node("%LastResult").text.contains("+10"),
 		"real-time Border victory automatically advances to Archer and pays once")
@@ -397,7 +418,7 @@ func test_veteran_cadre(secured: Dictionary) -> bool:
 		and button.text == "Veteran Cadre owned — new dynasties start troops at level 2"
 		and scene.get_node("%DynastyStatus").text.ends_with(" · Veteran Cadre")
 		and scene.get_node("%SaveStatus").text == "Saved" and on_disk is Dictionary
-		and on_disk.veteran_cadre == true and on_disk.legacy == 13 and on_disk.version == 7,
+		and on_disk.veteran_cadre == true and on_disk.legacy == 13 and on_disk.version == 8,
 		"native Veteran Cadre click spends 50 Legacy once, shows owned and saves v5")
 	await click(scene.get_node("%FoundDynasty"))
 	await process_frame
@@ -604,6 +625,22 @@ func test_defense() -> bool:
 		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).rally_rounds == campaign.rally_rounds,
 		"keyboard Rally in defense arms, saves, keeps focus and stays visible at 540x480")
 	await capture("defense-rally-active")
+	# Shield Wall by keyboard in the same Counterattack, with Rally still active: both readable, no overlap.
+	var shield_wall: Button = scene.get_node("%ShieldWall")
+	check(assault.result == Presentation.Combat.Result.ONGOING and not shield_wall.disabled
+		and campaign.can_shield_wall() and campaign.rally_rounds > 0,
+		"Shield Wall ready in the retried Counterattack while Rally is active")
+	await keyboard(shield_wall)
+	await process_frame
+	var visible := root.get_visible_rect()
+	check(campaign.shield_wall_rounds > 0 and campaign.rally_rounds > 0 and shield_wall.disabled
+		and shield_wall.text.begins_with("Shield Wall active — ") and rally.text.begins_with("Rally active — ")
+		and root.gui_get_focus_owner() == shield_wall and visible.encloses(shield_wall.get_global_rect())
+		and visible.encloses(rally.get_global_rect())
+		and not shield_wall.get_global_rect().intersects(rally.get_global_rect())
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).shield_wall_rounds == campaign.shield_wall_rounds,
+		"keyboard Shield Wall in defense arms, saves, keeps focus and shows beside Rally at 540x480")
+	await capture("defense-shield-wall-active")
 	root.size = Vector2i(720, 720)
 	root.content_scale_size = Vector2i(720, 720)
 	await process_frame
@@ -626,6 +663,11 @@ func test_defense() -> bool:
 		and scene.get_node("%Rally").disabled
 		and scene.get_node("%Rally").text.begins_with("Rally recovering — ready in %d battle round" % campaign.rally_cooldown),
 		"rallied defense win leaves Rally recovering and disabled once secured")
+	check(campaign.shield_wall_rounds == 0 and campaign.shield_wall_cooldown > 0 and campaign.shield_wall_cooldown <= 20
+		and scene.get_node("%ShieldWall").disabled
+		and scene.get_node("%ShieldWall").text.begins_with(
+			"Shield Wall recovering — ready in %d battle round" % campaign.shield_wall_cooldown),
+		"shielded defense win leaves Shield Wall recovering and disabled once secured")
 	await capture("campaign-secured")
 	return true
 

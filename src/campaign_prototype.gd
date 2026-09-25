@@ -50,6 +50,7 @@ func _ready() -> void:
 	%Frontier.pressed.connect(_request_frontier)
 	%StartDefense.pressed.connect(_start_defense)
 	%Rally.pressed.connect(_rally)
+	%ShieldWall.pressed.connect(_shield_wall)
 	%GateUpgrade.pressed.connect(_purchase_gate)
 	%TrainDrill.pressed.connect(_train_drill)
 	%VeteranCadre.pressed.connect(_buy_veteran_cadre)
@@ -326,6 +327,15 @@ func _rally() -> void:
 		_save_campaign()
 	_refresh()
 
+# Like Rally: takes effect at the next round boundary; never moves focus.
+func _shield_wall() -> void:
+	_sync_suspension()
+	if suspended or dynasty_preview_open:
+		return
+	if campaign.shield_wall():
+		_save_campaign()
+	_refresh()
+
 func _purchase_gate() -> void:
 	_sync_suspension()
 	if suspended or dynasty_preview_open:
@@ -450,6 +460,19 @@ func _refresh() -> void:
 		%Rally.text = "Rally — +%d%% army damage for %d rounds" % [Campaign.RALLY_PERCENT, Campaign.RALLY_ROUNDS]
 	else:
 		%Rally.text = "Rally — available during battles"
+	%ShieldWall.disabled = blocked or not campaign.can_shield_wall()
+	if campaign.shield_wall_rounds > 0:
+		%ShieldWall.text = "Shield Wall active — %d round%s left" % [campaign.shield_wall_rounds,
+			"" if campaign.shield_wall_rounds == 1 else "s"]
+	elif campaign.shield_wall_cooldown > 0:
+		%ShieldWall.text = "Shield Wall recovering — ready in %d battle round%s (%d s)" % [
+			campaign.shield_wall_cooldown, "" if campaign.shield_wall_cooldown == 1 else "s",
+			roundi(campaign.shield_wall_cooldown * Data.ROUND_SECONDS)]
+	elif campaign.can_shield_wall():
+		%ShieldWall.text = "Shield Wall — −%d%% enemy damage for %d rounds" % [
+			Campaign.SHIELD_WALL_PERCENT, Campaign.SHIELD_WALL_ROUNDS]
+	else:
+		%ShieldWall.text = "Shield Wall — available during battles"
 	var gate_cost: int = campaign.gate_purchase_cost()
 	%GateUpgrade.text = "Gate Lv.%d · %s" % [campaign.gate_level,
 		"MAX" if gate_cost == 0 else "Upgrade %d gold" % gate_cost]

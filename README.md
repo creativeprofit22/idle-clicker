@@ -117,8 +117,20 @@ rounds (N s)", or "Rally — available during battles" at the checkpoint or once
 cooldown only counts resolved rounds: it pauses at the checkpoint, while suspended and while the
 app is closed. If a battle ends while Rally is active the rest is lost and the full cooldown
 starts. Found a Dynasty makes it ready. It is refused while suspended or with the reset preview
-open, autosaves when pressed, and is stored in campaign save v7 (older saves load it ready).
+open, autosaves when pressed, and is stored in the campaign save (introduced in v7, now v8;
+older saves load it ready).
 Playing without Rally gives exactly the same results as before.
+
+**Shield Wall** (the button under Rally) is the defensive counterpart: it cuts incoming enemy
+damage by **25%** for the next **5 battle rounds**, then needs **20 battle rounds** to recover.
+Each round's total damage to one target (a squad, or the gate in the Counterattack) is cut and
+rounded, so 34 becomes 26 and 3 becomes 2. It works in any battle, starts at the next round, and
+has its own cooldown, so it can run at the same time as Rally. It never changes your damage, gold,
+Legacy, Threat, gate size or round timing. The button reads "Shield Wall — −25% enemy damage for
+5 rounds", "Shield Wall active — N rounds left", "Shield Wall recovering — ready in N battle
+rounds (N s)", or "Shield Wall — available during battles". Like Rally, a battle ending while it
+is active starts the full cooldown, founding a dynasty makes it ready, and its state is saved
+(campaign save v8). Playing without Shield Wall gives exactly the same results as before.
 
 ### Legacy, Drill ranks and repeatable dynasty resets
 

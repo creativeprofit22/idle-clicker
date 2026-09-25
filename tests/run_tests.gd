@@ -204,6 +204,9 @@ func run() -> void:
 	test_rally()
 	test_rally_state()
 	test_campaign_scene_rally()
+	test_shield_wall()
+	test_shield_wall_state()
+	test_campaign_scene_shield_wall()
 	test_campaign_state_round_trips()
 	test_campaign_state_duplicates()
 	test_campaign_state_rejection()
@@ -580,8 +583,8 @@ func test_campaign_state_rejection() -> void:
 	state_rejects(base, "battle not object", CORRUPT, func(s: Dictionary) -> void: s.battle = [])
 	state_rejects(base, "wrong format", CORRUPT, func(s: Dictionary) -> void: s.format = "idle-clicker-progress")
 	state_rejects(base, "missing format", CORRUPT, func(s: Dictionary) -> void: s.erase("format"))
-	state_rejects(base, "future version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 8)
-	state_rejects(base, "future version float", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 8.0)
+	state_rejects(base, "future version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 9)
+	state_rejects(base, "future version float", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 9.0)
 	state_rejects(base, "version zero", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 0)
 	state_rejects(base, "negative version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = -1)
 	state_rejects(base, "huge version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 1e20)
@@ -739,15 +742,15 @@ func test_veteran_cadre_state() -> void:
 	var campaign: Campaign = loaded.campaign
 	check(campaign.buy_veteran_cadre() and campaign.legacy == 5, "Veteran Cadre save: purchase from loaded fixture")
 	var captured := CampaignState.capture(campaign, 0)
-	check(captured.outcome == CampaignState.Outcome.VALID and captured.state.version == 7
+	check(captured.outcome == CampaignState.Outcome.VALID and captured.state.version == 8
 		and captured.state.veteran_cadre == true and captured.state.legacy == 5 and captured.state.legacy_earned == 55,
-		"Veteran Cadre save: v7 capture keeps the flag and the spend")
+		"Veteran Cadre save: v8 capture keeps the flag and the spend")
 	var owned: Dictionary = state_json(captured.state)
 	var restored := CampaignState.restore(owned)
 	check(restored.outcome == CampaignState.Outcome.VALID and restored.campaign.veteran_cadre
 		and CampaignState.capture(restored.campaign, 0).state == captured.state
 		and campaign_snapshot(restored.campaign, false) == campaign_snapshot(campaign, false),
-		"Veteran Cadre save: v7 round trip is exact")
+		"Veteran Cadre save: v8 round trip is exact")
 	check(restored.campaign.found_dynasty() != null and restored.campaign.levels == [2, 2, 2]
 		and restored.campaign.gate_level == 1 and restored.campaign.dynasty == 7
 		and CampaignState.capture(restored.campaign, 0).outcome == CampaignState.Outcome.VALID,
@@ -793,14 +796,22 @@ func test_veteran_cadre_state() -> void:
 		check(from_disk.campaign.buy_veteran_cadre() and store.save_campaign(from_disk.campaign, 0) == OK, "Veteran Cadre save: bought and saved")
 		var written: Variant = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
 		var relaunched := CampaignSave.new(fixture.path).load_campaign()
-		check(written.version == 7 and written.veteran_cadre == true and relaunched.outcome == CampaignSave.Outcome.LOADED
+		check(written.version == 8 and written.veteran_cadre == true and relaunched.outcome == CampaignSave.Outcome.LOADED
 			and relaunched.campaign.veteran_cadre and relaunched.campaign.legacy == 5,
-			"Veteran Cadre save: next save writes v7 that relaunches owned")
+			"Veteran Cadre save: next save writes v8 that relaunches owned")
 	check(fixture.cleanup() == OK, "Veteran Cadre save: directory cleaned")
 
-# Build a contract-v6 state from a v7 capture (drop the Rally counters) as older builds wrote it.
-func state_as_v6(state: Dictionary) -> Dictionary:
+# Build a contract-v7 state from a v8 capture (drop the Shield Wall counters) as older builds wrote it.
+func state_as_v7(state: Dictionary) -> Dictionary:
 	var old: Dictionary = state.duplicate(true)
+	old.version = 7
+	old.erase("shield_wall_rounds")
+	old.erase("shield_wall_cooldown")
+	return old
+
+# Build a contract-v6 state from a v8 capture (drop Shield Wall and the Rally counters) as older builds wrote it.
+func state_as_v6(state: Dictionary) -> Dictionary:
+	var old: Dictionary = state_as_v7(state)
 	old.version = 6
 	old.erase("rally_rounds")
 	old.erase("rally_cooldown")
@@ -901,9 +912,9 @@ func test_campaign_state_migration() -> void:
 		and FileAccess.get_file_as_string(fixture.path) == JSON.stringify(v1),
 		"Campaign migration: v1 file loads through the store without being rewritten")
 	check(store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK
-		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 7
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 8
 		and CampaignSave.new(fixture.path).load_campaign().campaign.legacy == 3,
-		"Campaign migration: next save writes v7 that reloads exactly")
+		"Campaign migration: next save writes v8 that reloads exactly")
 	check(fixture.cleanup() == OK, "Campaign migration: directory cleaned")
 
 func campaign_running(rounds: int = 2, gold: int = 7) -> Campaign:
@@ -962,7 +973,7 @@ func test_campaign_save_format() -> void:
 	var base: Dictionary = CampaignState.capture(campaign_running(), 250000).state
 	var valid: String = JSON.stringify(base)
 	check(valid.contains('"gold":7') and valid.contains('"last_defense_loss":0,')
-		and valid.ends_with('"version":7,"veteran_cadre":false}'), "Campaign save format: canonical integer text")
+		and valid.ends_with('"version":8,"veteran_cadre":false}'), "Campaign save format: canonical integer text")
 	var backup: String = JSON.stringify(CampaignState.capture(campaign_running(1), 0).state)
 	check(fixture.put(backup, ".bak") == OK, "Campaign save format: valid backup beside every primary")
 	var mutated := func(mutate: Callable) -> String:
@@ -985,7 +996,7 @@ func test_campaign_save_format() -> void:
 		mutated.call(func(s: Dictionary) -> void: s.battle.player_health[0] = 121),
 		mutated.call(func(s: Dictionary) -> void: s.settled = true)]
 	check(corrupt[7].length() == 4097, "Campaign save format: oversize fixture is 4097 bytes")
-	var unsupported: Array[String] = [mutated.call(func(s: Dictionary) -> void: s.version = 8),
+	var unsupported: Array[String] = [mutated.call(func(s: Dictionary) -> void: s.version = 9),
 		'{"format":"idle-clicker-campaign","version":99,"gold":"future payload"}']
 	var replacement := campaign_running(3)
 	for expected in [CampaignSave.Outcome.CORRUPT, CampaignSave.Outcome.UNSUPPORTED]:
@@ -1237,7 +1248,7 @@ func test_campaign_scene_saves() -> void:
 	recovered.free()
 	# Unusable primaries: fresh session, saving disabled, file preserved.
 	var unsupported_state: Dictionary = (expected as Dictionary).duplicate(true)
-	unsupported_state.version = 8
+	unsupported_state.version = 9
 	var backup_bytes := FileAccess.get_file_as_bytes(path + ".bak")
 	for case in [["{", "damaged"], [JSON.stringify(unsupported_state), "from an unsupported version"], ["", "unreadable"]]:
 		if case[1] == "unreadable":
@@ -1420,16 +1431,16 @@ func test_away_reward_format() -> void:
 	var CORRUPT := CampaignState.Outcome.CORRUPT
 	var stamped: Dictionary = CampaignState.capture(campaign_running(), 250000, 1700000000).state
 	var restored := CampaignState.restore(state_json(stamped))
-	check(stamped.version == 7 and restored.outcome == CampaignState.Outcome.VALID and restored.saved_at == 1700000000
+	check(stamped.version == 8 and restored.outcome == CampaignState.Outcome.VALID and restored.saved_at == 1700000000
 		and CampaignState.capture(restored.campaign, restored.round_progress_usec, restored.saved_at).state == stamped,
-		"Away save: v7 round trip keeps saved_at exactly")
+		"Away save: v8 round trip keeps saved_at exactly")
 	state_rejects(stamped, "missing saved_at", CORRUPT, func(s: Dictionary) -> void: s.erase("saved_at"))
 	state_rejects(stamped, "negative saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = -1)
 	state_rejects(stamped, "fractional saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = 1.5)
 	state_rejects(stamped, "string saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = "1700000000")
 	state_rejects(stamped, "huge saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = ProgressSave.MAX_GOLD + 1)
 	state_rejects(stamped, "v3 carrying saved_at", CORRUPT, func(s: Dictionary) -> void: s.version = 3)
-	state_rejects(stamped, "version 8", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 8)
+	state_rejects(stamped, "version 9", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 9)
 	# v1-v3 files migrate with an unknown (0) stamp, so they never pay an away reward.
 	var secured: Dictionary = state_json(CampaignState.capture(state_secured(), 0, 1700000000).state)
 	for old: Dictionary in [state_as_v3(secured), state_as_v2(secured), state_as_v1(secured)]:
@@ -1451,7 +1462,7 @@ func test_away_reward_format() -> void:
 	if loaded.outcome == CampaignSave.Outcome.LOADED and store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK:
 		written = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
 	var reloaded := CampaignSave.new(fixture.path).load_campaign()
-	check(written != null and written.version == 7 and written.saved_at == 1700000500
+	check(written != null and written.version == 8 and written.saved_at == 1700000500
 		and reloaded.outcome == CampaignSave.Outcome.LOADED and reloaded.saved_at == 1700000500,
 		"Away save: store with injected clock stamps and reloads saved_at exactly")
 	check(fixture.cleanup() == OK, "Away save: directory cleaned")
@@ -2574,11 +2585,11 @@ func test_defense_loss_cause_state() -> void:
 		var state: Dictionary = state_json(captured.state)
 		var restored := CampaignState.restore(state)
 		var cause: int = Combat.DefeatReason.GATE_DESTROYED if outcome == "gate" else Combat.DefeatReason.TIMEOUT
-		check(captured.outcome == CampaignState.Outcome.VALID and state.version == 7 and state.last_defense_loss == cause
+		check(captured.outcome == CampaignState.Outcome.VALID and state.version == 8 and state.last_defense_loss == cause
 			and restored.outcome == CampaignState.Outcome.VALID and restored.campaign.last_defense_loss == cause
 			and CampaignState.capture(restored.campaign, restored.round_progress_usec).state == captured.state
 			and campaign_snapshot(restored.campaign, false) == campaign_snapshot(campaign, false),
-			"Defense loss save: %s cause round-trips exactly in v7" % outcome)
+			"Defense loss save: %s cause round-trips exactly in v8" % outcome)
 		state_rejects(state, "missing loss cause", CORRUPT, func(s: Dictionary) -> void: s.erase("last_defense_loss"))
 		state_rejects(state, "boolean loss cause", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = true)
 		state_rejects(state, "string loss cause", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = "2")
@@ -2588,7 +2599,7 @@ func test_defense_loss_cause_state() -> void:
 		state_rejects(state, "negative loss cause", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = -1)
 		state_rejects(state, "out-of-range loss cause", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = 4)
 		state_rejects(state, "v5 carrying the loss cause", CORRUPT, func(s: Dictionary) -> void: s.version = 5)
-		state_rejects(state, "version 8 with a loss cause", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 8)
+		state_rejects(state, "version 9 with a loss cause", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 9)
 		# Older files load with no cause.
 		for old: Dictionary in [state_as_v5(state), state_as_v4(state), state_as_v3(state)]:
 			var migrated := CampaignState.restore(old)
@@ -2626,10 +2637,10 @@ func test_defense_loss_cause_state() -> void:
 	if store.save_campaign(lost, 0) == OK:
 		written = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
 	var relaunched := CampaignSave.new(fixture.path).load_campaign()
-	check(written != null and written.version == 7 and written.last_defense_loss == Combat.DefeatReason.TIMEOUT
+	check(written != null and written.version == 8 and written.last_defense_loss == Combat.DefeatReason.TIMEOUT
 		and relaunched.outcome == CampaignSave.Outcome.LOADED
 		and relaunched.campaign.last_defense_loss == Combat.DefeatReason.TIMEOUT,
-		"Defense loss save: next save writes v7 and the cause survives relaunch")
+		"Defense loss save: next save writes v8 and the cause survives relaunch")
 	check(fixture.cleanup() == OK, "Defense loss save: directory cleaned")
 
 func test_campaign_scene_defense_loss_cause() -> void:
@@ -3155,11 +3166,11 @@ func test_threat_state() -> void:
 	campaign.battle.step_round()
 	var state: Dictionary = state_json(CampaignState.capture(campaign, 0).state)
 	var restored := CampaignState.restore(state)
-	check(restored.outcome == CampaignState.Outcome.VALID and state.version == 7 and state.threat == 1
+	check(restored.outcome == CampaignState.Outcome.VALID and state.version == 8 and state.threat == 1
 		and state.best_threat == 0 and state.legacy_earned == 10
 		and restored.campaign.threat == 1 and restored.campaign.best_threat == 0 and restored.campaign.legacy_earned == 10
 		and campaign_snapshot(restored.campaign, false) == campaign_snapshot(campaign, false),
-		"Threat save: v7 round trip keeps Threat, best, earned and the scaled battle exactly")
+		"Threat save: v8 round trip keeps Threat, best, earned and the scaled battle exactly")
 	state_rejects(state, "Threat above unlocked", CORRUPT, func(s: Dictionary) -> void: s.threat = 2)
 	state_rejects(state, "negative Threat", CORRUPT, func(s: Dictionary) -> void: s.threat = -1)
 	state_rejects(state, "Threat over max", CORRUPT, func(s: Dictionary) -> void: s.threat = Campaign.THREAT_MAX + 1)
@@ -3190,7 +3201,7 @@ func test_threat_state() -> void:
 	state = state_json(CampaignState.capture(campaign, 0).state)
 	check(CampaignState.validate(state).outcome == CampaignState.Outcome.VALID and state.legacy_earned == 19
 		and state.best_threat == 1 and state.dynasty == 3,
-		"Threat save: mixed-Threat history saves as a valid v7 ledger")
+		"Threat save: mixed-Threat history saves as a valid v8 ledger")
 	# Earned is a range check: with best Threat 1 over two later secures it lies in 19..22 (10 + 6 + 6).
 	var richest: Dictionary = state.duplicate(true)
 	richest.legacy_earned = 22
@@ -3240,9 +3251,9 @@ func test_threat_state() -> void:
 		and FileAccess.get_file_as_string(fixture.path) == JSON.stringify(v2_secured),
 		"Threat migration: v2 file loads through the store without being rewritten")
 	check(store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK
-		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 7
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 8
 		and CampaignSave.new(fixture.path).load_campaign().campaign.legacy_earned == 13,
-		"Threat migration: next save writes v7 that reloads exactly")
+		"Threat migration: next save writes v8 that reloads exactly")
 	check(fixture.cleanup() == OK, "Threat migration: directory cleaned")
 
 func enemy_health(combat: Combat) -> int:
@@ -3495,7 +3506,7 @@ func test_rally_state() -> void:
 		var captured := CampaignState.capture(campaign, 250000)
 		var state: Dictionary = state_json(captured.state)
 		var restored := CampaignState.restore(state)
-		check(captured.outcome == CampaignState.Outcome.VALID and state.version == 7
+		check(captured.outcome == CampaignState.Outcome.VALID and state.version == 8
 			and state.rally_rounds == cases[name][1] and state.rally_cooldown == cases[name][2]
 			and restored.outcome == CampaignState.Outcome.VALID
 			and restored.campaign.rally_rounds == cases[name][1] and restored.campaign.rally_cooldown == cases[name][2]
@@ -3549,8 +3560,10 @@ func test_rally_state() -> void:
 		s.rally_cooldown = 21)
 	state_rejects(base, "active and cooling at once", CORRUPT, func(s: Dictionary) -> void: s.rally_cooldown = 4)
 	state_rejects(base, "boost older than its battle", CORRUPT, func(s: Dictionary) -> void: s.rally_rounds = 2)
-	state_rejects(base, "v6 carrying Rally keys", CORRUPT, func(s: Dictionary) -> void: s.version = 6)
-	state_rejects(base, "version 8 with Rally", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 8)
+	state_rejects(state_as_v7(base), "v6 carrying Rally keys", CORRUPT, func(s: Dictionary) -> void: s.version = 6)
+	check(CampaignState.validate(state_as_v7(base)).outcome == CampaignState.Outcome.VALID,
+		"Rally save: an active v7 Rally file stays valid")
+	state_rejects(base, "version 9 with Rally", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 9)
 	for valid: Array in [[5, 0], [4, 0], [0, 20], [0, 1]]:
 		check(CampaignState.validate(base.merged({"rally_rounds": valid[0], "rally_cooldown": valid[1]}, true)).outcome
 			== CampaignState.Outcome.VALID, "Rally save: %d active / %d cooling at round 2 is valid" % valid)
@@ -3560,7 +3573,7 @@ func test_rally_state() -> void:
 		"Rally save: cooling at the checkpoint is valid")
 	var secured: Dictionary = state_json(CampaignState.capture(state_secured(), 0).state)
 	state_rejects(secured, "active once secured", CORRUPT, func(s: Dictionary) -> void: s.rally_rounds = 1)
-	# On disk: a v6 file loads unchanged; the next save writes v7 with the Rally state.
+	# On disk: a v6 file loads unchanged; the next save writes v8 with the Rally state.
 	var fixture := ProgressFixture.new("campaign.json")
 	check(fixture.owned, "Rally save: isolated directory owned")
 	if not fixture.owned:
@@ -3582,10 +3595,10 @@ func test_rally_state() -> void:
 	if store.save_campaign(cooling, 0) == OK:
 		written = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
 	var relaunched := CampaignSave.new(fixture.path).load_campaign()
-	check(written != null and written.version == 7 and written.rally_cooldown == cooling.rally_cooldown
+	check(written != null and written.version == 8 and written.rally_cooldown == cooling.rally_cooldown
 		and written.rally_rounds == 0 and relaunched.outcome == CampaignSave.Outcome.LOADED
 		and relaunched.campaign.rally_cooldown == cooling.rally_cooldown,
-		"Rally save: next save writes v7 and the cooldown survives relaunch")
+		"Rally save: next save writes v8 and the cooldown survives relaunch")
 	check(fixture.cleanup() == OK, "Rally save: directory cleaned")
 
 func test_campaign_scene_rally() -> void:
@@ -3668,6 +3681,451 @@ func test_campaign_scene_rally() -> void:
 		"Rally scene: Counterattack press arms Rally")
 	waiting.free()
 	check(fixture.cleanup() == OK, "Rally scene: directory cleaned")
+
+func player_health(combat: Combat) -> Array:
+	var health: Array = []
+	for squad in combat.players:
+		health.append(squad.health)
+	return health
+
+# The state_secured() flow through the campaign round, optionally pressing Shield Wall at each battle start.
+func shield_wall_secured(shield_each: bool) -> Campaign:
+	var campaign := Campaign.new()
+	campaign.gold = 240
+	for role in range(3):
+		campaign.purchase(role)
+		campaign.purchase(role)
+	campaign.purchase_gate()
+	campaign.purchase_gate()
+	campaign.restart_battle()
+	for stage in range(3):
+		if shield_each:
+			campaign.shield_wall()
+		campaign_finish_resolved(campaign)
+	campaign.start_defense()
+	if shield_each:
+		campaign.shield_wall()
+	campaign_finish_resolved(campaign)
+	return campaign
+
+# A real Counterattack scripted to lose by gate or by timeout, resolved through the campaign round.
+func shield_wall_defense_loss(outcome: String, shielded: bool) -> Campaign:
+	var campaign := defense_ready()
+	var assault := campaign.start_defense()
+	if outcome == "gate":
+		for squad in assault.players:
+			squad.health = 0
+	else:
+		assault.players.assign([Data.Squad.new(Data.Role.FOOT, "Last archer", 1, 0)])
+		assault.enemies.assign([Data.Squad.new(Data.Role.HORSE, "Last enemy", 1, 1)])
+	if shielded:
+		campaign.shield_wall()
+	campaign_finish_resolved(campaign)
+	return campaign
+
+func test_shield_wall() -> void:
+	var table := {34: 26, 16: 12, 6: 5, 3: 2, 2: 2, 1: 1, 0: 0, 4: 3, 60: 45}
+	var table_ok: bool = true
+	for d: int in table:
+		table_ok = table_ok and Combat.shield_wall_damage(d) == table[d]
+	check(table_ok, "Shield Wall: -25% incoming damage per target, rounded half up in integers")
+	check(Campaign.SHIELD_WALL_PERCENT == 25 and Campaign.SHIELD_WALL_ROUNDS == 5 and Campaign.SHIELD_WALL_COOLDOWN == 20,
+		"Shield Wall: approved cut, duration and cooldown")
+	var fresh := campaign_running(0)
+	check(fresh.shield_wall_rounds == 0 and fresh.shield_wall_cooldown == 0 and fresh.can_shield_wall(),
+		"Shield Wall: ready from the start of a fresh campaign")
+	var before := campaign_snapshot(fresh)
+	check(fresh.shield_wall() and fresh.shield_wall_rounds == 5 and fresh.shield_wall_cooldown == 0
+		and not fresh.battle.shield_wall_active and campaign_snapshot(fresh) == before
+		and fresh.rally_rounds == 0 and fresh.rally_cooldown == 0,
+		"Shield Wall: use arms 5 shielded rounds and changes nothing else yet")
+	check(not fresh.can_shield_wall() and not fresh.shield_wall() and fresh.shield_wall_rounds == 5,
+		"Shield Wall: refused while active")
+	# Exact 5-round cut then 20-round cooldown against a parallel passive run.
+	var shielded := campaign_running(0)
+	var passive := campaign_running(0)
+	rally_endless(shielded)
+	rally_endless(passive)
+	shielded.shield_wall()
+	var timing_ok: bool = true
+	for round in range(1, 26):
+		var cut: bool = round <= 5
+		var health_before: Array = player_health(shielded.battle)
+		var passive_health: Array = player_health(passive.battle)
+		shielded.resolve_round()
+		passive.resolve_round()
+		var after: Array = player_health(shielded.battle)
+		var passive_after: Array = player_health(passive.battle)
+		for i in range(after.size()):
+			var passive_taken: int = passive_health[i] - passive_after[i]
+			var expected: int = Combat.shield_wall_damage(passive_taken) if cut else passive_taken
+			timing_ok = timing_ok and health_before[i] - after[i] == expected
+		timing_ok = timing_ok and passive_health[0] - passive_after[0] == 3
+		timing_ok = timing_ok and health_before[0] - after[0] == (2 if cut else 3)
+		timing_ok = timing_ok and enemy_health(shielded.battle) == enemy_health(passive.battle)
+		timing_ok = timing_ok and shielded.shield_wall_rounds == maxi(0, 5 - round)
+		timing_ok = timing_ok and shielded.shield_wall_cooldown == (0 if round < 5 else 25 - round)
+		timing_ok = timing_ok and not shielded.battle.shield_wall_active and shielded.battle.rounds == round
+		timing_ok = timing_ok and shielded.can_shield_wall() == (round == 25)
+		if round >= 5 and round < 25:
+			timing_ok = timing_ok and not shielded.shield_wall()
+	check(timing_ok, "Shield Wall: rounds 1-5 cut exactly, then 20 uncut cooldown rounds, then ready")
+	check(shielded.shield_wall() and shielded.shield_wall_rounds == 5, "Shield Wall: ready again after the 25-round cycle")
+	# Counterattack round 1: every enemy hits the shield squad, 12+10+12 = 34 becomes 26.
+	var defending := defense_ready()
+	var assault := defending.start_defense()
+	var calm := defense_ready()
+	var calm_assault := calm.start_defense()
+	var shield_before: int = assault.players[0].health
+	check(defending.shield_wall(), "Shield Wall: usable in the Counterattack")
+	defending.resolve_round()
+	calm.resolve_round()
+	check(shield_before - assault.players[0].health == 26 and shield_before - calm_assault.players[0].health == 34
+		and enemy_health(assault) == enemy_health(calm_assault) and assault.gate_health == calm_assault.gate_health
+		and assault.gate_max_health == calm_assault.gate_max_health and defending.gold == calm.gold
+		and defending.threat == calm.threat,
+		"Shield Wall: Counterattack round 1 shield damage is 26 instead of 34; nothing else changes")
+	# With the shield squad down, the whole round's gate damage is cut: 34 becomes 26.
+	for pair in [[Combat.new(Data.Encounter.COUNTERATTACK), 0, 34, 26], [Combat.new(Data.Encounter.COUNTERATTACK, Data.players(), 3), 3, 60, 45]]:
+		var cut_gate: Combat = pair[0]
+		var plain_gate := Combat.new(Data.Encounter.COUNTERATTACK, Data.players(), pair[1])
+		for combat in [cut_gate, plain_gate]:
+			combat.players[0].health = 0
+		var gate_before: int = cut_gate.gate_health
+		cut_gate.shield_wall_active = true
+		cut_gate.step_round()
+		plain_gate.step_round()
+		check(gate_before - plain_gate.gate_health == pair[2] and gate_before - cut_gate.gate_health == pair[3]
+			and cut_gate.gate_max_health == plain_gate.gate_max_health
+			and enemy_health(cut_gate) == enemy_health(plain_gate),
+			"Shield Wall: Threat %d gate damage %d becomes %d" % [pair[1], pair[2], pair[3]])
+	# Stronghold: per-target totals, shield takes 8+8 = 16 -> 12, foot archers 6 -> 5.
+	var hold := Combat.new(Data.Encounter.STRONGHOLD)
+	var hold_plain := Combat.new(Data.Encounter.STRONGHOLD)
+	var hold_start: Array = player_health(hold)
+	hold.shield_wall_active = true
+	hold.step_round()
+	hold_plain.step_round()
+	var hold_after: Array = player_health(hold)
+	var plain_after: Array = player_health(hold_plain)
+	check(hold_start[0] - plain_after[0] == 16 and hold_start[0] - hold_after[0] == 12
+		and hold_start[1] - plain_after[1] == 6 and hold_start[1] - hold_after[1] == 5
+		and hold_after[2] == hold_start[2] and enemy_health(hold) == enemy_health(hold_plain),
+		"Shield Wall: Stronghold cut per target, 16 -> 12 and 6 -> 5")
+	# Battle end while active drops the rest and starts the full cooldown.
+	var short := campaign_running(0)
+	var short_battle := short.battle
+	short.shield_wall()
+	for i in range(10):
+		if short_battle.result != Combat.Result.ONGOING:
+			break
+		short.resolve_round()
+	check(short_battle.result == Combat.Result.VICTORY and short_battle.rounds < 5 and short.shield_wall_rounds == 0
+		and short.shield_wall_cooldown == 20 and not short.can_shield_wall(),
+		"Shield Wall: Border won while shielded drops the rest and starts the full cooldown")
+	short.resolve_round()
+	check(short.shield_wall_cooldown == 20 and not short.shield_wall(), "Shield Wall: refused on a finished battle and never ticks")
+	check(short.settle(short_battle) and short.shield_wall_cooldown == 20, "Shield Wall: cooldown carries into the next battle")
+	short.resolve_round()
+	check(short.shield_wall_cooldown == 19, "Shield Wall: cooldown ticks on the next battle's resolved round")
+	var restarted := campaign_running(1)
+	restarted.shield_wall()
+	restarted.resolve_round()
+	check(restarted.restart_battle() != null and restarted.shield_wall_rounds == 0 and restarted.shield_wall_cooldown == 20,
+		"Shield Wall: battle restart while active drops to the full cooldown")
+	var checkpoint := defense_ready()
+	check(not checkpoint.can_shield_wall() and not checkpoint.shield_wall() and checkpoint.shield_wall_rounds == 0,
+		"Shield Wall: refused at the cleared checkpoint")
+	var secured := state_secured()
+	check(not secured.can_shield_wall() and not secured.shield_wall() and secured.shield_wall_rounds == 0,
+		"Shield Wall: refused once secured")
+	check(checkpoint.request_farm(Data.Encounter.BORDER_SKIRMISH) and checkpoint.shield_wall(),
+		"Shield Wall: usable while farming")
+	# No tick at the checkpoint.
+	var stronghold := Campaign.new()
+	stronghold.gold = 180
+	for role in range(3):
+		stronghold.purchase(role)
+		stronghold.purchase(role)
+	stronghold.restart_battle()
+	campaign_finish(stronghold)
+	campaign_finish(stronghold)
+	stronghold.shield_wall()
+	var last: Combat = campaign_finish_resolved(stronghold)
+	var left: int = stronghold.shield_wall_cooldown
+	check(stronghold.phase == Campaign.Phase.CONQUEST_CLEARED and left > 0 and left <= 20
+		and left == 20 - maxi(0, last.rounds - 5) and not stronghold.can_shield_wall(),
+		"Shield Wall: using it on the Stronghold leaves it recovering at the checkpoint")
+	stronghold.request_farm(Data.Encounter.BORDER_SKIRMISH)
+	check(stronghold.shield_wall_cooldown == left, "Shield Wall: cooldown does not tick while waiting at the checkpoint")
+	# Overlap with Rally: both in the same rounds, independent counters.
+	var both := campaign_running(0)
+	var lone := campaign_running(0)
+	rally_endless(both)
+	rally_endless(lone)
+	var hit: int = army_hit(both.battle, true)
+	var enemy_before: int = enemy_health(both.battle)
+	var shield_start: int = both.battle.players[0].health
+	check(both.shield_wall() and both.rally() and both.rally_rounds == 5 and both.shield_wall_rounds == 5,
+		"Shield Wall: armed alongside Rally")
+	both.resolve_round()
+	check(enemy_before - enemy_health(both.battle) == hit and hit == 27 and shield_start - both.battle.players[0].health == 2
+		and both.rally_rounds == 4 and both.shield_wall_rounds == 4,
+		"Shield Wall: same round is rallied (27) and shielded (3 -> 2)")
+	lone.shield_wall()
+	lone.resolve_round()
+	lone.resolve_round()
+	check(lone.rally() and lone.rally_rounds == 5 and lone.shield_wall_rounds == 3, "Shield Wall: Rally pressed later keeps its own count")
+	for i in range(3):
+		lone.resolve_round()
+	check(lone.shield_wall_rounds == 0 and lone.shield_wall_cooldown == 20 and lone.rally_rounds == 2
+		and lone.rally_cooldown == 0, "Shield Wall: ends and cools while Rally continues")
+	for i in range(2):
+		lone.resolve_round()
+	check(lone.shield_wall_cooldown == 18 and lone.rally_rounds == 0 and lone.rally_cooldown == 20,
+		"Shield Wall: cooldowns tick independently")
+	# The commander strike and Drill are unchanged.
+	var hits: Array = []
+	for cut in [true, false]:
+		var sample := campaign_running(0)
+		rally_endless(sample)
+		if cut:
+			sample.shield_wall()
+		sample.battle.queue_commander()
+		var start: int = enemy_health(sample.battle)
+		sample.resolve_round()
+		hits.append([start - enemy_health(sample.battle), sample.battle.commander_damage])
+	check(hits[0] == hits[1] and hits[0] == [24, 6], "Shield Wall: commander strike unchanged")
+	var drilled := Campaign.new()
+	drilled.legacy = 1000 # Isolated in-memory fixture funds for three real Drill purchases.
+	for i in range(3):
+		drilled.train_drill()
+	drilled.restart_battle()
+	rally_endless(drilled)
+	var drilled_hit: int = army_hit(drilled.battle, false)
+	var drilled_before: int = enemy_health(drilled.battle)
+	drilled.shield_wall()
+	drilled.resolve_round()
+	check(drilled_hit == 72 and drilled_before - enemy_health(drilled.battle) == 72, "Shield Wall: Drill damage unchanged")
+	# Loss causes keep their meaning.
+	for outcome in ["gate", "timeout"]:
+		var lost := shield_wall_defense_loss(outcome, true)
+		var plain := shield_wall_defense_loss(outcome, false)
+		var reason := Combat.DefeatReason.GATE_DESTROYED if outcome == "gate" else Combat.DefeatReason.TIMEOUT
+		check(lost.last_defense_loss == reason and plain.last_defense_loss == reason
+			and lost.phase == plain.phase and lost.gold == plain.gold and lost.threat == plain.threat,
+			"Shield Wall: shielded %s loss keeps its cause" % outcome)
+	# Secured shielded run: identical rewards; passive run identical to today.
+	var strong := shield_wall_secured(true)
+	var plain_run := shield_wall_secured(false)
+	check(strong.phase == Campaign.Phase.CAMPAIGN_SECURED and plain_run.phase == Campaign.Phase.CAMPAIGN_SECURED
+		and strong.gold == plain_run.gold and strong.legacy == plain_run.legacy
+		and strong.legacy_earned == plain_run.legacy_earned and strong.levels == plain_run.levels
+		and strong.gate_level == plain_run.gate_level and strong.best_threat == plain_run.best_threat,
+		"Shield Wall: a shielded run secures with identical gold, Legacy, levels, gate and Threat")
+	check(campaign_snapshot(plain_run, false) == campaign_snapshot(state_secured(), false)
+		and plain_run.shield_wall_rounds == 0 and plain_run.shield_wall_cooldown == 0,
+		"Shield Wall: untouched, a full run matches the pre-Shield Wall results exactly")
+	check(strong.shield_wall_rounds == 0 and strong.found_dynasty() != null and strong.shield_wall_rounds == 0
+		and strong.shield_wall_cooldown == 0 and strong.can_shield_wall(), "Shield Wall: Found a Dynasty makes it ready")
+
+func test_shield_wall_state() -> void:
+	var CORRUPT := CampaignState.Outcome.CORRUPT
+	var active := campaign_running(0)
+	active.shield_wall()
+	active.resolve_round()
+	active.resolve_round()
+	var cooling := defense_ready()
+	cooling.start_defense()
+	cooling.shield_wall()
+	for i in range(7):
+		cooling.resolve_round()
+	var ready := campaign_running(2)
+	var cases := {"active": [active, 3, 0], "cooling": [cooling, 0, 18], "ready": [ready, 0, 0]}
+	for name: String in cases:
+		var campaign: Campaign = cases[name][0]
+		var captured := CampaignState.capture(campaign, 250000)
+		var state: Dictionary = state_json(captured.state)
+		var restored := CampaignState.restore(state)
+		check(captured.outcome == CampaignState.Outcome.VALID and state.version == 8
+			and state.shield_wall_rounds == cases[name][1] and state.shield_wall_cooldown == cases[name][2]
+			and restored.outcome == CampaignState.Outcome.VALID
+			and restored.campaign.shield_wall_rounds == cases[name][1]
+			and restored.campaign.shield_wall_cooldown == cases[name][2]
+			and CampaignState.capture(restored.campaign, restored.round_progress_usec).state == captured.state,
+			"Shield Wall save: %s state round-trips exactly" % name)
+		if restored.outcome != CampaignState.Outcome.VALID:
+			continue
+		var copy: Campaign = restored.campaign
+		for i in range(3):
+			campaign.resolve_round()
+			copy.resolve_round()
+		check(campaign_snapshot(copy, false) == campaign_snapshot(campaign, false)
+			and copy.shield_wall_rounds == campaign.shield_wall_rounds
+			and copy.shield_wall_cooldown == campaign.shield_wall_cooldown,
+			"Shield Wall save: restored %s state continues identically" % name)
+		for old: Dictionary in [state_as_v7(state), state_as_v6(state), state_as_v5(state), state_as_v4(state), state_as_v3(state)]:
+			var migrated := CampaignState.restore(old)
+			check(not old.has("shield_wall_rounds") and not old.has("shield_wall_cooldown")
+				and migrated.outcome == CampaignState.Outcome.VALID
+				and migrated.campaign.shield_wall_rounds == 0 and migrated.campaign.shield_wall_cooldown == 0
+				and migrated.campaign.gold == restored.campaign.gold
+				and migrated.campaign.levels == restored.campaign.levels
+				and migrated.campaign.phase == restored.campaign.phase,
+				"Shield Wall save: v%d %s file loads with Shield Wall ready" % [old.version, name])
+	var border := campaign_running(2)
+	var plain: Dictionary = state_json(CampaignState.capture(border, 0).state)
+	for old: Dictionary in [state_as_v2(plain), state_as_v1(plain)]:
+		var migrated := CampaignState.restore(old)
+		check(migrated.outcome == CampaignState.Outcome.VALID and migrated.campaign.shield_wall_rounds == 0
+			and migrated.campaign.shield_wall_cooldown == 0 and migrated.campaign.gold == border.gold,
+			"Shield Wall save: v%d file loads with Shield Wall ready" % old.version)
+	# Corrupt values on an active running state (battle at round 2, 3 shielded rounds left).
+	var fresh_active := campaign_running(0)
+	fresh_active.shield_wall()
+	fresh_active.resolve_round()
+	fresh_active.resolve_round()
+	var base: Dictionary = state_json(CampaignState.capture(fresh_active, 0).state)
+	check(CampaignState.validate(base).outcome == CampaignState.Outcome.VALID and base.shield_wall_rounds == 3,
+		"Shield Wall save: active base state is valid")
+	for key in ["shield_wall_rounds", "shield_wall_cooldown"]:
+		state_rejects(base, "missing " + key, CORRUPT, func(s: Dictionary) -> void: s.erase(key))
+		state_rejects(base, "boolean " + key, CORRUPT, func(s: Dictionary) -> void: s[key] = true)
+		state_rejects(base, "string " + key, CORRUPT, func(s: Dictionary) -> void: s[key] = "1")
+		state_rejects(base, "null " + key, CORRUPT, func(s: Dictionary) -> void: s[key] = null)
+		state_rejects(base, "fractional " + key, CORRUPT, func(s: Dictionary) -> void: s[key] = 1.5)
+		state_rejects(base, "negative " + key, CORRUPT, func(s: Dictionary) -> void: s[key] = -1)
+	state_rejects(base, "shield_wall_rounds above 5", CORRUPT, func(s: Dictionary) -> void: s.shield_wall_rounds = 6)
+	state_rejects(base, "shield_wall_cooldown above 20", CORRUPT, func(s: Dictionary) -> void:
+		s.shield_wall_rounds = 0
+		s.shield_wall_cooldown = 21)
+	state_rejects(base, "shielded and cooling at once", CORRUPT, func(s: Dictionary) -> void: s.shield_wall_cooldown = 4)
+	state_rejects(base, "shield older than its battle", CORRUPT, func(s: Dictionary) -> void: s.shield_wall_rounds = 2)
+	state_rejects(base, "v7 carrying Shield Wall keys", CORRUPT, func(s: Dictionary) -> void: s.version = 7)
+	state_rejects(base, "version 9 with Shield Wall", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 9)
+	for valid: Array in [[5, 0], [4, 0], [0, 20], [0, 1]]:
+		check(CampaignState.validate(base.merged({"shield_wall_rounds": valid[0], "shield_wall_cooldown": valid[1]}, true)).outcome
+			== CampaignState.Outcome.VALID, "Shield Wall save: %d active / %d cooling at round 2 is valid" % valid)
+	check(CampaignState.validate(base.merged({"rally_rounds": 5, "rally_cooldown": 0}, true)).outcome
+		== CampaignState.Outcome.VALID, "Shield Wall save: active alongside Rally is valid")
+	var checkpoint: Dictionary = state_json(CampaignState.capture(defense_ready(), 0).state)
+	state_rejects(checkpoint, "shielded at the checkpoint", CORRUPT, func(s: Dictionary) -> void: s.shield_wall_rounds = 5)
+	check(CampaignState.validate(checkpoint.merged({"shield_wall_cooldown": 12}, true)).outcome == CampaignState.Outcome.VALID,
+		"Shield Wall save: cooling at the checkpoint is valid")
+	var secured: Dictionary = state_json(CampaignState.capture(state_secured(), 0).state)
+	state_rejects(secured, "shielded once secured", CORRUPT, func(s: Dictionary) -> void: s.shield_wall_rounds = 1)
+	# On disk: a v7 file loads unchanged; the next save writes v8 with the Shield Wall state.
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Shield Wall save: isolated directory owned")
+	if not fixture.owned:
+		return
+	var v7_text := JSON.stringify(state_as_v7(state_json(CampaignState.capture(campaign_running(1), 0).state)))
+	check(fixture.put(v7_text) == OK, "Shield Wall save: v7 file written")
+	var store := CampaignSave.new(fixture.path)
+	var loaded := store.load_campaign()
+	check(loaded.outcome == CampaignSave.Outcome.LOADED and loaded.campaign.shield_wall_rounds == 0
+		and loaded.campaign.shield_wall_cooldown == 0 and FileAccess.get_file_as_string(fixture.path) == v7_text,
+		"Shield Wall save: v7 file loads with Shield Wall ready and is not rewritten")
+	cooling = defense_ready()
+	cooling.start_defense()
+	cooling.shield_wall()
+	for i in range(7):
+		cooling.resolve_round()
+	var written: Variant = null
+	if store.save_campaign(cooling, 0) == OK:
+		written = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
+	var relaunched := CampaignSave.new(fixture.path).load_campaign()
+	check(written != null and written.version == 8 and written.shield_wall_cooldown == cooling.shield_wall_cooldown
+		and cooling.shield_wall_cooldown == 18 and written.shield_wall_rounds == 0
+		and relaunched.outcome == CampaignSave.Outcome.LOADED
+		and relaunched.campaign.shield_wall_cooldown == cooling.shield_wall_cooldown,
+		"Shield Wall save: next save writes v8 and the cooldown survives relaunch")
+	check(fixture.cleanup() == OK, "Shield Wall save: directory cleaned")
+
+func test_campaign_scene_shield_wall() -> void:
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Shield Wall scene: isolated directory owned")
+	if not fixture.owned:
+		return
+	var path: String = fixture.path
+	var scene := campaign_scene_new(CampaignWindowFixture, CampaignSave.new(path)) as CampaignWindowFixture
+	var button: Button = scene.get_node("%ShieldWall")
+	check(scene.campaign.phase == Campaign.Phase.RUNNING and not button.disabled
+		and button.text == "Shield Wall — −25% enemy damage for 5 rounds"
+		and button.action_mode == BaseButton.ACTION_MODE_BUTTON_PRESS
+		and button.autowrap_mode != TextServer.AUTOWRAP_OFF and button.focus_mode == Control.FOCUS_ALL
+		and button.get_index() == scene.get_node("%Rally").get_index() + 1,
+		"Shield Wall scene: ready button right after Rally")
+	var other: Button = scene.get_node("%GateUpgrade")
+	other.grab_focus()
+	check(scene.get_viewport().gui_get_focus_owner() == other, "Shield Wall scene: another control holds focus")
+	var before := campaign_snapshot(scene.campaign)
+	for reason in range(3):
+		scene.set_reason(reason, true)
+		check(button.disabled, "Shield Wall scene: suspension disables Shield Wall")
+		button.pressed.emit()
+		check(scene.campaign.shield_wall_rounds == 0, "Shield Wall scene: suspended press refused")
+		scene.set_reason(reason, false)
+	scene.dynasty_preview_open = true # Guard check: the preview flag alone must refuse Shield Wall.
+	scene._refresh()
+	check(button.disabled, "Shield Wall scene: preview flag disables Shield Wall")
+	button.pressed.emit()
+	scene.dynasty_preview_open = false
+	scene._refresh()
+	check(scene.campaign.shield_wall_rounds == 0 and campaign_snapshot(scene.campaign) == before,
+		"Shield Wall scene: refused while suspended or with the preview open")
+	scene.advance_time(0.5) # The first frame after resuming is skipped by design.
+	scene.advance_time(0.5)
+	check(scene.elapsed_usec == 500000 and scene.campaign.battle.rounds == 0, "Shield Wall scene: halfway through round 1")
+	var round_before: int = scene.campaign.battle.rounds
+	var health_before: int = scene.campaign.battle.players[0].health
+	button.pressed.emit()
+	check(scene.campaign.shield_wall_rounds == 5 and button.disabled and button.text == "Shield Wall active — 5 rounds left"
+		and scene.get_node("%SaveStatus").text == "Saved" and scene_saved_exactly(scene, path)
+		and JSON.parse_string(FileAccess.get_file_as_string(path)).shield_wall_rounds == 5
+		and scene.get_viewport().gui_get_focus_owner() == other and scene.campaign.battle.rounds == round_before,
+		"Shield Wall scene: mid-round press arms, saves immediately and keeps focus")
+	scene.advance_time(0.5)
+	check(scene.campaign.battle.rounds == round_before + 1 and health_before - scene.campaign.battle.players[0].health == 2
+		and scene.campaign.shield_wall_rounds == 4 and button.text == "Shield Wall active — 4 rounds left",
+		"Shield Wall scene: the round completing after the press is cut (3 -> 2)")
+	# The Border falls on shielded round 4: the rest drops and the full cooldown shows.
+	for i in range(3):
+		scene.advance_time(1.0)
+	scene.set_process(false)
+	check(scene.campaign.border_cleared and scene.campaign.shield_wall_rounds == 0 and scene.campaign.shield_wall_cooldown == 20
+		and button.disabled and button.text == "Shield Wall recovering — ready in 20 battle rounds (20 s)"
+		and scene_saved_exactly(scene, path),
+		"Shield Wall scene: battle end shows the full 20-round cooldown and saves it")
+	scene.advance_time(1.0)
+	scene.set_process(false)
+	check(scene.campaign.shield_wall_cooldown == 19
+		and button.text == "Shield Wall recovering — ready in 19 battle rounds (19 s)",
+		"Shield Wall scene: cooldown text counts down per resolved round")
+	scene.notification(Node.NOTIFICATION_WM_CLOSE_REQUEST)
+	scene.free()
+	var relaunched := campaign_scene_new(CampaignPresentation, CampaignSave.new(path))
+	check(relaunched.campaign.shield_wall_cooldown == 19 and relaunched.campaign.shield_wall_rounds == 0
+		and relaunched.get_node("%ShieldWall").disabled
+		and relaunched.get_node("%ShieldWall").text == "Shield Wall recovering — ready in 19 battle rounds (19 s)",
+		"Shield Wall scene: relaunch restores the cooldown exactly")
+	relaunched.free()
+	var waiting := state_scene(defense_ready())
+	check(waiting.get_node("%ShieldWall").disabled
+		and waiting.get_node("%ShieldWall").text == "Shield Wall — available during battles",
+		"Shield Wall scene: unavailable at the checkpoint")
+	waiting.get_node("%ShieldWall").pressed.emit()
+	check(waiting.campaign.shield_wall_rounds == 0, "Shield Wall scene: checkpoint press refused")
+	waiting.get_node("%StartDefense").pressed.emit()
+	check(not waiting.get_node("%ShieldWall").disabled, "Shield Wall scene: ready again in the Counterattack")
+	waiting.get_node("%ShieldWall").pressed.emit()
+	waiting.get_node("%Rally").pressed.emit()
+	check(waiting.campaign.shield_wall_rounds == 5 and waiting.campaign.rally_rounds == 5
+		and waiting.get_node("%ShieldWall").text == "Shield Wall active — 5 rounds left"
+		and waiting.get_node("%Rally").text == "Rally active — 5 rounds left",
+		"Shield Wall scene: Counterattack press arms Shield Wall alongside Rally")
+	waiting.free()
+	check(fixture.cleanup() == OK, "Shield Wall scene: directory cleaned")
 
 func campaign_finish(campaign: Campaign) -> Combat:
 	var completed := campaign.battle

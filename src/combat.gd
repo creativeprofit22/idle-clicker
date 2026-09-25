@@ -17,8 +17,16 @@ var commander_queued: bool = false
 var commander_damage: int = 0
 # Set by the campaign for exactly one step_round() while Rally is active; never saved here.
 var rally_active: bool = false
+# Set by the campaign for exactly one step_round() while Shield Wall is active; never saved here.
+var shield_wall_active: bool = false
 
 const RALLY_PERCENT: int = 50
+const SHIELD_WALL_PERCENT: int = 25
+
+# Shield Wall-reduced incoming damage per target for one round: -25%, rounded half up, in integers.
+static func shield_wall_damage(damage: int) -> int:
+	@warning_ignore("integer_division")
+	return (damage * (100 - SHIELD_WALL_PERCENT) + 50) / 100
 
 # Rally-boosted squad damage: +50%, rounded half up, in integers.
 static func rally_damage(damage: int) -> int:
@@ -84,6 +92,11 @@ func step_round() -> void:
 			incoming[target] += squad.damage
 		elif is_defense:
 			gate_damage += squad.damage
+	# Shield Wall cuts each target's round total (a squad or the gate), not each enemy's hit.
+	if shield_wall_active:
+		for i in range(incoming.size()):
+			incoming[i] = shield_wall_damage(incoming[i])
+		gate_damage = shield_wall_damage(gate_damage)
 	if commander_queued:
 		var target: int = _target_index(enemies, Data.Role.SHIELD)
 		if target >= 0:
