@@ -2151,6 +2151,39 @@ from the rerun) shows "Shield Wall active — 5 rounds left" with its keyboard f
 under "Rally active — 5 rounds left", both fully visible with no overlap. The physical gate stays **pending**, and there's no art, export,
 Android or release claim.
 
+### Archer Platform fortification — verified locally 25 Sep 2026 (uncommitted tree on `debbd82`)
+
+The Archer Platform (levels 0–3 at 30/50/70 gold, +3 flat damage per level per Counterattack round to
+the shield squad's target; rules in `docs/first-playable.md`) copies the gate pattern: bought in any
+phase, locked in at Start Defense and reset by Found a Dynasty. The campaign save is now **v9**
+(`archer_platform_level` plus the stored locked-in `battle.snapshot_platform_level`). v1–v8 load at
+level 0 and aren't rewritten on load, a v8 file carrying either key is corrupt, and v10 is
+unsupported. The timeout hint now names troop or platform damage. Godot ran from the pinned GUI
+executable because the console wrapper still fails to start from this shell (Windows error 193).
+
+Measured balance (headless probe, troops Lv.3/3/3, full Counterattacks at Drill 0–3 × Threat 0–6):
+with gate Lv.3, +9 changes no outcome. With gate Lv.1 it turns 2 of 28 losses into wins (Drill 0 at
+Threat 0, and Drill 2 at Threat 3). Those losses were gate breaks, so it helps without trivialising
+low Threat. The table is pinned in `test_archer_platform`.
+
+| Check | Actual result |
+| --- | --- |
+| Import | exit 0, no errors or warnings |
+| Headless normal / forced / rerun | 5781/0 exit 0 · 5782/1 (only `FAIL forced runner failure`) exit 1 · 5781/0 exit 0 |
+| `scene_smoke` | 105/0, exit 0 |
+| Native `campaign` | 82/0, child and driver exit 0, observations complete, child reaped, reader joined. Real mouse click Lv.1 (−30), keyboard accept Lv.2 (−50, focus kept), mouse click Lv.3 (−70, button disabled at MAX), each saved at once with the conquest battle unchanged |
+| Native `defense` | 88/0, child and driver exit 0, observations complete, child reaped, reader joined. At 540×480 the Archer Platform button follows focus and doesn't overlap the gate. A keyboard purchase mid-assault charged 30 and saved Lv.1, while the active assault kept +0 (locked-in level 0 on disk) |
+| Native `dynasty` | 84/0, child and driver exit 0, observations complete, child reaped, reader joined; saves v9 |
+| `windows_g6_driver.py` | 27/0, exit 0, both launches reaped with reader joined; dynasty-2 save v9 with Archer Platform level 0; dynasty 1 secured in 126.0 s, dynasty 2 in 20.1 s |
+
+Inspected captures:
+- `small-defense-controls` (540×480) shows the "Gate Lv.1 · Upgrade 20 gold" and "Archer Platform Lv.0 · +0 damage/round in defense · Upgrade 30 gold" buttons stacked. The platform label wraps onto two lines with no overlap or clipping, and the gate notice mentions both fortifications.
+- `campaign-platform-max` shows the disabled "Archer Platform Lv.3 · +9 damage/round in defense · MAX" under the gate.
+- `campaign-secured` (defense run) shows "Archer Platform Lv.1 · +3 damage/round in defense · Upgrade 50 gold", with no platform line on the finished assault's gate HP, as expected for a mid-assault purchase.
+- `dynasty-preview` shows the reset preview; its losses text lists the platform, which the smoke asserts.
+
+The physical gate stays **pending** (deferred to the hands-on acceptance phase). CI hasn't run on this tree yet because it isn't committed. There's no art, export, Android or release claim.
+
 ## Boundaries
 
 Combat rules live only in `src/combat.gd`; `src/economy.gd` owns gold, troop
