@@ -40,6 +40,10 @@ var rally_cooldown: int = 0
 # (0..SHIELD_WALL_COOLDOWN). Never both nonzero; both 0 means ready. Independent of Rally.
 var shield_wall_rounds: int = 0
 var shield_wall_cooldown: int = 0
+# Archer Platform: owned level (0..PLATFORM_MAX, per dynasty) and the level locked in when the
+# current battle was created (0 unless it is the Counterattack; purchases apply next defense).
+var archer_platform_level: int = 0
+var _battle_platform_level: int = 0
 
 const FIRST_SECURE_LEGACY: int = 10
 const REPEAT_SECURE_LEGACY: int = 3
@@ -53,6 +57,9 @@ const RALLY_COOLDOWN: int = 20
 const SHIELD_WALL_PERCENT: int = Combat.SHIELD_WALL_PERCENT
 const SHIELD_WALL_ROUNDS: int = 5
 const SHIELD_WALL_COOLDOWN: int = 20
+const PLATFORM_MAX: int = 3
+const PLATFORM_COSTS: Array[int] = [30, 50, 70]
+const PLATFORM_DAMAGE_PER_LEVEL: int = 3
 # Closed-app reward: capped gold from the best farmable cleared territory, never simulated combat.
 const AWAY_CAP_SECONDS: int = 28800
 const AWAY_MINUTES_PER_VICTORY: int = 2
@@ -192,6 +199,7 @@ func found_dynasty(next_threat: int = 0) -> Combat:
 	var start: int = dynasty_start_level()
 	levels = [start, start, start]
 	gate_level = 1
+	archer_platform_level = 0
 	phase = Phase.RUNNING
 	mode = Mode.ADVANCE
 	border_cleared = false
@@ -218,6 +226,25 @@ func purchase_gate() -> bool:
 	gold -= cost
 	gate_level += 1
 	return true
+
+# Gold for the next Archer Platform level; 0 once capped.
+func platform_purchase_cost() -> int:
+	return 0 if archer_platform_level >= PLATFORM_MAX else PLATFORM_COSTS[archer_platform_level]
+
+func can_purchase_platform() -> bool:
+	var cost: int = platform_purchase_cost()
+	return cost > 0 and gold >= cost
+
+# Allowed in any phase, like the gate; the new level is locked in at the next Start Defense.
+func purchase_platform() -> bool:
+	if not can_purchase_platform():
+		return false
+	gold -= platform_purchase_cost()
+	archer_platform_level += 1
+	return true
+
+static func platform_damage_for(level: int) -> int:
+	return PLATFORM_DAMAGE_PER_LEVEL * level
 
 func start_defense() -> Combat:
 	if phase != Phase.CONQUEST_CLEARED or not stronghold_cleared:
@@ -259,6 +286,9 @@ func _begin_encounter(encounter: int) -> Combat:
 		_battle_drill_rank = drill_rank
 		_drop_rally()
 		_drop_shield_wall()
+	if created != null:
+		_battle_platform_level = archer_platform_level if created.is_defense else 0
+		created.platform_damage = platform_damage_for(_battle_platform_level)
 	if created != null and created.is_defense:
 		created.gate_max_health = 80 + 60 * (gate_level - 1)
 		created.gate_health = created.gate_max_health

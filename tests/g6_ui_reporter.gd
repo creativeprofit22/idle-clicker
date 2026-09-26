@@ -8,7 +8,7 @@ extends Node
 const LABELS: Array[String] = ["CampaignStatus", "DynastyStatus", "SaveStatus", "LastResult",
 	"Gold", "Round", "Army", "Enemies", "PendingNavigation", "DynastyLosses", "ThreatStatus", "ThreatChoice"]
 const BUTTONS: Array[String] = ["TrainDrill", "FoundDynasty", "CancelDynasty", "ConfirmDynasty", "ThreatUp", "ThreatDown",
-	"StartDefense", "FarmBorder", "FarmArcher", "Frontier", "GateUpgrade",
+	"StartDefense", "FarmBorder", "FarmArcher", "Frontier", "GateUpgrade", "ArcherPlatform",
 	"ShieldUpgrade", "FootUpgrade", "HorseUpgrade"]
 
 var _last: String = ""

@@ -205,13 +205,19 @@ autowrap_mode = 2
 
 [node name="GateNotice" type="Label" parent="Margin/Scroll/Column"]
 layout_mode = 2
-text = "Gate upgrades apply next defense; they never repair the current gate."
+text = "Gate and Archer Platform upgrades apply next defense; they never change the current one."
 autowrap_mode = 2
 
 [node name="GateUpgrade" type="Button" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true
 layout_mode = 2
 action_mode = 0
+
+[node name="ArcherPlatform" type="Button" parent="Margin/Scroll/Column"]
+unique_name_in_owner = true
+layout_mode = 2
+action_mode = 0
+autowrap_mode = 2
 
 [node name="ShieldUpgrade" type="Button" parent="Margin/Scroll/Column"]
 unique_name_in_owner = true

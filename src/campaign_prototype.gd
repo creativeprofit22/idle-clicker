@@ -35,11 +35,11 @@ const RESTORED_TEXT: String = "Restored from backup"
 # Defense-loss cause and upgrade hint (text only; nothing is bought automatically).
 const LOSS_RESULT_TEXT: Dictionary = {
 	Combat.DefeatReason.GATE_DESTROYED: "The gate broke. Upgrade the Gate or your Shield infantry to hold longer.",
-	Combat.DefeatReason.TIMEOUT: "Time ran out at round 60. Level up your troops for more damage to finish sooner.",
+	Combat.DefeatReason.TIMEOUT: "Time ran out at round 60. Level up your troops or the Archer Platform for more damage to finish sooner.",
 }
 const LOSS_STATUS_TEXT: Dictionary = {
 	Combat.DefeatReason.GATE_DESTROYED: "Last defense: the gate broke — upgrade Gate or Shield",
-	Combat.DefeatReason.TIMEOUT: "Last defense: time ran out at round 60 — level up troop damage",
+	Combat.DefeatReason.TIMEOUT: "Last defense: time ran out at round 60 — level up troop or platform damage",
 }
 
 @onready var upgrades: Array[Button] = [%ShieldUpgrade, %FootUpgrade, %HorseUpgrade]
@@ -52,6 +52,7 @@ func _ready() -> void:
 	%Rally.pressed.connect(_rally)
 	%ShieldWall.pressed.connect(_shield_wall)
 	%GateUpgrade.pressed.connect(_purchase_gate)
+	%ArcherPlatform.pressed.connect(_purchase_platform)
 	%TrainDrill.pressed.connect(_train_drill)
 	%VeteranCadre.pressed.connect(_buy_veteran_cadre)
 	%FoundDynasty.pressed.connect(_open_dynasty_preview)
@@ -344,6 +345,15 @@ func _purchase_gate() -> void:
 		_save_campaign()
 	_refresh()
 
+# Like the gate, the new level is locked in at the next Start Defense; the active assault is unchanged.
+func _purchase_platform() -> void:
+	_sync_suspension()
+	if suspended or dynasty_preview_open:
+		return
+	if campaign.purchase_platform():
+		_save_campaign()
+	_refresh()
+
 # Legacy purchase; like troop upgrades it applies from the next created battle (D2/D6).
 func _train_drill() -> void:
 	_sync_suspension()
@@ -404,6 +414,7 @@ func _refresh() -> void:
 		if campaign.veteran_cadre else
 		"Shield infantry Lv.%d, Foot archers Lv.%d, Horse archers Lv.%d and Gate Lv.%d all return to level 1.") % [
 		campaign.levels[0], campaign.levels[1], campaign.levels[2], campaign.gate_level]
+	troop_reset += " Archer Platform Lv.%d returns to level 0." % campaign.archer_platform_level
 	var cadre_keep: String = "owned: troops start at level 2" if campaign.veteran_cadre \
 		else "not owned: %d Legacy" % Campaign.VETERAN_CADRE_COST
 	%DynastyLosses.text = ("Lose all current gold: %d gold. %s\n"
@@ -449,6 +460,8 @@ func _refresh() -> void:
 		labels[i].text = "\n".join(rows)
 	%GateHealth.visible = campaign.battle.is_defense
 	%GateHealth.text = "Gate HP: %d / %d" % [campaign.battle.gate_health, campaign.battle.gate_max_health]
+	if campaign.battle.platform_damage > 0:
+		%GateHealth.text += " · Archer Platform +%d damage/round" % campaign.battle.platform_damage
 	%Rally.disabled = blocked or not campaign.can_rally()
 	if campaign.rally_rounds > 0:
 		%Rally.text = "Rally active — %d round%s left" % [campaign.rally_rounds,
@@ -477,6 +490,11 @@ func _refresh() -> void:
 	%GateUpgrade.text = "Gate Lv.%d · %s" % [campaign.gate_level,
 		"MAX" if gate_cost == 0 else "Upgrade %d gold" % gate_cost]
 	%GateUpgrade.disabled = blocked or gate_cost <= 0 or campaign.gold < gate_cost
+	var platform_cost: int = campaign.platform_purchase_cost()
+	%ArcherPlatform.text = "Archer Platform Lv.%d · +%d damage/round in defense · %s" % [
+		campaign.archer_platform_level, Campaign.platform_damage_for(campaign.archer_platform_level),
+		"MAX" if platform_cost == 0 else "Upgrade %d gold" % platform_cost]
+	%ArcherPlatform.disabled = blocked or platform_cost <= 0 or campaign.gold < platform_cost
 	%StartDefense.disabled = blocked or not checkpoint or not campaign.stronghold_cleared
 	%FarmBorder.disabled = blocked or secured or not campaign.border_cleared
 	%FarmArcher.disabled = blocked or secured or not campaign.archer_cleared

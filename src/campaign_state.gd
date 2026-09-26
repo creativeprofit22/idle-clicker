@@ -1,6 +1,6 @@
 extends RefCounted
 
-# In-memory campaign state capture, validation and restoration (contract v8; v1-v7 migrate on load). No I/O.
+# In-memory campaign state capture, validation and restoration (contract v9; v1-v8 migrate on load). No I/O.
 const Campaign = preload("res://src/campaign.gd")
 const Combat = preload("res://src/combat.gd")
 const Data = preload("res://src/encounter_data.gd")
@@ -8,7 +8,7 @@ const ProgressSave = preload("res://src/progress_save.gd")
 
 enum Outcome { VALID, CORRUPT, UNSUPPORTED, UNSAVABLE }
 const FORMAT: String = "idle-clicker-campaign"
-const VERSION: int = 8
+const VERSION: int = 9
 const ROUND_USEC: int = roundi(Data.ROUND_SECONDS * 1000000)
 const KEYS_V1: Array[String] = ["format", "version", "gold", "levels", "gate_level", "dynasty",
 	"cleared", "phase", "mode", "farm_encounter", "pending_navigation", "pending_farm",
@@ -44,13 +44,23 @@ const KEYS_V7: Array[String] = ["format", "version", "gold", "levels", "gate_lev
 	"settled", "round_progress_usec", "saved_at", "last_defense_loss", "rally_rounds",
 	"rally_cooldown", "battle"]
 # v8 adds Shield Wall: shielded rounds left and cooldown rounds left (integers, never both nonzero).
-const KEYS: Array[String] = ["format", "version", "gold", "levels", "gate_level", "dynasty",
+const KEYS_V8: Array[String] = ["format", "version", "gold", "levels", "gate_level", "dynasty",
 	"legacy", "drill_rank", "veteran_cadre", "threat", "best_threat", "legacy_earned", "cleared",
 	"phase", "mode", "farm_encounter", "pending_navigation", "pending_farm", "current_encounter",
 	"settled", "round_progress_usec", "saved_at", "last_defense_loss", "rally_rounds",
 	"rally_cooldown", "shield_wall_rounds", "shield_wall_cooldown", "battle"]
-const BATTLE_KEYS: Array[String] = ["snapshot_levels", "snapshot_drill_rank", "player_health",
+# v9 adds the owned Archer Platform level (0..3).
+const KEYS: Array[String] = ["format", "version", "gold", "levels", "gate_level", "dynasty",
+	"legacy", "drill_rank", "veteran_cadre", "threat", "best_threat", "legacy_earned", "cleared",
+	"phase", "mode", "farm_encounter", "pending_navigation", "pending_farm", "current_encounter",
+	"settled", "round_progress_usec", "saved_at", "last_defense_loss", "rally_rounds",
+	"rally_cooldown", "shield_wall_rounds", "shield_wall_cooldown", "archer_platform_level", "battle"]
+const BATTLE_KEYS_V2: Array[String] = ["snapshot_levels", "snapshot_drill_rank", "player_health",
 	"enemy_health", "snapshot_gate_level", "gate_health", "rounds", "result", "defeat_reason"]
+# v9 stores the locked-in platform level explicitly: flat damage cannot be derived from squad stats.
+const BATTLE_KEYS: Array[String] = ["snapshot_levels", "snapshot_drill_rank", "player_health",
+	"enemy_health", "snapshot_gate_level", "gate_health", "rounds", "result", "defeat_reason",
+	"snapshot_platform_level"]
 const ENCOUNTERS: Array[int] = [Data.Encounter.BORDER_SKIRMISH, Data.Encounter.ARCHER_POSITION,
 	Data.Encounter.STRONGHOLD, Data.Encounter.COUNTERATTACK]
 
@@ -107,10 +117,10 @@ static func _fingerprint(campaign: Campaign) -> Array:
 		campaign.farm_encounter, campaign.pending_navigation, campaign.pending_farm,
 		campaign.current_encounter, campaign._settled, campaign._battle_reward, campaign.last_defense_loss,
 		campaign.rally_rounds, campaign.rally_cooldown, campaign.shield_wall_rounds,
-		campaign.shield_wall_cooldown, rows,
+		campaign.shield_wall_cooldown, campaign.archer_platform_level, campaign._battle_platform_level, rows,
 		combat.players.size(), combat.enemies.size(), combat.is_defense, combat.gate_max_health,
 		combat.gate_health, combat.rounds, combat.result, combat.defeat_reason,
-		combat.commander_queued, combat.commander_damage]
+		combat.commander_queued, combat.commander_damage, combat.platform_damage]
 
 static func capture(campaign: Campaign, round_progress_usec: int, saved_at: int = 0) -> Dictionary:
 	if campaign == null or campaign.battle == null or campaign.battle.commander_queued:
@@ -170,6 +180,7 @@ static func capture(campaign: Campaign, round_progress_usec: int, saved_at: int 
 		"rally_cooldown": campaign.rally_cooldown,
 		"shield_wall_rounds": campaign.shield_wall_rounds,
 		"shield_wall_cooldown": campaign.shield_wall_cooldown,
+		"archer_platform_level": campaign.archer_platform_level,
 		"battle": {
 			"snapshot_levels": snapshot_levels,
 			"snapshot_drill_rank": campaign._battle_drill_rank,
@@ -180,6 +191,7 @@ static func capture(campaign: Campaign, round_progress_usec: int, saved_at: int 
 			"rounds": combat.rounds,
 			"result": int(combat.result),
 			"defeat_reason": int(combat.defeat_reason),
+			"snapshot_platform_level": campaign._battle_platform_level,
 		},
 	}
 	# Refuse anything the file cannot reproduce exactly (Legacy ledger, altered stats, etc.).
@@ -229,7 +241,7 @@ static func _parse(state: Variant) -> Dictionary:
 	# D10: any finite whole-number version is a version; only its value decides support.
 	if not data.has("version") or not _whole_number(data.version):
 		return corrupt
-	# v1-v7 files are parsed under their own exact key sets and migrated in memory (no separate write).
+	# v1-v8 files are parsed under their own exact key sets and migrated in memory (no separate write).
 	var v1: bool = data.version == 1
 	var v2: bool = data.version == 2
 	var v3: bool = data.version == 3
@@ -237,11 +249,13 @@ static func _parse(state: Variant) -> Dictionary:
 	var v5: bool = data.version == 5
 	var v6: bool = data.version == 6
 	var v7: bool = data.version == 7
-	if not v1 and not v2 and not v3 and not v4 and not v5 and not v6 and not v7 \
+	var v8: bool = data.version == 8
+	if not v1 and not v2 and not v3 and not v4 and not v5 and not v6 and not v7 and not v8 \
 			and data.version != VERSION:
 		return {"outcome": Outcome.UNSUPPORTED}
 	var keys: Array[String] = KEYS_V1 if v1 else (KEYS_V2 if v2 else (KEYS_V3 if v3 else (
-		KEYS_V4 if v4 else (KEYS_V5 if v5 else (KEYS_V6 if v6 else (KEYS_V7 if v7 else KEYS))))))
+		KEYS_V4 if v4 else (KEYS_V5 if v5 else (KEYS_V6 if v6 else (KEYS_V7 if v7 else (
+		KEYS_V8 if v8 else KEYS)))))))
 	if not _keys_exact(data, keys) or typeof(data.battle) != TYPE_DICTIONARY:
 		return corrupt
 	# Files older than v5 predate Veteran Cadre: it loads unowned.
@@ -285,9 +299,22 @@ static func _parse(state: Variant) -> Dictionary:
 		shield_wall_cooldown = int(data.shield_wall_cooldown)
 		if shield_wall_rounds > 0 and shield_wall_cooldown > 0:
 			return corrupt
+	# Files older than v9 predate the Archer Platform: it loads at level 0 with nothing locked in.
+	var platform: int = 0
+	if data.has("archer_platform_level"):
+		if not ProgressSave._integer(data.archer_platform_level, 0, Campaign.PLATFORM_MAX):
+			return corrupt
+		platform = int(data.archer_platform_level)
 	var battle: Dictionary = data.battle
-	if not _keys_exact(battle, BATTLE_KEYS_V1 if v1 else BATTLE_KEYS):
+	var battle_keys: Array[String] = BATTLE_KEYS if data.has("archer_platform_level") else (
+		BATTLE_KEYS_V1 if v1 else BATTLE_KEYS_V2)
+	if not _keys_exact(battle, battle_keys):
 		return corrupt
+	var snapshot_platform: int = 0
+	if battle.has("snapshot_platform_level"):
+		if not ProgressSave._integer(battle.snapshot_platform_level, 0, platform):
+			return corrupt
+		snapshot_platform = int(battle.snapshot_platform_level)
 	if typeof(data.settled) != TYPE_BOOL or typeof(data.cleared) != TYPE_ARRAY or data.cleared.size() != 3:
 		return corrupt
 	for flag in data.cleared:
@@ -413,7 +440,7 @@ static func _parse(state: Variant) -> Dictionary:
 		for i in range(3):
 			if army[i].role != Data.Role.SHIELD and player_health[i] != army[i].max_health:
 				return corrupt
-	elif snapshot_gate != 0 or gate_health != 0:
+	elif snapshot_gate != 0 or gate_health != 0 or snapshot_platform != 0:
 		return corrupt
 	# Result consistency mirrors Combat.step_round() terminal checks.
 	var players_alive: bool = _any_alive(player_health)
@@ -495,6 +522,7 @@ static func _parse(state: Variant) -> Dictionary:
 		"settled": settled, "progress": progress, "saved_at": saved_at, "last_loss": last_loss,
 		"rally_rounds": rally_rounds, "rally_cooldown": rally_cooldown,
 		"shield_wall_rounds": shield_wall_rounds, "shield_wall_cooldown": shield_wall_cooldown,
+		"platform": platform, "snapshot_platform": snapshot_platform,
 		"snapshot_levels": snapshot_levels,
 		"player_health": player_health, "enemy_health": enemy_health,
 		"snapshot_gate": snapshot_gate, "gate_health": gate_health, "rounds": rounds,
@@ -531,6 +559,8 @@ static func restore(state: Variant) -> Dictionary:
 	campaign.rally_cooldown = parsed.rally_cooldown
 	campaign.shield_wall_rounds = parsed.shield_wall_rounds
 	campaign.shield_wall_cooldown = parsed.shield_wall_cooldown
+	campaign.archer_platform_level = parsed.platform
+	campaign._battle_platform_level = parsed.snapshot_platform
 	# Snapshot stats and commander damage are re-derived; the snapshot Drill rank applies exactly once.
 	var combat := Combat.new(parsed.encounter as Data.Encounter, _army(parsed.snapshot_levels, parsed.snapshot_rank),
 		parsed.threat)
@@ -541,6 +571,7 @@ static func restore(state: Variant) -> Dictionary:
 		combat.players[i].health = parsed.player_health[i]
 	for i in range(combat.enemies.size()):
 		combat.enemies[i].health = parsed.enemy_health[i]
+	combat.platform_damage = Campaign.platform_damage_for(parsed.snapshot_platform)
 	combat.rounds = parsed.rounds
 	combat.result = parsed.result as Combat.Result
 	combat.defeat_reason = parsed.reason as Combat.DefeatReason

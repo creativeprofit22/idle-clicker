@@ -128,6 +128,26 @@ tactical ability, available from the start of every dynasty with no purchase or 
 
 A run that never presses Shield Wall gives exactly the same results as before Shield Wall existed.
 
+**Archer Platform** (approved 25 Sep 2026) is a second gold-bought camp fortification next to
+the gate. It adds flat ranged damage to the Counterattack only.
+
+| Rule | Value |
+| --- | --- |
+| Levels | 0–3, owned per dynasty, starting at 0 |
+| Cost | 30 gold → Lv.1, 50 → Lv.2, 70 → Lv.3 (150 total); MAX at Lv.3 |
+| Effect | +3 flat damage per level (Lv.1/2/3 = +3/+6/+9) added to each resolved Counterattack round |
+| Target | The enemy the shield squad would pick that round (frontline first); it retargets when that enemy dies |
+| Modes | Counterattack only. Conquest, farming and the opening battle get no platform damage |
+| Not affected by | Drill, Rally, Threat and Shield Wall. The commander strike is unchanged and separate |
+| Lock-in | The level is snapshotted at Start Defense, like the gate. A purchase mid-assault never changes the active assault and applies from the next defense |
+| Durability | Cannot be destroyed; it has no health |
+| Purchase | Any phase, like the gate. Refused when unaffordable, at MAX, while suspended and with the reset preview open. Gold is deducted exactly once |
+| Never changes | Gold rewards, Legacy, Threat, conquest, farming, round timing, the gate and the away reward |
+| Dynasty reset | Found a Dynasty returns it to level 0; the preview lists this loss |
+| Save | Owned level and the locked-in battle level are saved separately (campaign save v9) |
+
+A dynasty that never buys the Archer Platform plays exactly as before it existed.
+
 **Found a Dynasty** is available at every secured campaign, without limit. The native
 preview shows actual gold, troop and gate losses, the Legacy, Drill rank and Veteran Cadre state that are kept,
 and the Legacy the next secured campaign earns at the chosen Threat. Cancel or Escape changes no gameplay
@@ -142,7 +162,7 @@ dynasty; troops, gold, costs and round timing are unchanged. The status line sho
 "Threat N … · Best secured Threat M".
 
 **Confirm reset — start dynasty N** (N = current dynasty + 1) loses all gold and
-territory/security, returns all troop levels to 1 (2 with Veteran Cadre) and the gate to 1, clears battle progress, queued
+territory/security, returns all troop levels to 1 (2 with Veteran Cadre), the gate to 1 and the Archer Platform to 0, clears battle progress, queued
 commands/navigation, farm selection and fractional time, then starts fresh round-zero
 Border in Advance mode. Roster access, Legacy, Drill rank and Veteran Cadre remain. Stronghold pays
 **30 gold once per run** in every dynasty. The reset is saved as one transition; if the app
@@ -295,7 +315,9 @@ Every new encounter, replay, or retry begins at full health, with a fresh stat s
 | Cause | Result text after `Counterattack: Defeat · +0 gold ·` | Status line while stored |
 | --- | --- | --- |
 | Gate destroyed | The gate broke. Upgrade the Gate or your Shield infantry to hold longer. | Last defense: the gate broke — upgrade Gate or Shield |
-| Timeout | Time ran out at round 60. Level up your troops for more damage to finish sooner. | Last defense: time ran out at round 60 — level up troop damage |
+| Timeout | Time ran out at round 60. Level up your troops or the Archer Platform for more damage to finish sooner. | Last defense: time ran out at round 60 — level up troop or platform damage |
+
+The timeout wording was amended on 25 Sep 2026 (user-approved) to name the Archer Platform, since a timeout is purely a damage shortfall. The gate-broken wording is unchanged: the Gate and Shield infantry remain its direct fixes.
 
 The result text ends with `Farm to recover, return to the checkpoint after battle, then Start Defense to retry.` The cause is saved (campaign save v6) and shown on the campaign status line while conquest is running or at the defense checkpoint, including after relaunch, until the next Start Defense clears it. Rules are unchanged: +0 gold, all progress kept, routing to the queued or default farm, and no loss reward.
 

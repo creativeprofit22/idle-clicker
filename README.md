@@ -132,6 +132,17 @@ rounds (N s)", or "Shield Wall — available during battles". Like Rally, a batt
 is active starts the full cooldown, founding a dynasty makes it ready, and its state is saved
 (campaign save v8). Playing without Shield Wall gives exactly the same results as before.
 
+**Archer Platform** (the button under the gate upgrade) is a second camp fortification bought with
+gold: 30, 50 and 70 gold for levels 1–3. Each level adds **+3 flat damage** every Counterattack
+round (+9 at level 3) to the enemy your shield infantry is fighting, and it switches target when that
+enemy falls. It only fires during the Counterattack. Drill, Rally, Threat and Shield Wall don't change
+it, and it can't be destroyed. Like the gate, the level is locked in when you press Start Defense, so
+a purchase during an assault counts from the next defense. The button reads "Archer Platform Lv.N ·
++M damage/round in defense · Upgrade C gold" (or "· MAX"), and the gate line shows "· Archer
+Platform +M damage/round" while it is firing. Founding a dynasty returns it to level 0, and the
+preview says so. Its owned and locked-in levels are saved (campaign save v9). A dynasty that never
+buys it plays exactly as before.
+
 ### Legacy, Drill ranks and repeatable dynasty resets
 
 A **settled Counterattack victory with a surviving gate** plus all three clearances secures
@@ -173,8 +184,8 @@ defaults to 0 each time the preview opens and can go up to one above your best s
 and damage (rounded half up), fixed for the whole dynasty. Troops, gold rewards, costs and
 round timing don't change. Changing Threat in the preview writes nothing until Confirm.
 
-Confirmation loses all gold, troop/gate upgrades (troops return to level 1, or 2 with Veteran
-Cadre; the gate to 1), territory and
+Confirmation loses all gold, troop/gate/platform upgrades (troops return to level 1, or 2 with
+Veteran Cadre; the gate to 1; the Archer Platform to 0), territory and
 security. It clears battle progress, queued commands/navigation, farm selection and fractional
 time, then starts a fresh full-health Border in Advance mode at round zero. All three troop
 types, Legacy, Drill rank and Veteran Cadre remain. Stronghold pays **30 gold once per run**; defense pays

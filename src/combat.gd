@@ -19,6 +19,9 @@ var commander_damage: int = 0
 var rally_active: bool = false
 # Set by the campaign for exactly one step_round() while Shield Wall is active; never saved here.
 var shield_wall_active: bool = false
+# Archer Platform: flat damage added each Counterattack round to the shield squad's target. Set by
+# the campaign from the level locked in at Start Defense; 0 in every other battle.
+var platform_damage: int = 0
 
 const RALLY_PERCENT: int = 50
 const SHIELD_WALL_PERCENT: int = 25
@@ -101,6 +104,11 @@ func step_round() -> void:
 		var target: int = _target_index(enemies, Data.Role.SHIELD)
 		if target >= 0:
 			outgoing[target] += commander_damage
+	# Flat and unmodified: never boosted by Rally or Drill, never touched by Shield Wall.
+	if is_defense and platform_damage > 0:
+		var target: int = _target_index(enemies, Data.Role.SHIELD)
+		if target >= 0:
+			outgoing[target] += platform_damage
 	for i in range(enemies.size()):
 		enemies[i].health = maxi(0, enemies[i].health - outgoing[i])
 	for i in range(players.size()):

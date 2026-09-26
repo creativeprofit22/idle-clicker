@@ -1,7 +1,7 @@
-# Campaign save contract — v1, with v2 (Legacy), v3 (Threat), v4 (away reward), v5 (Veteran Cadre), v6 (defense loss cause), v7 (Rally) and v8 (Shield Wall) amendments
+# Campaign save contract — v1, with v2 (Legacy), v3 (Threat), v4 (away reward), v5 (Veteran Cadre), v6 (defense loss cause), v7 (Rally), v8 (Shield Wall) and v9 (Archer Platform) amendments
 
-The current file format is **v8**; see "v8 amendment (Shield Wall)" at the end, which builds on
-"v7 amendment (Rally)", "v6 amendment (defense loss cause)", "v5 amendment (Veteran Cadre)", "v4 amendment (away reward)", "v3 amendment (Threat)" and "v2 amendment (Legacy)". The earlier sections are kept as history and still govern every rule
+The current file format is **v9**; see "v9 amendment (Archer Platform)" at the end, which builds on
+"v8 amendment (Shield Wall)", "v7 amendment (Rally)", "v6 amendment (defense loss cause)", "v5 amendment (Veteran Cadre)", "v4 amendment (away reward)", "v3 amendment (Threat)" and "v2 amendment (Legacy)". The earlier sections are kept as history and still govern every rule
 the amendments do not change.
 
 **Status: APPROVED 23 September 2026 — implemented.** In-memory state capture, validation
@@ -556,7 +556,7 @@ Wall have separate fields and may both be active.
 **Fields.** v8 adds two JSON integers: `shield_wall_rounds` (shielded rounds still to resolve,
 0..5) and `shield_wall_cooldown` (cooldown rounds left, 0..20). Both 0 means ready. The key set is
 the v7 set plus both keys. A missing key, boolean, string, fractional or out-of-range value is
-corrupt. Version 9 or higher is unsupported.
+corrupt. Version 9 or higher is unsupported. *(Superseded by v9: version 10 or higher is unsupported.)*
 
 **Cross-field.** Both nonzero is corrupt. `shield_wall_rounds > 0` is corrupt unless the phase is
 RUNNING or DEFENDING (an ongoing battle) and the battle has resolved at least
@@ -564,7 +564,7 @@ RUNNING or DEFENDING (an ongoing battle) and the battle has resolved at least
 
 **Migration.** v1–v7 files are parsed under their own exact key sets and load with Shield Wall
 ready; a v7 file carrying either key is corrupt. Files are not rewritten on load; the next save
-writes v8.
+writes v8. *(Superseded by v9: the next save writes v9.)*
 
 **v8 acceptance cases** (covered in `tests/run_tests.gd`, tests `test_shield_wall`,
 `test_shield_wall_state` and `test_campaign_scene_shield_wall`):
@@ -572,5 +572,43 @@ writes v8.
 1. Active, cooling and ready states round-trip exactly through save and restore.
 2. The corrupt values above, both nonzero, an active Shield Wall outside a running battle or older
    than its battle, and a v7 file carrying a Shield Wall key are corrupt; version 9 is unsupported.
+   *(Superseded by v9: version 10 is unsupported.)*
 3. v1–v7 files load with Shield Wall ready and are not rewritten on load; the next save writes v8.
+   *(Superseded by v9: the next save writes v9.)*
 4. Pressing Shield Wall in the scene saves immediately and relaunch restores the remaining cooldown.
+
+## v9 amendment (Archer Platform)
+
+Approved 25 September 2026. The Archer Platform (levels 0–3, 30/50/70 gold, +3 flat damage per
+level per resolved Counterattack round to the shield squad's target; see `first-playable.md`) is
+owned per dynasty and its level is locked in at Start Defense, like the gate. The gate's locked-in
+level is recovered from the saved gate max health, but flat damage cannot be recovered from squad
+stats, so v9 **stores the locked-in level explicitly**.
+
+**Fields.** v9 adds a top-level JSON integer `archer_platform_level` (owned level, 0..3) and a
+battle-section JSON integer `snapshot_platform_level` (the level locked in for the saved battle).
+The top-level key set is the v8 set plus `archer_platform_level`; the battle key set is the v2–v8
+set plus `snapshot_platform_level`. A missing key, boolean, string, null, fractional, negative or
+out-of-range value is corrupt. Version 10 or higher is unsupported.
+
+**Cross-field.** `snapshot_platform_level` must be 0 unless the saved battle is the Counterattack,
+and never above `archer_platform_level` (owned levels only grow within a dynasty, and Found a
+Dynasty resets both to 0). On restore the active battle's platform damage is
+`3 × snapshot_platform_level`; the in-memory fingerprint includes both levels and the battle's
+platform damage, so a battle whose damage disagrees with its snapshot cannot be captured.
+
+**Migration.** v1–v8 files are parsed under their own exact key sets and load with the platform
+at level 0 and no locked-in level; a v8 file carrying either key is corrupt. Files are not rewritten
+on load; the next save writes v9.
+
+**v9 acceptance cases** (covered in `tests/run_tests.gd`, tests `test_archer_platform`,
+`test_archer_platform_state` and `test_campaign_scene_archer_platform`):
+
+1. Owned levels 0–3 and the locked-in level round-trip exactly at the checkpoint, while defending
+   and once secured.
+2. The corrupt values above, a locked-in level above the owned level, a nonzero locked-in level
+   outside the Counterattack and a v8 file carrying a platform key are corrupt; version 10 is
+   unsupported.
+3. v1–v8 files load at level 0 and are not rewritten on load; the next save writes v9.
+4. Buying the platform in the scene saves immediately; a purchase during an assault leaves the
+   saved locked-in level unchanged.

@@ -191,6 +191,32 @@ func run() -> void:
 		await click(button)
 	check(campaign.levels == [3, 3, 3] and campaign.gold == 10
 		and archer.players[0].max_health == old_health, "mouse purchases charge 180; current snapshot unchanged")
+	# Archer Platform during the real Archer battle: +150 isolated fixture gold, spent exactly (net zero).
+	campaign.gold += 150
+	scene._refresh()
+	var platform: Button = scene.get_node("%ArcherPlatform")
+	var archer_rounds: int = archer.rounds
+	check(not platform.disabled and platform.text == "Archer Platform Lv.0 · +0 damage/round in defense · Upgrade 30 gold",
+		"Archer Platform offered at Lv.0 for 30 gold during conquest")
+	await click(platform)
+	check(campaign.archer_platform_level == 1 and campaign.gold == 130 and campaign.battle == archer
+		and archer.platform_damage == 0 and archer.players[0].max_health == old_health
+		and platform.text == "Archer Platform Lv.1 · +3 damage/round in defense · Upgrade 50 gold"
+		and scene.get_node("%SaveStatus").text == "Saved" and saved_platform_level() == 1,
+		"mouse Archer Platform Lv.1 charges 30, saves at once and leaves the conquest battle unchanged")
+	await keyboard(platform)
+	check(campaign.archer_platform_level == 2 and campaign.gold == 80 and campaign.battle == archer
+		and archer.platform_damage == 0 and root.gui_get_focus_owner() == platform
+		and platform.text == "Archer Platform Lv.2 · +6 damage/round in defense · Upgrade 70 gold"
+		and saved_platform_level() == 2,
+		"keyboard Archer Platform Lv.2 charges 50, saves at once, keeps focus, conquest battle unchanged")
+	await click(platform)
+	check(campaign.archer_platform_level == 3 and campaign.gold == 10 and campaign.battle == archer
+		and archer.platform_damage == 0 and platform.disabled
+		and platform.text == "Archer Platform Lv.3 · +9 damage/round in defense · MAX" and saved_platform_level() == 3
+		and archer.rounds >= archer_rounds,
+		"mouse Archer Platform Lv.3 charges 70, saves and disables the button at MAX")
+	await capture("campaign-platform-max")
 	await next_battle()
 	check(campaign.archer_cleared and campaign.mode == Campaign.Mode.FARM
 		and campaign.current_encounter == Data.Encounter.BORDER_SKIRMISH and campaign.gold == 40
@@ -313,6 +339,7 @@ func test_dynasty() -> bool:
 		and losses.contains("Next secured campaign earns 3 Legacy") and not losses.contains("only dynasty reset")
 		and losses.contains("Legacy and Drill rank are kept in the campaign save")
 		and losses.contains("main-game saves are untouched")
+		and losses.contains("Archer Platform Lv.0 returns to level 0.")
 		and scene.get_node("%ConfirmDynasty").text == "Confirm reset — start dynasty 2",
 		"native preview discloses actual losses, exact benefit and save limits")
 	# Opening already focused Cancel; use actual focus transitions, not a no-op grab.
@@ -418,8 +445,9 @@ func test_veteran_cadre(secured: Dictionary) -> bool:
 		and button.text == "Veteran Cadre owned — new dynasties start troops at level 2"
 		and scene.get_node("%DynastyStatus").text.ends_with(" · Veteran Cadre")
 		and scene.get_node("%SaveStatus").text == "Saved" and on_disk is Dictionary
-		and on_disk.veteran_cadre == true and on_disk.legacy == 13 and on_disk.version == 8,
-		"native Veteran Cadre click spends 50 Legacy once, shows owned and saves v5")
+		and on_disk.veteran_cadre == true and on_disk.legacy == 13 and on_disk.version == 9
+		and on_disk.archer_platform_level == 0,
+		"native Veteran Cadre click spends 50 Legacy once, shows owned and saves v9")
 	await click(scene.get_node("%FoundDynasty"))
 	await process_frame
 	await process_frame
@@ -450,6 +478,10 @@ func test_veteran_cadre(secured: Dictionary) -> bool:
 	scene.get_node("Margin/Scroll").scroll_vertical = 0
 	await capture("dynasty-cadre-successor")
 	return true
+
+func saved_platform_level() -> int:
+	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
+	return int(data.archer_platform_level) if data is Dictionary and data.has("archer_platform_level") else -1
 
 func dynasty_checkpoint() -> Array:
 	var campaign := scene.campaign
@@ -506,7 +538,7 @@ func test_defense() -> bool:
 	root.content_scale_size = Vector2i(540, 480)
 	await process_frame
 	await process_frame
-	for name in ["StartDefense", "GateUpgrade"]:
+	for name in ["StartDefense", "GateUpgrade", "ArcherPlatform"]:
 		var button: Button = scene.get_node("%" + name)
 		button.grab_focus()
 		await process_frame
@@ -515,6 +547,13 @@ func test_defense() -> bool:
 			and root.get_visible_rect().encloses(button.get_global_rect())
 			and scene.get_node("Margin/Scroll").scroll_vertical > 0,
 			"narrow focus-follow exposes new control " + name)
+	var gate_rect: Rect2 = scene.get_node("%GateUpgrade").get_global_rect()
+	var platform_button: Button = scene.get_node("%ArcherPlatform")
+	check(root.get_visible_rect().encloses(gate_rect) and root.get_visible_rect().encloses(platform_button.get_global_rect())
+		and not gate_rect.intersects(platform_button.get_global_rect())
+		and platform_button.get_global_rect().size.x <= 540.0
+		and platform_button.text == "Archer Platform Lv.0 · +0 damage/round in defense · Upgrade 30 gold",
+		"Gate and Archer Platform both fit at 540x480 without overlapping")
 	await capture("small-defense-controls")
 	root.size = Vector2i(720, 720)
 	root.content_scale_size = Vector2i(720, 720)
@@ -585,7 +624,7 @@ func test_defense() -> bool:
 	root.content_scale_size = Vector2i(540, 480)
 	await process_frame
 	await process_frame
-	for name in ["StartDefense", "GateUpgrade"]:
+	for name in ["StartDefense", "GateUpgrade", "ArcherPlatform"]:
 		var button: Button = scene.get_node("%" + name)
 		if button.disabled:
 			check(name == "GateUpgrade" and campaign.gate_level == 3, "capped Gate stays unfocusable at the hinted checkpoint")
@@ -606,6 +645,16 @@ func test_defense() -> bool:
 	await click(scene.get_node("%FarmBorder"))
 	check(campaign.battle == assault and campaign.pending_navigation == Campaign.Navigation.FARM
 		and scene.get_node("%PendingNavigation").text.contains("if defense fails"), "defense farm input queues recovery only")
+	# Archer Platform Lv.1 by keyboard mid-assault: charged once, saved, active assault keeps +0.
+	var platform: Button = scene.get_node("%ArcherPlatform")
+	await keyboard(platform)
+	var platform_disk: Variant = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
+	check(campaign.archer_platform_level == 1 and campaign.gold == 10 and campaign.battle == assault
+		and assault.platform_damage == 0 and campaign._battle_platform_level == 0
+		and root.gui_get_focus_owner() == platform
+		and platform_disk is Dictionary and platform_disk.version == 9 and platform_disk.archer_platform_level == 1
+		and platform_disk.battle.snapshot_platform_level == 0 and platform_disk.battle.snapshot_gate_level == 3,
+		"keyboard Archer Platform mid-assault charges 30 and saves Lv.1 while the active assault keeps +0")
 	scene.get_node("Margin/Scroll").scroll_vertical = 0
 	await capture("defense-retry")
 	if not await test_native_resume(Campaign.Phase.DEFENDING):
@@ -647,7 +696,7 @@ func test_defense() -> bool:
 	await process_frame
 	await next_battle()
 	check(campaign.phase == Campaign.Phase.CAMPAIGN_SECURED and campaign.battle == assault
-		and assault.gate_health > 0 and campaign.gold == 40
+		and assault.gate_health > 0 and campaign.gold == 10
 		and campaign.pending_navigation == Campaign.Navigation.NONE
 		and scene.get_node("%LastResult").text == "Counterattack: Victory · +0 gold"
 		and scene.get_node("%CampaignStatus").text.contains("Campaign secured"),
@@ -656,7 +705,7 @@ func test_defense() -> bool:
 	var gate: int = assault.gate_health
 	await create_timer(1.2).timeout
 	check(not scene.is_processing() and campaign.battle == assault and assault.rounds == rounds
-		and assault.gate_health == gate and campaign.gold == 40, "secured state stays idle without replay or payment")
+		and assault.gate_health == gate and campaign.gold == 10, "secured state stays idle without replay or payment")
 	for name in ["StartDefense", "FarmBorder", "FarmArcher", "Frontier"]:
 		check(scene.get_node("%" + name).disabled, "secured navigation disabled " + name)
 	check(campaign.rally_rounds == 0 and campaign.rally_cooldown > 0 and campaign.rally_cooldown <= 20

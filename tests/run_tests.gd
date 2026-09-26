@@ -207,6 +207,9 @@ func run() -> void:
 	test_shield_wall()
 	test_shield_wall_state()
 	test_campaign_scene_shield_wall()
+	test_archer_platform()
+	test_archer_platform_state()
+	test_campaign_scene_archer_platform()
 	test_campaign_state_round_trips()
 	test_campaign_state_duplicates()
 	test_campaign_state_rejection()
@@ -583,8 +586,8 @@ func test_campaign_state_rejection() -> void:
 	state_rejects(base, "battle not object", CORRUPT, func(s: Dictionary) -> void: s.battle = [])
 	state_rejects(base, "wrong format", CORRUPT, func(s: Dictionary) -> void: s.format = "idle-clicker-progress")
 	state_rejects(base, "missing format", CORRUPT, func(s: Dictionary) -> void: s.erase("format"))
-	state_rejects(base, "future version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 9)
-	state_rejects(base, "future version float", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 9.0)
+	state_rejects(base, "future version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 10)
+	state_rejects(base, "future version float", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 10.0)
 	state_rejects(base, "version zero", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 0)
 	state_rejects(base, "negative version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = -1)
 	state_rejects(base, "huge version", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 1e20)
@@ -742,7 +745,7 @@ func test_veteran_cadre_state() -> void:
 	var campaign: Campaign = loaded.campaign
 	check(campaign.buy_veteran_cadre() and campaign.legacy == 5, "Veteran Cadre save: purchase from loaded fixture")
 	var captured := CampaignState.capture(campaign, 0)
-	check(captured.outcome == CampaignState.Outcome.VALID and captured.state.version == 8
+	check(captured.outcome == CampaignState.Outcome.VALID and captured.state.version == 9
 		and captured.state.veteran_cadre == true and captured.state.legacy == 5 and captured.state.legacy_earned == 55,
 		"Veteran Cadre save: v8 capture keeps the flag and the spend")
 	var owned: Dictionary = state_json(captured.state)
@@ -796,14 +799,22 @@ func test_veteran_cadre_state() -> void:
 		check(from_disk.campaign.buy_veteran_cadre() and store.save_campaign(from_disk.campaign, 0) == OK, "Veteran Cadre save: bought and saved")
 		var written: Variant = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
 		var relaunched := CampaignSave.new(fixture.path).load_campaign()
-		check(written.version == 8 and written.veteran_cadre == true and relaunched.outcome == CampaignSave.Outcome.LOADED
+		check(written.version == 9 and written.veteran_cadre == true and relaunched.outcome == CampaignSave.Outcome.LOADED
 			and relaunched.campaign.veteran_cadre and relaunched.campaign.legacy == 5,
-			"Veteran Cadre save: next save writes v8 that relaunches owned")
+			"Veteran Cadre save: next save writes v9 that relaunches owned")
 	check(fixture.cleanup() == OK, "Veteran Cadre save: directory cleaned")
 
-# Build a contract-v7 state from a v8 capture (drop the Shield Wall counters) as older builds wrote it.
-func state_as_v7(state: Dictionary) -> Dictionary:
+# Build a contract-v8 state from a v9 capture (drop both Archer Platform levels) as older builds wrote it.
+func state_as_v8(state: Dictionary) -> Dictionary:
 	var old: Dictionary = state.duplicate(true)
+	old.version = 8
+	old.erase("archer_platform_level")
+	old.battle.erase("snapshot_platform_level")
+	return old
+
+# Build a contract-v7 state from a v9 capture (drop the platform and Shield Wall counters) as older builds wrote it.
+func state_as_v7(state: Dictionary) -> Dictionary:
+	var old: Dictionary = state_as_v8(state)
 	old.version = 7
 	old.erase("shield_wall_rounds")
 	old.erase("shield_wall_cooldown")
@@ -912,9 +923,9 @@ func test_campaign_state_migration() -> void:
 		and FileAccess.get_file_as_string(fixture.path) == JSON.stringify(v1),
 		"Campaign migration: v1 file loads through the store without being rewritten")
 	check(store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK
-		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 8
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 9
 		and CampaignSave.new(fixture.path).load_campaign().campaign.legacy == 3,
-		"Campaign migration: next save writes v8 that reloads exactly")
+		"Campaign migration: next save writes v9 that reloads exactly")
 	check(fixture.cleanup() == OK, "Campaign migration: directory cleaned")
 
 func campaign_running(rounds: int = 2, gold: int = 7) -> Campaign:
@@ -973,7 +984,7 @@ func test_campaign_save_format() -> void:
 	var base: Dictionary = CampaignState.capture(campaign_running(), 250000).state
 	var valid: String = JSON.stringify(base)
 	check(valid.contains('"gold":7') and valid.contains('"last_defense_loss":0,')
-		and valid.ends_with('"version":8,"veteran_cadre":false}'), "Campaign save format: canonical integer text")
+		and valid.ends_with('"version":9,"veteran_cadre":false}'), "Campaign save format: canonical integer text")
 	var backup: String = JSON.stringify(CampaignState.capture(campaign_running(1), 0).state)
 	check(fixture.put(backup, ".bak") == OK, "Campaign save format: valid backup beside every primary")
 	var mutated := func(mutate: Callable) -> String:
@@ -996,7 +1007,7 @@ func test_campaign_save_format() -> void:
 		mutated.call(func(s: Dictionary) -> void: s.battle.player_health[0] = 121),
 		mutated.call(func(s: Dictionary) -> void: s.settled = true)]
 	check(corrupt[7].length() == 4097, "Campaign save format: oversize fixture is 4097 bytes")
-	var unsupported: Array[String] = [mutated.call(func(s: Dictionary) -> void: s.version = 9),
+	var unsupported: Array[String] = [mutated.call(func(s: Dictionary) -> void: s.version = 10),
 		'{"format":"idle-clicker-campaign","version":99,"gold":"future payload"}']
 	var replacement := campaign_running(3)
 	for expected in [CampaignSave.Outcome.CORRUPT, CampaignSave.Outcome.UNSUPPORTED]:
@@ -1248,7 +1259,7 @@ func test_campaign_scene_saves() -> void:
 	recovered.free()
 	# Unusable primaries: fresh session, saving disabled, file preserved.
 	var unsupported_state: Dictionary = (expected as Dictionary).duplicate(true)
-	unsupported_state.version = 9
+	unsupported_state.version = 10
 	var backup_bytes := FileAccess.get_file_as_bytes(path + ".bak")
 	for case in [["{", "damaged"], [JSON.stringify(unsupported_state), "from an unsupported version"], ["", "unreadable"]]:
 		if case[1] == "unreadable":
@@ -1431,7 +1442,7 @@ func test_away_reward_format() -> void:
 	var CORRUPT := CampaignState.Outcome.CORRUPT
 	var stamped: Dictionary = CampaignState.capture(campaign_running(), 250000, 1700000000).state
 	var restored := CampaignState.restore(state_json(stamped))
-	check(stamped.version == 8 and restored.outcome == CampaignState.Outcome.VALID and restored.saved_at == 1700000000
+	check(stamped.version == 9 and restored.outcome == CampaignState.Outcome.VALID and restored.saved_at == 1700000000
 		and CampaignState.capture(restored.campaign, restored.round_progress_usec, restored.saved_at).state == stamped,
 		"Away save: v8 round trip keeps saved_at exactly")
 	state_rejects(stamped, "missing saved_at", CORRUPT, func(s: Dictionary) -> void: s.erase("saved_at"))
@@ -1440,7 +1451,7 @@ func test_away_reward_format() -> void:
 	state_rejects(stamped, "string saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = "1700000000")
 	state_rejects(stamped, "huge saved_at", CORRUPT, func(s: Dictionary) -> void: s.saved_at = ProgressSave.MAX_GOLD + 1)
 	state_rejects(stamped, "v3 carrying saved_at", CORRUPT, func(s: Dictionary) -> void: s.version = 3)
-	state_rejects(stamped, "version 9", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 9)
+	state_rejects(stamped, "version 10", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 10)
 	# v1-v3 files migrate with an unknown (0) stamp, so they never pay an away reward.
 	var secured: Dictionary = state_json(CampaignState.capture(state_secured(), 0, 1700000000).state)
 	for old: Dictionary in [state_as_v3(secured), state_as_v2(secured), state_as_v1(secured)]:
@@ -1462,7 +1473,7 @@ func test_away_reward_format() -> void:
 	if loaded.outcome == CampaignSave.Outcome.LOADED and store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK:
 		written = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
 	var reloaded := CampaignSave.new(fixture.path).load_campaign()
-	check(written != null and written.version == 8 and written.saved_at == 1700000500
+	check(written != null and written.version == 9 and written.saved_at == 1700000500
 		and reloaded.outcome == CampaignSave.Outcome.LOADED and reloaded.saved_at == 1700000500,
 		"Away save: store with injected clock stamps and reloads saved_at exactly")
 	check(fixture.cleanup() == OK, "Away save: directory cleaned")
@@ -2232,8 +2243,8 @@ func test_campaign_scene_defense() -> void:
 	timeout.campaign.battle.rounds = 59
 	timeout.advance_time(1.0)
 	check(timeout.campaign.last_defense_loss == Combat.DefeatReason.TIMEOUT
-		and timeout.get_node("%LastResult").text == "Counterattack: Defeat · +0 gold · Time ran out at round 60. Level up your troops for more damage to finish sooner. Farm to recover, return to the checkpoint after battle, then Start Defense to retry."
-		and timeout.get_node("%CampaignStatus").text.ends_with(" · Last defense: time ran out at round 60 — level up troop damage")
+		and timeout.get_node("%LastResult").text == "Counterattack: Defeat · +0 gold · Time ran out at round 60. Level up your troops or the Archer Platform for more damage to finish sooner. Farm to recover, return to the checkpoint after battle, then Start Defense to retry."
+		and timeout.get_node("%CampaignStatus").text.ends_with(" · Last defense: time ran out at round 60 — level up troop or platform damage")
 		and not timeout.get_node("%GateHealth").visible, "Defense scene: timeout reason survives recovery routing")
 	timeout.free()
 	var terminal := campaign_scene_defense_ready()
@@ -2585,7 +2596,7 @@ func test_defense_loss_cause_state() -> void:
 		var state: Dictionary = state_json(captured.state)
 		var restored := CampaignState.restore(state)
 		var cause: int = Combat.DefeatReason.GATE_DESTROYED if outcome == "gate" else Combat.DefeatReason.TIMEOUT
-		check(captured.outcome == CampaignState.Outcome.VALID and state.version == 8 and state.last_defense_loss == cause
+		check(captured.outcome == CampaignState.Outcome.VALID and state.version == 9 and state.last_defense_loss == cause
 			and restored.outcome == CampaignState.Outcome.VALID and restored.campaign.last_defense_loss == cause
 			and CampaignState.capture(restored.campaign, restored.round_progress_usec).state == captured.state
 			and campaign_snapshot(restored.campaign, false) == campaign_snapshot(campaign, false),
@@ -2599,7 +2610,7 @@ func test_defense_loss_cause_state() -> void:
 		state_rejects(state, "negative loss cause", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = -1)
 		state_rejects(state, "out-of-range loss cause", CORRUPT, func(s: Dictionary) -> void: s.last_defense_loss = 4)
 		state_rejects(state, "v5 carrying the loss cause", CORRUPT, func(s: Dictionary) -> void: s.version = 5)
-		state_rejects(state, "version 9 with a loss cause", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 9)
+		state_rejects(state, "version 10 with a loss cause", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 10)
 		# Older files load with no cause.
 		for old: Dictionary in [state_as_v5(state), state_as_v4(state), state_as_v3(state)]:
 			var migrated := CampaignState.restore(old)
@@ -2637,10 +2648,10 @@ func test_defense_loss_cause_state() -> void:
 	if store.save_campaign(lost, 0) == OK:
 		written = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
 	var relaunched := CampaignSave.new(fixture.path).load_campaign()
-	check(written != null and written.version == 8 and written.last_defense_loss == Combat.DefeatReason.TIMEOUT
+	check(written != null and written.version == 9 and written.last_defense_loss == Combat.DefeatReason.TIMEOUT
 		and relaunched.outcome == CampaignSave.Outcome.LOADED
 		and relaunched.campaign.last_defense_loss == Combat.DefeatReason.TIMEOUT,
-		"Defense loss save: next save writes v8 and the cause survives relaunch")
+		"Defense loss save: next save writes v9 and the cause survives relaunch")
 	check(fixture.cleanup() == OK, "Defense loss save: directory cleaned")
 
 func test_campaign_scene_defense_loss_cause() -> void:
@@ -2650,7 +2661,7 @@ func test_campaign_scene_defense_loss_cause() -> void:
 		return
 	var statuses := {
 		"gate": "Last defense: the gate broke — upgrade Gate or Shield",
-		"timeout": "Last defense: time ran out at round 60 — level up troop damage"}
+		"timeout": "Last defense: time ran out at round 60 — level up troop or platform damage"}
 	for outcome: String in statuses:
 		var store := CampaignSave.new(fixture.path)
 		check(store.save_campaign(defense_loss_campaign(outcome, false), 0) == OK, "Defense loss scene: lost campaign saved")
@@ -3166,7 +3177,7 @@ func test_threat_state() -> void:
 	campaign.battle.step_round()
 	var state: Dictionary = state_json(CampaignState.capture(campaign, 0).state)
 	var restored := CampaignState.restore(state)
-	check(restored.outcome == CampaignState.Outcome.VALID and state.version == 8 and state.threat == 1
+	check(restored.outcome == CampaignState.Outcome.VALID and state.version == 9 and state.threat == 1
 		and state.best_threat == 0 and state.legacy_earned == 10
 		and restored.campaign.threat == 1 and restored.campaign.best_threat == 0 and restored.campaign.legacy_earned == 10
 		and campaign_snapshot(restored.campaign, false) == campaign_snapshot(campaign, false),
@@ -3251,9 +3262,9 @@ func test_threat_state() -> void:
 		and FileAccess.get_file_as_string(fixture.path) == JSON.stringify(v2_secured),
 		"Threat migration: v2 file loads through the store without being rewritten")
 	check(store.save_campaign(loaded.campaign, loaded.round_progress_usec) == OK
-		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 8
+		and JSON.parse_string(FileAccess.get_file_as_string(fixture.path)).version == 9
 		and CampaignSave.new(fixture.path).load_campaign().campaign.legacy_earned == 13,
-		"Threat migration: next save writes v8 that reloads exactly")
+		"Threat migration: next save writes v9 that reloads exactly")
 	check(fixture.cleanup() == OK, "Threat migration: directory cleaned")
 
 func enemy_health(combat: Combat) -> int:
@@ -3506,7 +3517,7 @@ func test_rally_state() -> void:
 		var captured := CampaignState.capture(campaign, 250000)
 		var state: Dictionary = state_json(captured.state)
 		var restored := CampaignState.restore(state)
-		check(captured.outcome == CampaignState.Outcome.VALID and state.version == 8
+		check(captured.outcome == CampaignState.Outcome.VALID and state.version == 9
 			and state.rally_rounds == cases[name][1] and state.rally_cooldown == cases[name][2]
 			and restored.outcome == CampaignState.Outcome.VALID
 			and restored.campaign.rally_rounds == cases[name][1] and restored.campaign.rally_cooldown == cases[name][2]
@@ -3563,7 +3574,7 @@ func test_rally_state() -> void:
 	state_rejects(state_as_v7(base), "v6 carrying Rally keys", CORRUPT, func(s: Dictionary) -> void: s.version = 6)
 	check(CampaignState.validate(state_as_v7(base)).outcome == CampaignState.Outcome.VALID,
 		"Rally save: an active v7 Rally file stays valid")
-	state_rejects(base, "version 9 with Rally", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 9)
+	state_rejects(base, "version 10 with Rally", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 10)
 	for valid: Array in [[5, 0], [4, 0], [0, 20], [0, 1]]:
 		check(CampaignState.validate(base.merged({"rally_rounds": valid[0], "rally_cooldown": valid[1]}, true)).outcome
 			== CampaignState.Outcome.VALID, "Rally save: %d active / %d cooling at round 2 is valid" % valid)
@@ -3573,7 +3584,7 @@ func test_rally_state() -> void:
 		"Rally save: cooling at the checkpoint is valid")
 	var secured: Dictionary = state_json(CampaignState.capture(state_secured(), 0).state)
 	state_rejects(secured, "active once secured", CORRUPT, func(s: Dictionary) -> void: s.rally_rounds = 1)
-	# On disk: a v6 file loads unchanged; the next save writes v8 with the Rally state.
+	# On disk: a v6 file loads unchanged; the next save writes v9 with the Rally state.
 	var fixture := ProgressFixture.new("campaign.json")
 	check(fixture.owned, "Rally save: isolated directory owned")
 	if not fixture.owned:
@@ -3595,10 +3606,10 @@ func test_rally_state() -> void:
 	if store.save_campaign(cooling, 0) == OK:
 		written = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
 	var relaunched := CampaignSave.new(fixture.path).load_campaign()
-	check(written != null and written.version == 8 and written.rally_cooldown == cooling.rally_cooldown
+	check(written != null and written.version == 9 and written.rally_cooldown == cooling.rally_cooldown
 		and written.rally_rounds == 0 and relaunched.outcome == CampaignSave.Outcome.LOADED
 		and relaunched.campaign.rally_cooldown == cooling.rally_cooldown,
-		"Rally save: next save writes v8 and the cooldown survives relaunch")
+		"Rally save: next save writes v9 and the cooldown survives relaunch")
 	check(fixture.cleanup() == OK, "Rally save: directory cleaned")
 
 func test_campaign_scene_rally() -> void:
@@ -3947,7 +3958,7 @@ func test_shield_wall_state() -> void:
 		var captured := CampaignState.capture(campaign, 250000)
 		var state: Dictionary = state_json(captured.state)
 		var restored := CampaignState.restore(state)
-		check(captured.outcome == CampaignState.Outcome.VALID and state.version == 8
+		check(captured.outcome == CampaignState.Outcome.VALID and state.version == 9
 			and state.shield_wall_rounds == cases[name][1] and state.shield_wall_cooldown == cases[name][2]
 			and restored.outcome == CampaignState.Outcome.VALID
 			and restored.campaign.shield_wall_rounds == cases[name][1]
@@ -4001,8 +4012,8 @@ func test_shield_wall_state() -> void:
 		s.shield_wall_cooldown = 21)
 	state_rejects(base, "shielded and cooling at once", CORRUPT, func(s: Dictionary) -> void: s.shield_wall_cooldown = 4)
 	state_rejects(base, "shield older than its battle", CORRUPT, func(s: Dictionary) -> void: s.shield_wall_rounds = 2)
-	state_rejects(base, "v7 carrying Shield Wall keys", CORRUPT, func(s: Dictionary) -> void: s.version = 7)
-	state_rejects(base, "version 9 with Shield Wall", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 9)
+	state_rejects(state_as_v8(base), "v7 carrying Shield Wall keys", CORRUPT, func(s: Dictionary) -> void: s.version = 7)
+	state_rejects(base, "version 10 with Shield Wall", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 10)
 	for valid: Array in [[5, 0], [4, 0], [0, 20], [0, 1]]:
 		check(CampaignState.validate(base.merged({"shield_wall_rounds": valid[0], "shield_wall_cooldown": valid[1]}, true)).outcome
 			== CampaignState.Outcome.VALID, "Shield Wall save: %d active / %d cooling at round 2 is valid" % valid)
@@ -4014,7 +4025,7 @@ func test_shield_wall_state() -> void:
 		"Shield Wall save: cooling at the checkpoint is valid")
 	var secured: Dictionary = state_json(CampaignState.capture(state_secured(), 0).state)
 	state_rejects(secured, "shielded once secured", CORRUPT, func(s: Dictionary) -> void: s.shield_wall_rounds = 1)
-	# On disk: a v7 file loads unchanged; the next save writes v8 with the Shield Wall state.
+	# On disk: a v7 file loads unchanged; the next save writes v9 with the Shield Wall state.
 	var fixture := ProgressFixture.new("campaign.json")
 	check(fixture.owned, "Shield Wall save: isolated directory owned")
 	if not fixture.owned:
@@ -4035,11 +4046,11 @@ func test_shield_wall_state() -> void:
 	if store.save_campaign(cooling, 0) == OK:
 		written = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
 	var relaunched := CampaignSave.new(fixture.path).load_campaign()
-	check(written != null and written.version == 8 and written.shield_wall_cooldown == cooling.shield_wall_cooldown
+	check(written != null and written.version == 9 and written.shield_wall_cooldown == cooling.shield_wall_cooldown
 		and cooling.shield_wall_cooldown == 18 and written.shield_wall_rounds == 0
 		and relaunched.outcome == CampaignSave.Outcome.LOADED
 		and relaunched.campaign.shield_wall_cooldown == cooling.shield_wall_cooldown,
-		"Shield Wall save: next save writes v8 and the cooldown survives relaunch")
+		"Shield Wall save: next save writes v9 and the cooldown survives relaunch")
 	check(fixture.cleanup() == OK, "Shield Wall save: directory cleaned")
 
 func test_campaign_scene_shield_wall() -> void:
@@ -4127,6 +4138,399 @@ func test_campaign_scene_shield_wall() -> void:
 	waiting.free()
 	check(fixture.cleanup() == OK, "Shield Wall scene: directory cleaned")
 
+# Pinned outcomes measured with the probe on 25 Sep 2026: one W/L letter per Threat 0-6, by gate
+# level, Drill rank and platform level (0 = none, 3 = +9/round). Troops Lv.3/3/3 as in defense_ready().
+const PLATFORM_GRID := {
+	3: {0: ["WLLLLLL", "WWWLLLL", "WWWWLLL", "WWWWWWL"], 3: ["WLLLLLL", "WWWLLLL", "WWWWLLL", "WWWWWWL"]},
+	1: {0: ["LLLLLLL", "WWLLLLL", "WWWLLLL", "WWWWLLL"], 3: ["WLLLLLL", "WWLLLLL", "WWWWLLL", "WWWWLLL"]},
+}
+
+# A real conquest checkpoint with the given gate, Drill, Threat and platform levels (isolated fixture values).
+func platform_checkpoint(gate: int, drill: int, threat: int, platform: int) -> Campaign:
+	var campaign := defense_ready()
+	campaign.gate_level = gate
+	campaign.drill_rank = drill
+	campaign.threat = threat
+	campaign.archer_platform_level = platform
+	return campaign
+
+# One Counterattack round at identical state: enemy health drop per enemy.
+func platform_round_drop(platform: int, drill: int = 0, threat: int = 0, rally: bool = false) -> Array:
+	var campaign := platform_checkpoint(3, drill, threat, platform)
+	campaign.start_defense()
+	rally_endless(campaign)
+	if rally:
+		campaign.rally()
+	var before: Array = []
+	for squad in campaign.battle.enemies:
+		before.append(squad.health)
+	campaign.resolve_round()
+	var drop: Array = []
+	for i in range(before.size()):
+		drop.append(before[i] - campaign.battle.enemies[i].health)
+	return drop
+
+func test_archer_platform() -> void:
+	check(Campaign.PLATFORM_MAX == 3 and Campaign.PLATFORM_COSTS == [30, 50, 70] and Campaign.PLATFORM_DAMAGE_PER_LEVEL == 3
+		and Campaign.platform_damage_for(0) == 0 and Campaign.platform_damage_for(3) == 9,
+		"Archer Platform: approved levels, costs and damage")
+	# Purchase: 30/50/70, exactly once each, refused when unaffordable or capped.
+	var buyer := defense_ready()
+	buyer.gold = 149
+	check(buyer.archer_platform_level == 0 and buyer.platform_purchase_cost() == 30, "Archer Platform: starts at level 0, first level 30 gold")
+	var paid: Array = []
+	for level in range(1, 4):
+		var gold_before: int = buyer.gold
+		var bought: bool = buyer.purchase_platform()
+		paid.append([bought, gold_before - buyer.gold, buyer.archer_platform_level])
+	check(paid == [[true, 30, 1], [true, 50, 2], [false, 0, 2]] and buyer.gold == 69 and buyer.platform_purchase_cost() == 70
+		and not buyer.can_purchase_platform(), "Archer Platform: 30 then 50 gold deducted once; 69 gold cannot buy the 70-gold level")
+	buyer.gold = 70
+	var before := campaign_snapshot(buyer)
+	check(buyer.purchase_platform() and buyer.gold == 0 and buyer.archer_platform_level == 3 and buyer.platform_purchase_cost() == 0,
+		"Archer Platform: third level costs 70 and reaches MAX")
+	buyer.gold = 1000
+	check(not buyer.can_purchase_platform() and not buyer.purchase_platform() and buyer.gold == 1000 and buyer.archer_platform_level == 3,
+		"Archer Platform: refused once capped")
+	check(before[0] == 70 and before[31] == 2 and campaign_snapshot(buyer)[31] == 3
+		and campaign_snapshot(buyer).slice(1, 31) == before.slice(1, 31)
+		and campaign_snapshot(buyer).slice(32) == before.slice(32),
+		"Archer Platform: purchase touches only gold and the platform level")
+	var running := campaign_running(0, 30)
+	check(running.purchase_platform() and running.archer_platform_level == 1 and running.battle.platform_damage == 0
+		and running._battle_platform_level == 0, "Archer Platform: purchasable during conquest; conquest battle unaffected")
+	# Snapshot timing: locked in at Start Defense; mid-assault purchases wait for the next defense.
+	var timing := defense_ready()
+	timing.gold = 150
+	timing.purchase_platform()
+	var assault := timing.start_defense()
+	check(assault.platform_damage == 3 and timing._battle_platform_level == 1, "Archer Platform: level 1 locked in at Start Defense (+3)")
+	check(timing.purchase_platform() and timing.purchase_platform() and timing.archer_platform_level == 3
+		and assault.platform_damage == 3 and timing._battle_platform_level == 1 and timing.battle == assault,
+		"Archer Platform: mid-assault purchases never change the active assault")
+	for squad in assault.players:
+		squad.health = 0 # Scripted gate loss so the checkpoint comes back for a second defense.
+	campaign_finish_resolved(timing)
+	check(timing.phase == Campaign.Phase.RUNNING and timing.battle.platform_damage == 0 and timing._battle_platform_level == 0,
+		"Archer Platform: lost assault routes to farming with no platform damage")
+	timing.request_frontier()
+	campaign_finish_resolved(timing)
+	var retry: Combat = timing.start_defense()
+	check(retry != null and retry.is_defense and retry.platform_damage == 9 and timing._battle_platform_level == 3,
+		"Archer Platform: the next defense uses the new level (+9)")
+	# Exact damage per round on the shield squad's pick only.
+	var base_drop: Array = platform_round_drop(0)
+	var probe := platform_checkpoint(3, 0, 0, 0)
+	probe.start_defense()
+	var target: int = probe.battle._target_index(probe.battle.enemies, Data.Role.SHIELD)
+	check(target >= 0, "Archer Platform: Counterattack has a shield-pick target")
+	for level in range(1, 4):
+		var drop: Array = platform_round_drop(level)
+		var exact: bool = drop.size() == base_drop.size()
+		for i in range(drop.size()):
+			exact = exact and drop[i] - base_drop[i] == (3 * level if i == target else 0)
+		check(exact, "Archer Platform: level %d adds exactly +%d on the shield squad's target only" % [level, 3 * level])
+	for variant: Array in [[0, 0, true, "Rally"], [3, 0, false, "Drill rank 3"], [0, 6, false, "Threat 6"]]:
+		var plain: Array = platform_round_drop(0, variant[0], variant[1], variant[2])
+		var armed: Array = platform_round_drop(3, variant[0], variant[1], variant[2])
+		var flat: bool = true
+		for i in range(plain.size()):
+			flat = flat and armed[i] - plain[i] == (9 if i == target else 0)
+		check(flat, "Archer Platform: +9 stays flat under " + variant[3])
+	# Retargets when the frontline dies.
+	var retarget := platform_checkpoint(3, 0, 0, 2)
+	retarget.start_defense()
+	rally_endless(retarget)
+	retarget.battle.enemies[target].health = 0
+	var next_target: int = retarget.battle._target_index(retarget.battle.enemies, Data.Role.SHIELD)
+	var twin := platform_checkpoint(3, 0, 0, 0)
+	twin.start_defense()
+	rally_endless(twin)
+	twin.battle.enemies[target].health = 0
+	var hp_before: int = retarget.battle.enemies[next_target].health
+	retarget.resolve_round()
+	twin.resolve_round()
+	check(next_target >= 0 and next_target != target
+		and hp_before - retarget.battle.enemies[next_target].health == hp_before - twin.battle.enemies[next_target].health + 6,
+		"Archer Platform: retargets to the next shield pick when the frontline dies")
+	# Zero in conquest and farming even at MAX.
+	var conquest := campaign_running(0)
+	var conquest_plain := campaign_running(0)
+	conquest.archer_platform_level = 3
+	conquest.restart_battle()
+	conquest_plain.restart_battle()
+	conquest.resolve_round()
+	conquest_plain.resolve_round()
+	check(conquest.battle.platform_damage == 0 and enemy_health(conquest.battle) == enemy_health(conquest_plain.battle),
+		"Archer Platform: no damage in conquest battles")
+	var farm := platform_checkpoint(3, 0, 0, 3)
+	check(farm.request_farm(Data.Encounter.BORDER_SKIRMISH) and farm.battle.platform_damage == 0 and farm._battle_platform_level == 0,
+		"Archer Platform: no damage while farming")
+	# Outcomes: full Counterattacks across gate, Drill, Threat and platform levels.
+	var grid_ok: bool = true
+	var grid_seen := {}
+	for gate: int in PLATFORM_GRID:
+		for platform: int in PLATFORM_GRID[gate]:
+			var rows: Array = []
+			for drill in range(4):
+				var row: String = ""
+				for threat in range(7):
+					var fight := platform_checkpoint(gate, drill, threat, platform)
+					var battle := fight.start_defense()
+					grid_ok = grid_ok and battle.platform_damage == 3 * platform
+					for i in range(60):
+						if battle.result != Combat.Result.ONGOING:
+							break
+						fight.resolve_round()
+					var won: bool = battle.result == Combat.Result.VICTORY
+					grid_ok = grid_ok and (won or battle.defeat_reason == Combat.DefeatReason.GATE_DESTROYED)
+					row += "W" if won else "L"
+				rows.append(row)
+			grid_seen[[gate, platform]] = rows
+			check(rows == PLATFORM_GRID[gate][platform],
+				"Archer Platform: gate %d platform %d outcomes %s match the pinned table" % [gate, platform, str(rows)])
+	check(grid_ok, "Archer Platform: every grid assault resolves (victory or gate loss) with its locked-in damage")
+	check(PLATFORM_GRID[1][0][0][0] == "L" and PLATFORM_GRID[1][3][0][0] == "W"
+		and PLATFORM_GRID[1][0][2][3] == "L" and PLATFORM_GRID[1][3][2][3] == "W"
+		and PLATFORM_GRID[3][0][1][3] == "L" and PLATFORM_GRID[3][3][1][3] == "L",
+		"Archer Platform: flips gate 1 Drill 0/Threat 0 and Drill 2/Threat 3 to wins; Drill 1/Threat 3 stays a loss")
+	# Rewards, Legacy and Threat unchanged by owning the platform (in-memory fixture level, no gold spent).
+	var with_platform := Campaign.new()
+	with_platform.archer_platform_level = 3
+	var plain_run := Campaign.new()
+	for run: Campaign in [with_platform, plain_run]:
+		run.gold = 240
+		for role in range(3):
+			run.purchase(role)
+			run.purchase(role)
+		run.purchase_gate()
+		run.purchase_gate()
+		run.restart_battle()
+		for stage in range(3):
+			campaign_finish_resolved(run)
+		run.start_defense()
+		campaign_finish_resolved(run)
+	check(with_platform.phase == Campaign.Phase.CAMPAIGN_SECURED and plain_run.phase == Campaign.Phase.CAMPAIGN_SECURED
+		and with_platform.gold == plain_run.gold and with_platform.legacy == plain_run.legacy
+		and with_platform.legacy_earned == plain_run.legacy_earned and with_platform.best_threat == plain_run.best_threat
+		and with_platform.threat == plain_run.threat and with_platform.levels == plain_run.levels
+		and with_platform.gate_level == plain_run.gate_level,
+		"Archer Platform: secured run gives identical gold, Legacy, Threat, levels and gate")
+	check(campaign_snapshot(plain_run, false) == campaign_snapshot(state_secured(), false),
+		"Archer Platform: unbought, a full run matches the pre-platform results exactly")
+	# Found a Dynasty resets owned and locked-in levels.
+	var next := with_platform.found_dynasty()
+	check(next != null and with_platform.archer_platform_level == 0 and with_platform._battle_platform_level == 0
+		and next.platform_damage == 0 and with_platform.platform_purchase_cost() == 30,
+		"Archer Platform: Found a Dynasty returns it to level 0")
+
+func test_archer_platform_state() -> void:
+	var CORRUPT := CampaignState.Outcome.CORRUPT
+	var checkpoint := defense_ready()
+	checkpoint.gold = 150
+	checkpoint.purchase_platform()
+	checkpoint.purchase_platform()
+	var defending := defense_ready()
+	defending.gold = 150
+	defending.purchase_platform()
+	defending.start_defense()
+	defending.resolve_round()
+	defending.purchase_platform()
+	defending.purchase_platform()
+	var maxed := defense_ready()
+	maxed.gold = 150
+	for i in range(3):
+		maxed.purchase_platform()
+	maxed.start_defense()
+	maxed.resolve_round()
+	var secured := state_secured()
+	secured.gold = 30
+	secured.purchase_platform()
+	var cases := {"checkpoint": [checkpoint, 2, 0], "defending": [defending, 3, 1], "maxed": [maxed, 3, 3],
+		"secured": [secured, 1, 0], "fresh": [campaign_running(2), 0, 0]}
+	for name: String in cases:
+		var campaign: Campaign = cases[name][0]
+		# Partial-round progress is only valid mid-battle (checkpoint and secured files carry 0).
+		var progress: int = 250000 if campaign.phase in [Campaign.Phase.RUNNING, Campaign.Phase.DEFENDING] else 0
+		var captured := CampaignState.capture(campaign, progress)
+		var state: Dictionary = state_json(captured.state) if captured.outcome == CampaignState.Outcome.VALID else {}
+		var restored := CampaignState.restore(state)
+		var ok: bool = (captured.outcome == CampaignState.Outcome.VALID and state.version == 9
+			and state.archer_platform_level == cases[name][1] and state.battle.snapshot_platform_level == cases[name][2]
+			and restored.outcome == CampaignState.Outcome.VALID)
+		check(ok and restored.campaign.archer_platform_level == cases[name][1]
+			and restored.campaign._battle_platform_level == cases[name][2]
+			and restored.campaign.battle.platform_damage == 3 * cases[name][2]
+			and CampaignState.capture(restored.campaign, restored.round_progress_usec).state == captured.state,
+			"Archer Platform save: %s round-trips owned %d / locked-in %d exactly" % [name, cases[name][1], cases[name][2]])
+		if not ok:
+			continue
+		var copy: Campaign = restored.campaign
+		for i in range(3):
+			campaign.resolve_round()
+			copy.resolve_round()
+		check(campaign_snapshot(copy, false) == campaign_snapshot(campaign, false),
+			"Archer Platform save: restored %s continues identically" % name)
+		var olds: Array = [state_as_v8(state), state_as_v7(state), state_as_v6(state), state_as_v5(state), state_as_v4(state), state_as_v3(state)]
+		if name == "fresh":
+			olds.append_array([state_as_v2(state), state_as_v1(state)])
+		for old: Dictionary in olds:
+			var migrated := CampaignState.restore(old)
+			check(not old.has("archer_platform_level") and not old.battle.has("snapshot_platform_level")
+				and migrated.outcome == CampaignState.Outcome.VALID
+				and migrated.campaign.archer_platform_level == 0 and migrated.campaign._battle_platform_level == 0
+				and migrated.campaign.battle.platform_damage == 0 and migrated.campaign.gold == restored.campaign.gold
+				and migrated.campaign.phase == restored.campaign.phase,
+				"Archer Platform save: v%d %s file loads at level 0" % [old.version, name])
+	# Fingerprint: altered in-memory platform damage cannot be saved.
+	var tampered := defense_ready()
+	tampered.start_defense()
+	tampered.battle.platform_damage = 3
+	check(CampaignState.capture(tampered, 0).outcome == CampaignState.Outcome.UNSAVABLE,
+		"Archer Platform save: battle damage disagreeing with its locked-in level is unsavable")
+	# Corrupt values on a defending state (owned 3, locked-in 1).
+	var base: Dictionary = state_json(CampaignState.capture(defending, 0).state)
+	check(CampaignState.validate(base).outcome == CampaignState.Outcome.VALID and base.archer_platform_level == 3
+		and base.battle.snapshot_platform_level == 1, "Archer Platform save: defending base state is valid")
+	for bad: Array in [["missing", null, true], ["boolean", true, false], ["string", "1", false], ["null", null, false],
+			["fractional", 1.5, false], ["negative", -1, false]]:
+		state_rejects(base, "%s archer_platform_level" % bad[0], CORRUPT, func(s: Dictionary) -> void:
+			if bad[2]:
+				s.erase("archer_platform_level")
+			else:
+				s.archer_platform_level = bad[1])
+		state_rejects(base, "%s snapshot_platform_level" % bad[0], CORRUPT, func(s: Dictionary) -> void:
+			if bad[2]:
+				s.battle.erase("snapshot_platform_level")
+			else:
+				s.battle.snapshot_platform_level = bad[1])
+	state_rejects(base, "owned level 4", CORRUPT, func(s: Dictionary) -> void: s.archer_platform_level = 4)
+	state_rejects(base, "locked-in above owned", CORRUPT, func(s: Dictionary) -> void: s.archer_platform_level = 0)
+	state_rejects(base, "locked-in level 4", CORRUPT, func(s: Dictionary) -> void: s.battle.snapshot_platform_level = 4)
+	state_rejects(base, "v8 carrying the platform keys", CORRUPT, func(s: Dictionary) -> void: s.version = 8)
+	state_rejects(base, "v8 carrying the owned key only", CORRUPT, func(s: Dictionary) -> void:
+		s.version = 8
+		s.battle.erase("snapshot_platform_level"))
+	state_rejects(base, "v8 carrying the locked-in key only", CORRUPT, func(s: Dictionary) -> void:
+		s.version = 8
+		s.erase("archer_platform_level"))
+	state_rejects(base, "version 10 with the platform", CampaignState.Outcome.UNSUPPORTED, func(s: Dictionary) -> void: s.version = 10)
+	for level in range(4):
+		check(CampaignState.validate(base.merged({"archer_platform_level": maxi(level, 1)}, true)).outcome
+			== CampaignState.Outcome.VALID or level == 0, "Archer Platform save: owned level %d with locked-in 1 is valid" % maxi(level, 1))
+	var check_base: Dictionary = state_json(CampaignState.capture(checkpoint, 0).state)
+	state_rejects(check_base, "locked-in level at the checkpoint", CORRUPT, func(s: Dictionary) -> void: s.battle.snapshot_platform_level = 1)
+	var border_base: Dictionary = state_json(CampaignState.capture(campaign_running(2, 40), 0).state).merged({"archer_platform_level": 3}, true)
+	check(CampaignState.validate(border_base).outcome == CampaignState.Outcome.VALID, "Archer Platform save: owned level in conquest is valid")
+	state_rejects(border_base, "locked-in level in conquest", CORRUPT, func(s: Dictionary) -> void: s.battle.snapshot_platform_level = 2)
+	# On disk: a v8 file loads unchanged; the next save writes v9 with both levels.
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Archer Platform save: isolated directory owned")
+	if not fixture.owned:
+		return
+	var v8_text := JSON.stringify(state_as_v8(state_json(CampaignState.capture(defense_ready(), 0).state)))
+	check(fixture.put(v8_text) == OK, "Archer Platform save: v8 file written")
+	var store := CampaignSave.new(fixture.path)
+	var loaded := store.load_campaign()
+	check(loaded.outcome == CampaignSave.Outcome.LOADED and loaded.campaign.archer_platform_level == 0
+		and loaded.campaign._battle_platform_level == 0 and FileAccess.get_file_as_string(fixture.path) == v8_text,
+		"Archer Platform save: v8 file loads at level 0 and is not rewritten")
+	var written: Variant = null
+	if store.save_campaign(defending, 0) == OK:
+		written = JSON.parse_string(FileAccess.get_file_as_string(fixture.path))
+	var relaunched := CampaignSave.new(fixture.path).load_campaign()
+	check(written != null and written.version == 9 and written.archer_platform_level == 3
+		and written.battle.snapshot_platform_level == 1 and relaunched.outcome == CampaignSave.Outcome.LOADED
+		and relaunched.campaign.archer_platform_level == 3 and relaunched.campaign.battle.platform_damage == 3,
+		"Archer Platform save: next save writes v9 and both levels survive relaunch")
+	check(fixture.cleanup() == OK, "Archer Platform save: directory cleaned")
+
+func test_campaign_scene_archer_platform() -> void:
+	var fixture := ProgressFixture.new("campaign.json")
+	check(fixture.owned, "Platform scene: isolated directory owned")
+	if not fixture.owned:
+		return
+	var path: String = fixture.path
+	var scene := campaign_scene_new(CampaignWindowFixture, CampaignSave.new(path)) as CampaignWindowFixture
+	var button: Button = scene.get_node("%ArcherPlatform")
+	check(scene.campaign.gold < 30 and button.disabled
+		and button.text == "Archer Platform Lv.0 · +0 damage/round in defense · Upgrade 30 gold"
+		and button.action_mode == BaseButton.ACTION_MODE_BUTTON_PRESS
+		and button.autowrap_mode != TextServer.AUTOWRAP_OFF and button.focus_mode == Control.FOCUS_ALL
+		and button.get_index() == scene.get_node("%GateUpgrade").get_index() + 1
+		and scene.get_node("Margin/Scroll/Column/GateNotice").text == "Gate and Archer Platform upgrades apply next defense; they never change the current one.",
+		"Platform scene: unaffordable button right after the gate shows level, effect and cost")
+	button.pressed.emit()
+	check(scene.campaign.archer_platform_level == 0, "Platform scene: unaffordable press refused")
+	scene.campaign.gold = 200 # Isolated fixture funds.
+	scene._refresh()
+	check(not button.disabled, "Platform scene: affordable button enabled")
+	var before := campaign_snapshot(scene.campaign)
+	for reason in range(3):
+		scene.set_reason(reason, true)
+		check(button.disabled, "Platform scene: suspension disables the platform")
+		button.pressed.emit()
+		scene.set_reason(reason, false)
+	scene.dynasty_preview_open = true # Guard check: the preview flag alone must refuse.
+	scene._refresh()
+	check(button.disabled, "Platform scene: preview flag disables the platform")
+	button.pressed.emit()
+	scene.dynasty_preview_open = false
+	scene._refresh()
+	check(scene.campaign.archer_platform_level == 0 and campaign_snapshot(scene.campaign) == before,
+		"Platform scene: refused while suspended or with the preview open")
+	# Press signal as in the other headless scene tests; real mouse and keyboard input is exercised
+	# in the graphical smoke (tests/campaign_scene_smoke.gd), where layout and focus are live.
+	var other: Button = scene.get_node("%GateUpgrade")
+	other.grab_focus()
+	button.pressed.emit()
+	check(scene.get_viewport().gui_get_focus_owner() == other and scene.campaign.archer_platform_level == 1 and scene.campaign.gold == 170
+		and button.text == "Archer Platform Lv.1 · +3 damage/round in defense · Upgrade 50 gold"
+		and scene.get_node("%SaveStatus").text == "Saved" and scene_saved_exactly(scene, path)
+		and JSON.parse_string(FileAccess.get_file_as_string(path)).archer_platform_level == 1
+		and scene.campaign.battle.platform_damage == 0,
+		"Platform scene: press buys Lv.1 for 30 gold, saves immediately, keeps focus, conquest battle unchanged")
+	button.pressed.emit()
+	check(scene.campaign.archer_platform_level == 2 and scene.campaign.gold == 120 and scene_saved_exactly(scene, path),
+		"Platform scene: second press buys Lv.2 for 50 gold and saves")
+	scene.campaign.gold = 70
+	button.pressed.emit()
+	check(scene.campaign.archer_platform_level == 3 and scene.campaign.gold == 0 and button.disabled
+		and button.text == "Archer Platform Lv.3 · +9 damage/round in defense · MAX",
+		"Platform scene: MAX at Lv.3 disables the button")
+	scene.set_process(false)
+	scene.free()
+	# Defense view shows the locked-in effect; mid-assault purchase leaves it unchanged.
+	var waiting := state_scene(defense_ready())
+	waiting.campaign.gold = 200
+	waiting.get_node("%ArcherPlatform").pressed.emit()
+	waiting.get_node("%StartDefense").pressed.emit()
+	check(waiting.campaign.battle.platform_damage == 3
+		and waiting.get_node("%GateHealth").text.ends_with(" · Archer Platform +3 damage/round"),
+		"Platform scene: defense view shows the locked-in +3")
+	waiting.get_node("%ArcherPlatform").pressed.emit()
+	check(waiting.campaign.archer_platform_level == 2 and waiting.campaign.battle.platform_damage == 3
+		and waiting.get_node("%GateHealth").text.ends_with(" · Archer Platform +3 damage/round")
+		and waiting.get_node("%ArcherPlatform").text.begins_with("Archer Platform Lv.2 · +6"),
+		"Platform scene: mid-assault purchase applies next defense only")
+	waiting.set_process(false)
+	waiting.free()
+	# Dynasty preview lists the platform; the secured screen without it keeps the plain gate text.
+	var secured := state_secured()
+	secured.gold = 30
+	secured.purchase_platform()
+	var ending := state_scene(secured)
+	ending.get_node("%FoundDynasty").pressed.emit()
+	var copy: String = ending.get_node("%DynastyLosses").text
+	check(ending.dynasty_preview_open and copy.contains("Archer Platform Lv.1 returns to level 0.")
+		and copy.contains("all return to level 1"), "Platform scene: dynasty preview lists the platform reset")
+	ending.get_node("%ConfirmDynasty").pressed.emit()
+	check(ending.campaign.archer_platform_level == 0 and ending.get_node("%ArcherPlatform").text.begins_with("Archer Platform Lv.0"),
+		"Platform scene: confirming the dynasty resets the platform")
+	ending.set_process(false)
+	ending.free()
+	check(fixture.cleanup() == OK, "Platform scene: directory cleaned")
+
 func campaign_finish(campaign: Campaign) -> Combat:
 	var completed := campaign.battle
 	for i in range(60):
@@ -4154,6 +4558,7 @@ func campaign_snapshot(campaign: Campaign, identity: bool = true) -> Array:
 		combat.gate_max_health, combat.gate_health, combat.defeat_reason,
 		campaign.dynasty, campaign.legacy, campaign.drill_rank, campaign._battle_drill_rank,
 		campaign.threat, campaign.best_threat, campaign.legacy_earned, campaign.veteran_cadre,
+		campaign.archer_platform_level, campaign._battle_platform_level, combat.platform_damage,
 		campaign.last_defense_loss]
 
 func campaign_fresh(campaign: Campaign, previous: Combat, encounter: int) -> void:
